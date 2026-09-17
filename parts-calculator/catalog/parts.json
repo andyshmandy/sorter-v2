@@ -358,6 +358,18 @@
       }
     },
     {
+      "id": "delete-unused-m3-10-shcs-screw",
+      "name": "Delete the unused M3 x 10 mm socket/button head screw",
+      "priority": "P4",
+      "condition": "retired",
+      "description": "This screw reaches no bill of materials. Its only live use was the single screw holding the Ribbon cable clamp to the Cable cage bracket (cable mount) at the top interface, and 10 mm was too short for that joint: the clamp stands 1.30 mm off the bracket face so the ribbon is not crushed, so there is 7.94 mm from under the head to the bracket face and a 10 left only 2.06 mm of thread in the insert, under 1 x D. Cage bracket + cable clamp v2 carries the M3 x 12 mm socket/button head (scr-m3-12-bhcs) instead, and every remaining reference is a historical snapshot of a superseded assembly. It should be deleted outright, but a minted part id has to stay resolvable once it exists, and the catalog's own consistency check refuses a change that removes one, so deleting it needs that check overridden by someone who can make that call, not an edit from here. Tracked as sorter-v2 issue #662.",
+      "targets": {
+        "hardware": [
+          "scr-m3-10-shcs"
+        ]
+      }
+    },
+    {
       "id": "delete-unused-m3-15-washer",
       "name": "Delete the unused M3 x 15 mm washer",
       "priority": "P4",
@@ -3141,9 +3153,9 @@
       "category": "Screws",
       "alternative": "Socket or button head",
       "image_url": "https://assets.basically.website/sorter-parts/scr-m3-10-shcs-full-26e52d7d5bcd.png",
-      "description": "Fastens the outer cable clamp into the top interface chute mount, and the ribbon cable clamp to the cable cage bracket.",
+      "description": "Not used on the machine. Superseded by the M3 x 12 (scr-m3-12-bhcs) on its last remaining joint, 2026-09-16. Kept as an unused entry rather than deleted, because cage-bracket-cable-clamp v1 pins this uid in its line snapshot and a minted uid has to stay resolvable (VERSIONING.md).",
       "created_at": "2026-08-18",
-      "updated_at": "2026-08-18",
+      "updated_at": "2026-09-16",
       "attributes": [
         {
           "label": "Thread",
@@ -3158,10 +3170,7 @@
           "value": "Socket head cap"
         }
       ],
-      "sheet_qty": {
-        "per_machine": 3
-      },
-      "note": "The ×3 is the top-interface count (2 cable clamp, 1 ribbon clamp). Screws used elsewhere on the machine aren't tallied here yet."
+      "note": "Do not add a new joint to this entry. Deletion tracked as sorter-v2 issue #662."
     },
     {
       "id": "scr-m3-8-cs",
@@ -6912,8 +6921,8 @@
     },
     {
       "id": "cage-bracket-cable-clamp",
-      "uid": "s4we",
-      "version": "1",
+      "uid": "frol",
+      "version": "2",
       "name": "Cage bracket (cable mount) + ribbon clamp",
       "description": "The one cable-cage corner that carries the ribbon cable: the cable-mount bracket with the outer ribbon cable clamp bolted to its post.",
       "docs": "/hardware/assembly/distribution/top-interface/",
@@ -6927,7 +6936,7 @@
           "qty": 1
         },
         {
-          "part": "scr-m3-10-shcs",
+          "part": "scr-m3-12-bhcs",
           "qty": 1
         }
       ],
@@ -6935,10 +6944,41 @@
         {
           "from": "ribbon-cable-clamp",
           "to": "interface-cage-bracket-cable",
-          "via": "scr-m3-10-shcs",
+          "via": "scr-m3-12-bhcs",
           "qty": 1,
           "method": "insert",
           "note": "Single M3 into the bracket's heat-set insert. The clamp's lip hooks under the post's underside (raised in v2, sorter-v2 #403) to stop the clamp rotating on the single screw."
+        }
+      ],
+      "versions": [
+        {
+          "version": "1",
+          "uid": "s4we",
+          "message": "As recorded before the first stamped change.",
+          "lines": [
+            {
+              "part": "interface-cage-bracket-cable",
+              "qty": 1,
+              "uid": "nu2n"
+            },
+            {
+              "part": "ribbon-cable-clamp",
+              "qty": 1,
+              "uid": "nf0n"
+            },
+            {
+              "part": "scr-m3-10-shcs",
+              "qty": 1,
+              "uid": "ufvb"
+            }
+          ]
+        },
+        {
+          "version": "2",
+          "date": "2026-09-16",
+          "message": "Ribbon clamp screw M3 x 10 -> M3 x 12. The clamp is drawn standing 1.30 mm off the bracket face so the ribbon is not crushed, so under the head to the bracket face is 7.94 mm and an M3 x 10 left only 2.06 mm in the insert, under 1 x D. Reported from two builds (barthel 2026-09-13, BrickCycleAlice 2026-09-16). The 4.00 mm modelled boss depth is tracked separately as issue #648.",
+          "breaking": false,
+          "commit": null
         }
       ]
     },
