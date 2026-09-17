@@ -579,7 +579,7 @@ Once done, check that the chute rotates freely relative to the Interface upper f
   <figcaption><cite>Video: zed0.</cite></figcaption>
 </figure>
 
-Loosen the screws attaching the Limit switch housing to the extrusion. Slide the housing so the Limit switch hammer passes between the Roller lever limit switch and the Printed dowel pin in both directions of rotation, without touching the dowel pin. Rotate the chute slowly to each limit by hand: you should feel and hear the switch click just before the hammer would otherwise hit the dowel pin. If the hammer rubs against the dowel pin, slide the housing slightly further away and re-test. Tighten the screws to keep the housing in this position.
+Loosen the screws attaching the Limit switch housing to the extrusion. Slide the housing so the Limit switch hammer passes between the Roller lever limit switch and the Printed dowel pin. **The hammer has to strike the switch from both directions of rotation, and it must not run on the dowel pin.** Rotate the chute slowly to each limit by hand: you should feel and hear the switch click just before the hammer would otherwise hit the dowel pin. If the hammer rubs against the dowel pin, slide the housing slightly further away and re-test. Tighten the screws to keep the housing in this position.
 
 <div class="img-row">
   <figure>
@@ -589,6 +589,10 @@ Loosen the screws attaching the Limit switch housing to the extrusion. Slide the
   <figure>
     <img class="doc-figure" src="https://assets.basically.website/sorter-docs/assembly-top-interface-step8-hammer-at-switch-w1600-c5ea45cae0c0.jpg" alt="Close view of the Limit switch hammer swung in between the roller lever limit switch and the printed dowel pin, beside the chute's ring gear teeth">
     <figcaption>The hammer passing between the roller and the dowel pin, clear of both. <cite>Photo: BrickCycleAlice.</cite></figcaption>
+  </figure>
+  <figure>
+    <img class="doc-figure" src="https://assets.basically.website/sorter-docs/assembly-top-interface-step8-hammer-clear-of-dowel-pin-w1600-650b1c552764.jpg" alt="Looking straight down on the ring gear and the limit switch housing: the hammer swung in towards the roller lever of the microswitch, with a clear gap between the hammer and the printed dowel pin beside it">
+    <figcaption>From above, where the gap to the dowel pin is easiest to judge. <cite>Photo: BrickCycleAlice.</cite></figcaption>
   </figure>
 </div>
 
@@ -678,6 +682,26 @@ Screw the Cable cage bracket (cable mount) to the tail end of the Interface brac
 
 Screw the remaining Cable cage brackets to the other 5 corners of the Cable cage top with {% include fastener.html size="M5" variant="socket-button" length="30" %} screws.
 
+<div class="callout callout-warning">
+  <span class="callout-icon" aria-hidden="true">⚠</span>
+  <p><b>Check the chute still turns after every single screw.</b> The cage jams the rotation easily, and the two usual causes are a hand-cut cage plate and an over-tightened screw. Checking after each one tells you which screw did it; checking at the end of the step only tells you that something did.</p>
+</div>
+
+<div class="img-row">
+  <figure>
+    <img class="doc-figure" src="https://assets.basically.website/sorter-docs/top-interface-cable-cage-top-on-1-w1600-1ca5b90e20be.jpg" alt="Looking down on the hexagonal plywood cage top slotted over the chute mount, the square mount standing through its centre hole and the printed brackets at the hexagon's corners">
+    <figcaption>The cage top over the chute mount, corners on the interface brackets. <cite>Photo: BrickCycleAlice.</cite></figcaption>
+  </figure>
+  <figure>
+    <img class="doc-figure" src="https://assets.basically.website/sorter-docs/top-interface-cable-cage-top-on-2-w1600-37f102b81d87.jpg" alt="The same plate from a lower angle, the round centre hole and the gap between it and the chute mount visible">
+    <figcaption>The gap around the mount is where the ribbon runs. <cite>Photo: BrickCycleAlice.</cite></figcaption>
+  </figure>
+  <figure>
+    <img class="doc-figure" src="https://assets.basically.website/sorter-docs/top-interface-cable-cage-top-on-3-w1600-a877c2a45c0d.jpg" alt="A wider view of the plate in place with all six brackets around it and the cable clamp at the near edge of the centre hole">
+    <figcaption>All six corners on, clamp at the near edge. <cite>Photo: BrickCycleAlice.</cite></figcaption>
+  </figure>
+</div>
+
 {% include step.html n="11" title="Put the cable in the cable cage" %}
 
 <figure class="video-figure">
@@ -701,11 +725,36 @@ Place an {% include fastener.html size="M3" variant="nut" %} into the bottom of 
 
 Rotate the chute until it hits the limit switch.
 
-Fold your IDC ribbon cable around the Cable clamp (inner), following the guides on the clamp. Slide the cable and clamp together into the Cable clamp (outer), leaving a significant tail to connect to the chute.
+Fold your IDC ribbon cable around the Cable clamp (inner), following the guides on the clamp. Slide the cable and clamp together into the Cable clamp (outer), leaving a tail to connect to the chute above.
+
+**Leave about 80 mm of tail**, measured from where it leaves the clamp, which is what it takes to reach the layer adapter board on the chute core that sits on top of this assembly.
+
+**The connector goes on pins up.** You should be able to see into the connector from above when the tail is lying where it will sit; if it is facing down at the bench, the cable is on the wrong way round. Getting this wrong is expensive: three steps have to come apart to turn it over.
+
+<figure class="single-figure">
+  <img class="doc-figure" src="https://assets.basically.website/sorter-docs/top-interface-ribbon-plug-placeholder-full-ae921f08e514.jpg" alt="Placeholder: a faded photo of the folded ribbon cable with its IDC plug, marked PLACEHOLDER, captioned photo wanted, this view with the plug the other way up">
+  <figcaption><strong>Placeholder.</strong> This is the view we want, with the plug the other way up so you can see into it. The faded photo behind the marker has it the wrong way round. <cite>Photo: BrickCycleAlice.</cite></figcaption>
+</figure>
 
 Guide the rest of the ribbon cable around the side of the Top interface chute mount, in the direction the chute can rotate, back to the Cable cage bracket (cable mount).
 
 Screw the Ribbon cable clamp lightly to the Cable cage bracket (cable mount) with one {% include fastener.html size="M3" variant="socket-button" length="12" %} screw, clamping the ribbon cable between the two. The clamp is meant to stand off the bracket face by about 1.3 mm so the ribbon is not crushed, so the screw has to be long enough to cross that gap and still bite.
+
+<div class="img-row">
+  <figure>
+    <img class="doc-figure" src="https://assets.basically.website/sorter-docs/top-interface-ribbon-clamp-on-bracket-w1600-c6ea0f4d1e2e.jpg" alt="The curved ribbon cable clamp screwed to the post of the cable mount bracket with a single screw through its middle, no cable in it yet">
+    <figcaption>The clamp on the bracket's post, before the ribbon goes in. <cite>Photo: BrickCycleAlice.</cite></figcaption>
+  </figure>
+  <figure>
+    <img class="doc-figure" src="https://assets.basically.website/sorter-docs/top-interface-ribbon-clamped-at-bracket-w1600-1adcf6f1ddc9.jpg" alt="The ribbon cable running under the clamp on the bracket and folding back on itself, the red stripe along its edge, with one screw holding the clamp">
+    <figcaption>The ribbon clamped and turning back on itself at the bracket. <cite>Photo: BrickCycleAlice.</cite></figcaption>
+  </figure>
+</div>
+
+<figure class="single-figure">
+  <img class="doc-figure" src="https://assets.basically.website/sorter-docs/top-interface-ribbon-tail-for-chute-w1600-e4871a634b4a.jpg" alt="The ribbon cable brought up beside the chute mount with its IDC connector standing free, a loop of cable running down to the plywood, and four brass heat inserts in the face beside it">
+  <figcaption>The tail left standing for the chute above, about 80 mm of it. The layer adapter board is not fitted here; it mounts on the four inserts in view. <cite>Photo: BrickCycleAlice.</cite></figcaption>
+</figure>
 
 <figure class="single-figure">
   <img class="doc-figure" src="https://assets.basically.website/sorter-parts/spencer-image2-full-adb0f1993da6.png" alt="Onshape render of the cable-mount cage bracket (teal) with the ribbon cable clamp (purple) bolted to its post, one M3 hole visible through both">
@@ -730,7 +779,7 @@ Check that the chute can rotate fully to the limit switch in both directions, th
 
 Place the Cable cage bottom over the Top interface chute mount. This is the plate with the **keyed cutout** in its centre hole, the pocket that bulges outward on one side. Use 6 {% include fastener.html size="M5" variant="flat" length="35" %} screws and {% include fastener.html size="M5" variant="nut" %}s to clamp the Cable cage bottom, Cable cage top, and Cable cage brackets together.
 
-After this step the chute should still rotate to each of its limits.
+After this step the chute should still rotate to each of its limits. Same as step 10: check after each screw rather than at the end, and back a screw off rather than forcing the chute past a tight spot.
 
 {% include step.html n="13" title="Attach the framing" %}
 
