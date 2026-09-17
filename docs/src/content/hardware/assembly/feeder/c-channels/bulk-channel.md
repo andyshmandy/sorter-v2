@@ -5,16 +5,12 @@ type: how-to
 section: hardware
 slug: assembly-bulk-channel
 kicker: Feeder — Bulk channel
-lede: The top channel, where unsorted parts go in. The faceted rotor, the Bulk cap and the bucket over it.
+lede: The top channel, where unsorted parts go in. The faceted rotor and the Bulk cap.
 permalink: /hardware/assembly/feeder/c-channels/bulk-channel/
 author: barthel
 contributors: [spencer, brickcyclealice]
-warning: >-
-  **Steps 1 to 3 come from a build**, BrickCycleAlice's. **Steps 4 to 6 are an AI-generated
-  first draft**, written from the machine assembly tree in the [parts
-  calculator](https://parts-calculator.basically.website/assembly?focus=bulk-bucket), not from
-  an actual build. The bulk bucket is not published yet, so those steps are mostly the shape of
-  what is missing. Fill them in as you build.
+og_image: https://assets.basically.website/sorter-docs/assembly-bulk-channel-cap-fitted-w1600-f75843bda905.jpg
+last_verified: 2026-09-16
 parts_needed:
   - part: rotor-faceted
     qty: 1
@@ -86,35 +82,25 @@ Turn the rotor by hand. It should go all the way round without a tight spot.
 
 {% include step.html n="4" title="Fit the bulk cap" %}
 
-Slide the Bulk cap down onto the dovetail on the outside of the stator wall. No screws.
-
-**Not recorded:** which way it faces relative to the handover to C2.
+Slide the Bulk cap down onto the dovetail on the outside of the stator wall. No screws. There is one dovetail on the stator, so there is one way it goes on; the channel's own clocking is set later, at [arranging C-channels]({{ '/hardware/assembly/feeder/arranging-c-channels/' | relative_url }}), step 5.
 
 <div class="callout callout-warning">
   <span class="callout-icon" aria-hidden="true">&#9888;</span>
   <p>Use the current Bulk cap. The v1 dovetail needed too much force to slide on. If yours is a fight, check you have the latest file rather than forcing it.</p>
 </div>
 
-<div class="img-placeholder">Image coming</div>
-
-{% include step.html n="5" title="Mount the bucket supports" %}
-
-Three pieces of 2020 aluminium extrusion, each cut to 270 mm, hold the bucket above the channel. They are on the bill of materials as bulk bucket supports.
-
-**Not recorded:** where they land on the [C-channel stand]({{ '/hardware/assembly/feeder/arranging-c-channels/' | relative_url }}), what fastens them at either end, and how high the bucket sits above the rotor.
-
-<div class="img-placeholder">Image coming</div>
-
-{% include step.html n="6" title="Fit the bucket" %}
-
-Not documented, and the part is not published. Record the file, the fixings and the drop height here when it is.
-
-<div class="img-placeholder">Image coming</div>
+<figure class="single-figure">
+  <img class="doc-figure" src="https://assets.basically.website/sorter-docs/assembly-bulk-channel-cap-from-above-w1600-4954ea826b3e.jpg" alt="Looking down into the fitted bulk cap: the tall cylindrical wall standing on the channel, the rotor face across the bottom of it, and the stepper motor below at the front">
+  <figcaption>Down into the cap once it is on, the rotor across the bottom of it. <cite>Photo: BrickCycleAlice.</cite></figcaption>
+</figure>
 
 ## The finished result
 
-A channel core with the faceted rotor in it, the Bulk cap on the stator, and the bucket standing over it.
+A channel core with the faceted rotor in it and the Bulk cap on the stator. That is all of C1 that is documented. The bucket over it is not published as a part yet, and it goes on the machine later, at [arranging C-channels]({{ '/hardware/assembly/feeder/arranging-c-channels/' | relative_url }}), once the channels are standing at their heights.
 
-<div class="img-placeholder">Photo of a finished C1: pending from a build.</div>
+<figure class="single-figure">
+  <img class="doc-figure" src="https://assets.basically.website/sorter-docs/assembly-bulk-channel-cap-fitted-w1600-f75843bda905.jpg" alt="A finished C1 on the bench: the tall cylindrical bulk cap seated on the channel below it, its outlet opening at the front right, the stepper motor at the front with its lead coiled">
+  <figcaption>C1 off the machine, cap on, before the bucket goes over it. <cite>Photo: BrickCycleAlice.</cite></figcaption>
+</figure>
 
 Back to [C-channels]({{ '/hardware/assembly/feeder/c-channels/' | relative_url }}).
