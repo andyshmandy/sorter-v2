@@ -9,12 +9,12 @@ lede: The arm and the ring it carries, the reflector with its ring of LED strip,
 permalink: /hardware/assembly/feeder/camera-lamp/lamp-arm/
 author: reveryx
 contributors: [spencer, danny, brickcyclealice, barthel]
-og_image: https://assets.basically.website/sorter-docs/assembly-camera-lamp-arm-assembled-w1600-735fdcc7ecd6.jpg
+og_image: https://assets.basically.website/sorter-docs/camera-lamp-render-underside-full-0e2b1e5a0fb9.png
 warning: >-
   **Step 5, the cover, is not verified against a build.** Steps 1 to 4 are photographed on real
-  builds. The cover has no build photograph yet, and it is the step whose place in the order is
-  still open, because it is also what holds the camera down. Everything else here is measured
-  off the published STLs. Fill the gaps in as you build.
+  builds. The cover has no build photograph yet, and it is fitted on the camera page rather than
+  here, because it is what holds the camera down. Everything else here is measured off the
+  published STLs. Fill the gaps in as you build.
 parts_needed:
   - part: c-channel-arm-mount
     qty: 1
@@ -34,12 +34,6 @@ parts_needed:
     qty: 1
   - part: scr-m3-12-cs
     qty: 12
-  - part: led-strip-24v
-    qty: 1
-  - part: led-strip-connector-8mm
-    qty: 1
-  - part: dupont-lead-2p-1m
-    qty: 1
 ---
 
 This page builds the part of a camera lamp that is the same on every channel: the arm with its ring at one end and its dovetail at the other, and the shaded lamp that sits over the ring. **No camera goes on here.** That is the [feeder camera lamp]({{ '/hardware/assembly/feeder/camera-lamp/feeder-camera-lamp/' | relative_url }}) page for C2 and C3, and the [classification camera lamp]({{ '/hardware/assembly/feeder/camera-lamp/classification-camera-lamp/' | relative_url }}) page for C4.
@@ -47,6 +41,16 @@ This page builds the part of a camera lamp that is the same on every channel: th
 **The parts list above is one arm's worth. Build three**, for C2, C3 and the classification channel. **The bulk channel (C1) takes none**, because the machine does not look at it.
 
 Build these before the channels that carry them: two of the [C-channels]({{ '/hardware/assembly/feeder/c-channels/' | relative_url }}) pages need a lamp to start.
+
+<div class="prep-item">
+  <div class="prep-item-body">
+    <p><strong>Prepare an <a href="{{ '/hardware/helpers/led-strip/' | relative_url }}">LED strip</a> before you start.</strong> One per lamp: a 950 mm length cut off the roll with two wires on the end, either clamped on or soldered. That page has the strip, the connector and the lead; step 4 here only hooks it on.</p>
+  </div>
+  <figure class="prep-item-figure">
+    <img class="doc-figure" src="https://assets.basically.website/sorter-parts/led-strip-connector-8mm-full-915e0ed03fdc.jpg" alt="A length of 8 mm COB LED strip with a clear clamp-on connector on its cut end, a red and a black wire leaving the other side of the connector in a white sheath">
+    <figcaption>A prepared strip: the cut end, the joint, and the cable that leaves it. <cite>Manufacturer photo (SuperBrightLEDs).</cite></figcaption>
+  </figure>
+</div>
 
 {% include fastener-legend.html %}
 
@@ -111,25 +115,24 @@ The ring goes on the far end of the arm, and is what the lamp and the camera han
 
 That is **12 M3 × 12 per arm**: 8 at the mount joint, 4 here. Six holes, a screw into each end of every one.
 
-{% include step.html n="4" title="Hook the LED strip onto the reflector" %}
+<figure class="single-figure">
+  <img class="doc-figure" src="https://assets.basically.website/sorter-docs/assembly-camera-lamp-arm-assembled-w1600-735fdcc7ecd6.jpg" alt="The whole camera lamp arm assembled on the bench: the dovetailed mount end, the bracket running along the joint with its screws, the bend, and the lamp ring at the far end">
+  <figcaption>Both sections joined, dovetail at one end and the ring at the other. <cite>Photo: BrickCycleAlice.</cite></figcaption>
+</figure>
+
+{% include step.html n="4" title="Hook the prepared LED strip onto the reflector" %}
 
 Push the six **Inner reflector LED hooks** into the sockets around the rim of the **Lamp inner reflector**, evenly spaced. They are a friction fit and there are no screws. Each hook holds the LED strip against the reflector.
 
-**Cut 950 mm of strip for each lamp**, which is two turns around the inside of the skirt. **Cut only on the printed marks**, never between them: the solder pads are at the marks, so a cut anywhere else leaves nothing to connect to. One 5 m roll gives five of these lengths, so a roll covers all three lamps.
+The strip itself is cut and wired on [Preparing the LED strip]({{ '/hardware/helpers/led-strip/' | relative_url }}): 950 mm, cut on a printed mark, with a red and a black wire on the cut end. Have one ready before you start this step.
 
 **Fitting it.** Two turns, LEDs facing inwards.
 
-1. Peel the blue film off the first stretch of the strip and start it under one of the hooks, adhesive against the inside of the skirt.
+1. Peel the blue film off the first stretch of the strip and start it under one of the hooks, adhesive against the inside of the skirt, with the wired end where you want the leads to leave the lamp.
 2. Work it round the skirt until you are back where you started. That is one turn.
 3. Drop down to the next clips and go round again for the second turn, peeling the film as you go.
 
-The bare wires at the starting end are trimmed later, when the drop to the board is made up. Only the first strip has them: the other two lamps take plain cut lengths off the roll.
-
 <div class="img-row">
-  <figure>
-    <img class="doc-figure" src="https://assets.basically.website/sorter-docs/assembly-camera-lamp-strip-start-w1600-3d30eeb9a913.jpg" alt="The white reflector with the leading end of the LED strip started under the hooks in its skirt, the rest of the strip still carrying its blue protective film">
-    <figcaption>Starting it, film peeled back only as far as needed. <cite>Photo: BrickCycleAlice.</cite></figcaption>
-  </figure>
   <figure>
     <img class="doc-figure" src="https://assets.basically.website/sorter-docs/assembly-camera-lamp-strip-first-turn-w1600-101009ec515a.jpg" alt="The strip run once around the inside of the reflector skirt, back at its starting point, with the blue film being peeled off the length still to go">
     <figcaption>One turn round, peeling as you go. <cite>Photo: BrickCycleAlice.</cite></figcaption>
@@ -140,33 +143,30 @@ The bare wires at the starting end are trimmed later, when the drop to the board
   </figure>
 </div>
 
-**Wiring it back to the board** is [Make your own LED drop]({{ '/hardware/electronics/led-drop/' | relative_url }}): the clamp-on connector onto those bare wires, and the run to an LED header. Nothing is joined end to end here, so the far end of the strip stays dead. The strip runs at 24 V off the basically board.
+**Nothing fastens the reflector to the arm.** It drops over the ring on the camera page, after the camera is in, so the two stay separate until then.
 
-<figure class="single-figure">
-  <img class="doc-figure" src="https://assets.basically.website/sorter-docs/camera-lamp-lit-from-below-w1600-bb9d54f4f43e.jpg" alt="The lamp lit, photographed from underneath: a ring of LED strip glowing around the outside of the white reflector, the reflector's central funnel in the middle, and the arm behind it">
-  <figcaption>Lit, from below. The strip rings the reflector and the light reaches the parts off the white. <cite>Photo: Spencer.</cite></figcaption>
-</figure>
+The strip comes with its cable already on it from [Preparing the LED strip]({{ '/hardware/helpers/led-strip/' | relative_url }}); cable-tie that pair down the arm so it is not hanging in the channel. Plugging it into the board is step 5 of [connecting the components]({{ '/hardware/electronics/installation/connecting/' | relative_url }}). Nothing is joined end to end here, so the far end of the strip stays dead. The strip runs at 24 V off the basically board.
 
-{% include step.html n="5" title="The outer cover" %}
+{% include step.html n="5" title="Later: the outer cover" %}
+
+**Do not fit this today.** The cover goes on at the end of the camera page for your channel, once the camera is in the ring. It is here so you know what the part is and why it is left off.
 
 The **Lamp outer cover** pushes down over the reflector. It is a friction fit and has no screw hole anywhere. It stands slightly proud of the reflector, so the camera clasp ends up recessed in the opening at its centre.
 
 **Leave it off until the camera is in.** The cover is what holds the camera down: the clasp is wider than the opening in the middle of the cover, so the cover overlaps its rim and traps it, and until then the camera lifts straight back out. Both camera pages put the cover on as their last bench step, after the clasp is in the ring.
 
 <figure class="single-figure">
-  <img class="doc-figure" src="https://assets.basically.website/sorter-docs/camera-lamp-render-underside-full-0e2b1e5a0fb9.png" alt="CAD render of the camera lamp seen from below: the inside of the cover with the reflector dome, the LED hooks spaced around the rim, the camera at the centre, and the arm reaching up into it">
-  <figcaption>From below, with the reflector inside the cover and the hooks around the rim. <cite>Rendered from the part geometry, not from a build. Render: Spencer.</cite></figcaption>
+  <img class="doc-figure" src="https://assets.basically.website/sorter-docs/camera-lamp-lit-from-below-w1600-bb9d54f4f43e.jpg" alt="The lamp lit, photographed from underneath: a ring of LED strip glowing around the outside of the white reflector, the reflector's central funnel in the middle, and the arm behind it">
+  <figcaption>Lit, from below. The strip rings the reflector and the light reaches the parts off the white. <cite>Photo: Spencer.</cite></figcaption>
 </figure>
-
-<div class="img-placeholder">Photo of the cover going on, or on: pending from the build.</div>
 
 ## The finished result
 
 An arm with its dovetail at one end and its ring at the other, plus a reflector wired and ready to go over that ring. Build three of each, and take them to the camera page for the channel they belong to.
 
 <figure class="single-figure">
-  <img class="doc-figure" src="https://assets.basically.website/sorter-docs/assembly-camera-lamp-arm-assembled-w1600-735fdcc7ecd6.jpg" alt="The whole camera lamp arm assembled on the bench: the dovetailed mount end, the bracket running along the joint with its screws, the bend, and the lamp ring at the far end">
-  <figcaption>Both sections joined, dovetail at one end and the ring at the other. <cite>Photo: BrickCycleAlice.</cite></figcaption>
+  <img class="doc-figure" src="https://assets.basically.website/sorter-docs/camera-lamp-render-underside-full-0e2b1e5a0fb9.png" alt="CAD render of the camera lamp seen from below: the inside of the cover with the reflector dome, the LED hooks spaced around the rim, the camera at the centre, and the arm reaching up into it">
+  <figcaption>From below, with the reflector inside the cover and the hooks around the rim. The camera at the centre goes in on the camera pages. <cite>Rendered from the part geometry, not from a build. Render: Spencer.</cite></figcaption>
 </figure>
 
 Back to [Camera lamps]({{ '/hardware/assembly/feeder/camera-lamp/' | relative_url }}).

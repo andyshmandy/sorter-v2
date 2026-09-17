@@ -9,7 +9,7 @@ lede: The arm, the shaded lamp and the camera that hang over C2, C3 and the clas
 permalink: /hardware/assembly/feeder/camera-lamp/
 author: reveryx
 contributors: [spencer, danny, brickcyclealice, barthel]
-og_image: https://assets.basically.website/sorter-docs/camera-lamp-on-channel-w1600-8d957377d671.jpg
+og_image: https://assets.basically.website/sorter-docs/camera-lamp-render-underside-full-0e2b1e5a0fb9.png
 ---
 
 A camera lamp is one arm carrying one light and one camera over a channel. The light is a ring of LED strip inside a white reflector, under a grey cover, so the light reaches a part bounced off the white rather than aimed straight at it. The camera looks down through the hole in the middle of the reflector.
@@ -30,15 +30,23 @@ A camera lamp is one arm carrying one light and one camera over a channel. The l
 
 Build the lamps before the channels that carry them: two of the [C-channels]({{ '/hardware/assembly/feeder/c-channels/' | relative_url }}) pages need one to start. A lamp is built on the bench and hangs onto its channel later, once the channels are standing.
 
-It replaces the light post and the overhead camera mount, the side-light-plus-rod-arm arrangement used before 2026-09-02. Both are retired and no longer documented.
-
 ## The finished result
 
-Both camera pages end in one of these: an arm, a lamp and a camera over a channel, lit.
+Each page ends in one of these.
 
-<figure class="single-figure">
-  <img class="doc-figure" src="https://assets.basically.website/sorter-docs/camera-lamp-on-channel-w1600-8d957377d671.jpg" alt="A camera lamp on the machine: a grey disc-shaped lamp on an angled arm hanging over the open top of a C-channel, the white reflector lit inside it, with the black bulk bucket behind">
-  <figcaption>A finished lamp over its channel, lit. <cite>Photo: Spencer.</cite></figcaption>
-</figure>
+<div class="img-row">
+  <figure>
+    <img src="https://assets.basically.website/sorter-docs/camera-lamp-render-underside-full-0e2b1e5a0fb9.png" alt="CAD render of the camera lamp seen from below: the inside of the cover with the reflector dome, the LED hooks spaced around the rim, the camera at the centre, and the arm reaching up into it">
+    <figcaption><a href="{{ '/hardware/assembly/feeder/camera-lamp/lamp-arm/' | relative_url }}">Lamp arm</a>, from below. <cite>Rendered from the part geometry, not from a build. Render: Spencer.</cite></figcaption>
+  </figure>
+  <figure>
+    <img src="https://assets.basically.website/sorter-docs/camera-lamp-on-channel-w1600-8d957377d671.jpg" alt="A camera lamp on the machine: a grey disc-shaped lamp on an angled arm hanging over the open top of a C-channel, the white reflector lit inside it, with the black bulk bucket behind">
+    <figcaption><a href="{{ '/hardware/assembly/feeder/camera-lamp/feeder-camera-lamp/' | relative_url }}">Feeder camera lamp</a>, over its channel. <cite>Photo: Spencer.</cite></figcaption>
+  </figure>
+  <figure>
+    <img src="https://assets.basically.website/sorter-docs/camera-lamp-camera-seated-w1600-eede61656118.jpg" alt="Looking down on a camera seated at the centre of a lamp, its lens in the middle of the white reflector">
+    <figcaption><a href="{{ '/hardware/assembly/feeder/camera-lamp/classification-camera-lamp/' | relative_url }}">Classification camera lamp</a>, camera seated. <cite>Photo: Spencer.</cite></figcaption>
+  </figure>
+</div>
 
-Wiring is [Make your own LED drop]({{ '/hardware/electronics/led-drop/' | relative_url }}) for the strip, and the [electronics]({{ '/hardware/electronics/' | relative_url }}) page for the camera. See [arranging C-channels]({{ '/hardware/assembly/feeder/arranging-c-channels/' | relative_url }}) for how the channels themselves sit together.
+Each lamp's strip is plugged into the board on [connecting the components]({{ '/hardware/electronics/installation/connecting/' | relative_url }}), and the camera is on the [electronics]({{ '/hardware/electronics/' | relative_url }}) page. See [arranging C-channels]({{ '/hardware/assembly/feeder/arranging-c-channels/' | relative_url }}) for how the channels themselves sit together.

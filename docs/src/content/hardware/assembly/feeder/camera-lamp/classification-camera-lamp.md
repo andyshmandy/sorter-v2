@@ -9,7 +9,7 @@ lede: A lamp arm finished with the IMX415 4K module, clasped between its two hal
 permalink: /hardware/assembly/feeder/camera-lamp/classification-camera-lamp/
 author: reveryx
 contributors: [spencer, danny, brickcyclealice, barthel]
-og_image: https://assets.basically.website/sorter-docs/camera-lamp-on-channel-w1600-8d957377d671.jpg
+og_image: https://assets.basically.website/sorter-docs/camera-lamp-camera-seated-w1600-eede61656118.jpg
 warning: >-
   **Steps 3 and 4 are not verified against a build.** Steps 1 and 2 are photographed on real
   builds. Still open: which of the ring's two sockets the clasp is meant to use (step 2); the
@@ -32,8 +32,8 @@ parts_needed:
     <p><strong>Build a <a href="{{ '/hardware/assembly/feeder/camera-lamp/lamp-arm/' | relative_url }}">lamp arm</a> before you start.</strong> This page does not build the arm, the reflector or the cover: it takes a finished one and puts a camera in it. The arm's parts and its 12 screws are on that page.</p>
   </div>
   <figure class="prep-item-figure">
-    <img class="doc-figure" src="https://assets.basically.website/sorter-docs/assembly-camera-lamp-arm-assembled-w1600-735fdcc7ecd6.jpg" alt="The whole camera lamp arm assembled on the bench: the dovetailed mount end, the bracket running along the joint with its screws, the bend, and the lamp ring at the far end">
-    <figcaption>A finished lamp arm, dovetail at one end and the ring at the other. <cite>Photo: BrickCycleAlice.</cite></figcaption>
+    <img class="doc-figure" src="https://assets.basically.website/sorter-docs/camera-lamp-render-underside-full-0e2b1e5a0fb9.png" alt="CAD render of the camera lamp seen from below: the inside of the cover with the reflector dome, the LED hooks spaced around the rim, the camera at the centre, and the arm reaching up into it">
+    <figcaption>A finished lamp arm, from below. The camera at its centre is what this page adds. <cite>Rendered from the part geometry, not from a build. Render: Spencer.</cite></figcaption>
   </figure>
 </div>
 
@@ -61,7 +61,7 @@ The camera board sits in the recess in the **Camera clasp top**. Put the **Camer
 
 **Into the ring, no screws.** The clasped camera pushes into the camera lamp ring on the arm. Nothing fastens it: the only screws in this build are the two holding the clasp's own halves together.
 
-The clasp's two halves form a spigot that plugs into a socket in the ring. **Not recorded:** the ring has two of those sockets, and which one is intended is not written down anywhere. <span class="fastener-todo">fastener not recorded</span>
+The clasp's two halves form a spigot that plugs into a socket in the ring. **The ring has two of these sockets, and which one is intended is not recorded.** Nothing on this page depends on it: use the one that leaves the camera's lead running clear of the arm, and check the lens points straight down before you go on. Which way round the picture arrives is set in software later, not here.
 
 **Expect it to sit loose.** The cover, two steps down, is what traps the clasp and holds the camera in. Until then the camera can lift straight back out, so do not pick the lamp up by it.
 
@@ -89,28 +89,32 @@ Order matters here in one place only: the camera has to be in the clasp and the 
   <figcaption>Assembled, from above. <cite>Rendered from the part geometry, not from a build. Render: Spencer.</cite></figcaption>
 </figure>
 
+{% include step.html n="4" title="Later: hang the arm on the C-channel" %}
+
+**Not at the bench.** The lamp goes onto its channel later, when the channels are standing on the top plate. Read this step then, and put the finished lamp aside for now.
+
+**It hangs off a dovetail, not a screw.** Slide the dovetail on the bottom of the arm mount down onto the bottom of the channel's NEMA bracket until it stops. That is the whole joint: the mount has no other fixing, and the lamp's weight holds it in the rail.
+
+It is a printed joint and nobody has measured the fit yet, so it may be tight or it may have a little play. **Do not force it and do not file it down**: if it will not go on, say so in the Discord with a photo, because that is a part problem rather than a step you are doing wrong.
+
+The lamp goes on during [arranging C-channels]({{ '/hardware/assembly/feeder/arranging-c-channels/' | relative_url }}), onto the [classification channel]({{ '/hardware/assembly/feeder/c-channels/classification-channel/' | relative_url }}).
+
 <figure class="single-figure">
-  <img class="doc-figure" src="https://assets.basically.website/sorter-docs/camera-lamp-camera-seated-w1600-eede61656118.jpg" alt="Looking down on the top of an assembled camera lamp: the grey cover with a circular opening at its centre, the camera board seated in the clasp inside it, its lead plugged in and running off to one side">
-  <figcaption>The camera sits at the centre of the lamp, looking straight down through the reflector. <cite>Photo: Spencer.</cite></figcaption>
+  <img class="doc-figure" src="https://assets.basically.website/sorter-docs/camera-lamp-on-channel-w1600-8d957377d671.jpg" alt="A camera lamp on the machine: a grey disc-shaped lamp on an angled arm hanging over the open top of a C-channel, the white reflector lit inside it, with the black bulk bucket behind">
+  <figcaption>What it looks like once it is on, lit. <cite>Photo: Spencer.</cite></figcaption>
 </figure>
-
-{% include step.html n="4" title="Hang the arm on the C-channel" %}
-
-**It hangs off a dovetail, not a screw.** Slide the dovetail on the bottom of the arm mount onto the bottom of the channel's NEMA bracket. That is the whole joint: the mount has no other fixing. **Not recorded:** the mating faces are not dimensioned yet.
-
-**Do this when the channels are standing in place, not on the bench.** The lamps go on during [arranging C-channels]({{ '/hardware/assembly/feeder/arranging-c-channels/' | relative_url }}), onto the [classification channel]({{ '/hardware/assembly/feeder/c-channels/classification-channel/' | relative_url }}).
 
 Write down where the lamp ended up over its channel. Its height and overhang change what the camera sees, and [camera calibration]({{ '/sorter/camera-calibration/' | relative_url }}) afterwards is software, not a way to fix a lamp in the wrong place.
 
 ## The finished result
 
-An arm, a lamp and the 4K camera hanging over the classification channel, lit. Build one.
+A finished lamp on the bench: the arm, the shaded lamp and the 4K camera seated at its centre. Build one, and it goes onto its channel later.
 
 <figure class="single-figure">
-  <img class="doc-figure" src="https://assets.basically.website/sorter-docs/camera-lamp-on-channel-w1600-8d957377d671.jpg" alt="A camera lamp on the machine: a grey disc-shaped lamp on an angled arm hanging over the open top of a C-channel, the white reflector lit inside it, with the black bulk bucket behind">
-  <figcaption>A finished lamp over its channel, lit. <cite>Photo: Spencer.</cite></figcaption>
+  <img class="doc-figure" src="https://assets.basically.website/sorter-docs/camera-lamp-camera-seated-w1600-eede61656118.jpg" alt="Looking down on the top of an assembled camera lamp: the grey cover with a circular opening at its centre, the camera board seated in the clasp inside it, its lead plugged in and running off to one side">
+  <figcaption>A finished lamp on the bench, camera seated at its centre. <cite>Photo: Spencer.</cite></figcaption>
 </figure>
 
-Wiring is [Make your own LED drop]({{ '/hardware/electronics/led-drop/' | relative_url }}) for the strip, and the [electronics]({{ '/hardware/electronics/' | relative_url }}) page for the camera.
+Wiring is [Preparing the LED strip]({{ '/hardware/helpers/led-strip/' | relative_url }}) for the strip, and the [electronics]({{ '/hardware/electronics/' | relative_url }}) page for the camera.
 
 Back to [Camera lamps]({{ '/hardware/assembly/feeder/camera-lamp/' | relative_url }}).
