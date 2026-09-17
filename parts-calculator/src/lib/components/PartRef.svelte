@@ -6,6 +6,7 @@
 	// be found. This is how one part points at another — a cap that plugs the
 	// hole an older revision of a rotor has.
 	import type { Part } from '$lib/filament';
+	import { tip } from '$lib/popover';
 
 	let { part }: { part: Part } = $props();
 </script>
@@ -13,5 +14,5 @@
 <a
 	class="text-primary hover:text-primary-hover hover:underline"
 	href="/part/{part.id}"
-	title="View {part.name} details">{part.name}</a
+	use:tip={`View ${part.name} details`}>{part.name}</a
 >

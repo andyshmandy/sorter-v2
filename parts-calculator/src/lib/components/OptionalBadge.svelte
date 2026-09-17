@@ -4,7 +4,7 @@
 	// the ChangeStatus priority chip and AlternativeBadge, and like them the tag
 	// is the trigger for the sentence that explains it.
 	import Badge from '$lib/components/Badge.svelte';
-	import Popover from '$lib/components/Popover.svelte';
+	import { Popover } from '$lib/popover';
 
 	// `value` so a caller can pass the flag straight through and render nothing
 	// when it is false, the way AlternativeBadge takes its own field.
@@ -12,13 +12,13 @@
 </script>
 
 {#if value}
-	<Popover label="Optional item" width="w-64">
-		{#snippet trigger({ toggle, open })}
+	<Popover label="Optional item" width="16rem">
+		{#snippet trigger({ toggle, props })}
 			<Badge
 				as="button"
 				variant="warning"
 				class="cursor-help"
-				aria-expanded={open}
+				{...props}
 				aria-label="Optional item"
 				onclick={(e: MouseEvent) => {
 					e.preventDefault();

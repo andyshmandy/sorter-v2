@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Anchored, tip } from '$lib/popover';
 	import { BAMBU_COLORS, getBambuColor, type BambuColor } from '$lib/bambu-colors';
 
 	let {
@@ -7,6 +8,7 @@
 	}: { value: string; label: string } = $props();
 
 	let open = $state(false);
+	let root = $state<HTMLElement | null>(null);
 	const current = $derived(getBambuColor(value));
 
 	// LEGO builders know "light bluish gray", not "Ash Gray", so every swatch that
@@ -17,15 +19,9 @@
 		value = id;
 		open = false;
 	}
-
-	function onWindowClick(e: MouseEvent) {
-		if (!(e.target as HTMLElement).closest('[data-colorpicker]')) open = false;
-	}
 </script>
 
-<svelte:window onclick={onWindowClick} />
-
-<div class="relative" data-colorpicker>
+<div bind:this={root}>
 	<span class="mb-1 block text-xs font-semibold uppercase tracking-wider text-text-muted">{label}</span>
 	<button
 		type="button"
@@ -42,14 +38,18 @@
 		<span class="text-text-muted">▾</span>
 	</button>
 
-	{#if open}
-		<div
-			class="setup-panel absolute z-20 mt-1 grid max-h-72 w-72 grid-cols-8 gap-1 overflow-y-auto p-2"
-		>
+</div>
+
+<!-- In the floating layer, so the grid is not cut off by the setup card it
+     drops out of, and so it can flip above the control near the foot of the
+     page. -->
+{#if open}
+	<Anchored anchor={root} class="setup-panel w-72 p-2" maxHeight="18rem" onDismiss={() => (open = false)}>
+		<div class="grid grid-cols-8 gap-1">
 			{#each BAMBU_COLORS as c (c.id)}
 				<button
 					type="button"
-					title={legoTitle(c)}
+					use:tip={legoTitle(c)}
 					onclick={() => pick(c.id)}
 					class="h-7 w-7 border {c.id === value
 						? 'border-primary ring-2 ring-primary'
@@ -59,5 +59,5 @@
 				></button>
 			{/each}
 		</div>
-	{/if}
-</div>
+	</Anchored>
+{/if}
