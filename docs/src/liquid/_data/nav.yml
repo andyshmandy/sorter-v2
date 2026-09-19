@@ -106,8 +106,6 @@ sections:
             url: /hardware/electronics/order/
           - title: WireViz drawings
             url: /hardware/electronics/wireviz/
-          - title: Make your own PSU pigtail
-            url: /hardware/electronics/psu-pigtail/
       - title: Helpers
         url: /hardware/helpers/
         children:
@@ -129,6 +127,8 @@ sections:
             url: /hardware/helpers/board-24v-lead/
           - title: Make the chute stepper lead
             url: /hardware/helpers/chute-stepper-lead/
+          - title: Make your own PSU pigtail
+            url: /hardware/helpers/psu-pigtail/
       - title: Parts
         url: /hardware/parts/
         children:
