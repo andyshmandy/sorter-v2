@@ -76,4 +76,4 @@ All three enclosures bolted onto the hex frame, each one once its own page has f
   </figure>
 </div>
 
-With the three enclosures bolted to the frame, [connecting the components]({{ '/hardware/electronics/connecting/' | relative_url }}) plugs them together: every cable between them, and the socket each end goes into. [Software setup]({{ '/hardware/assembly/software-setup/' | relative_url }}) comes after.
+With the three enclosures bolted to the frame, [connecting the components]({{ '/hardware/electronics/connecting/' | relative_url }}) plugs them together: every cable between them, and the socket each end goes into. [Software setup]({{ '/hardware/software-setup/' | relative_url }}) comes after.

@@ -27,4 +27,4 @@ The machine's electronics are one 24 V supply, two boards and the cables between
   <p><b>Two things on these pages involve mains voltage</b>, both inside the PSU box: the fused IEC inlet and the supply's own AC terminals. Read the <a href="{{ '/hardware/electronics/installation/psu-box/' | relative_url }}">PSU box</a> page fully before starting it, and do not plug a cable into the inlet until that box is complete and its wiring verified.</p>
 </div>
 
-The wiring is still being specced, so the harness page is working notes rather than finished documentation and says so at the top. [Software setup]({{ '/hardware/assembly/software-setup/' | relative_url }}) is what comes after all of this.
+The wiring is still being specced, so the harness page is working notes rather than finished documentation and says so at the top. [Software setup]({{ '/hardware/software-setup/' | relative_url }}) is what comes after all of this.
