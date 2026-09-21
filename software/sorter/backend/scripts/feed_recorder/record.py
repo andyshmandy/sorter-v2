@@ -42,11 +42,14 @@ import cv2
 import numpy as np
 
 STREAM_TIMEOUT_S = 15.0
-RECONNECT_MIN_S = 2.0
-RECONNECT_MAX_S = 30.0
+RECONNECT_MIN_S = 1.0
+# A dropped tap freezes the picture until it is back, because the video is
+# paced by wall clock and repeats the last frame. Keep the ceiling low: a
+# blip should cost a second of frozen video, not half a minute.
+RECONNECT_MAX_S = 5.0
 REPORT_EVERY_S = 300.0
 STATUS_EVERY_S = 30.0
-STALE_WARN_S = 120.0
+STALE_WARN_S = 15.0
 
 _log_lock = threading.Lock()
 _log_file = None
@@ -308,17 +311,18 @@ def start_ffmpeg_from_url(url: str, out_dir: str, role: str, kbps: int, encoder:
     pattern = os.path.join(out_dir, f"{role}-%Y%m%dT%H%M%SZ.mp4")
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-        "-f", "mpjpeg", "-i", url,
+        "-rw_timeout", str(int(STREAM_TIMEOUT_S * 1e6)),
+        "-f", "mpjpeg", "-r", f"{fps}", "-i", url,
         *encoder_args(encoder),
         "-r", f"{fps}",
         "-b:v", f"{kbps}k", "-maxrate", f"{int(kbps * 1.5)}k", "-bufsize", f"{kbps * 3}k",
         "-g", str(max(1, int(round(fps * 4)))), "-pix_fmt", "yuv420p",
         "-f", "segment", "-segment_time", str(segment_s), "-segment_format", "mp4",
         "-segment_format_options", "movflags=+faststart",
-        "-reset_timestamps", "1", "-strftime", "1", pattern,
+        "-reset_timestamps", "1", "-strftime", "1", "-progress", "pipe:1", pattern,
     ]
     env = dict(os.environ, TZ="UTC")
-    return subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env)
+    return subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
 
 
 def ffmpeg_has_encoder(name: str) -> bool:
@@ -390,6 +394,7 @@ class RoleRecorder:
         self.preferred_encoder = args.encoder
         self.encoder_retry_at = 0.0
         self.clips_encoder = args.encoder
+        self.clips_last_at = 0.0
         self.capture_size: Optional[tuple[int, int]] = None
         self.errors: list[str] = []
         if self.want_annotated:
@@ -470,15 +475,26 @@ class RoleRecorder:
                 url, self.clips_dir, self.role, kbps, encoder, self.args.segment_seconds, float(self.args.fps)
             )
             self.clips_encoder = encoder
+            self.clips_last_at = 0.0
+            started_at = time.time()
+            progress_thread = threading.Thread(target=self.readProgress, args=(proc,), daemon=True)
+            progress_thread.start()
             log(f"[{self.role}] plain stream: ffmpeg from the tap at {self.args.fps:g} fps, {kbps} kbps, {encoder}")
             while not self.stop.is_set() and proc.poll() is None:
+                if time.time() - max(started_at, self.clips_last_at) > STREAM_TIMEOUT_S * 2:
+                    log(f"[{self.role}] plain encoder stalled; restarting")
+                    proc.terminate()
+                    break
                 self.stop.wait(1.0)
-            if self.stop.is_set():
+            if proc.poll() is None:
                 try:
                     proc.terminate()
-                    proc.wait(timeout=60)
-                except Exception:  # noqa: BLE001
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
                     proc.kill()
+                    proc.wait(timeout=5)
+            progress_thread.join(timeout=1)
+            if self.stop.is_set():
                 return
             err = proc.stderr.read().decode(errors="replace").strip() if proc.stderr else ""
             log(f"[{self.role}] plain stream ffmpeg exited rc={proc.returncode}: {err[-250:]}")
@@ -489,6 +505,15 @@ class RoleRecorder:
                 self.encoder = "libx264"
                 self.encoder_retry_at = time.monotonic() + self.args.encoder_retry_seconds
             backoff.wait(self.stop)
+
+    def readProgress(self, proc: subprocess.Popen) -> None:
+        last_frame = 0
+        for line in proc.stdout:
+            if line.startswith(b"frame="):
+                frame = int(line.partition(b"=")[2])
+                if frame > last_frame:
+                    self.clips_last_at = time.time()
+                    last_frame = frame
 
     def raw_loop(self) -> None:
         url = f"{self.args.backend}/api/recording/raw/{self.role}?fps={self.tap_fps():g}"
@@ -619,16 +644,21 @@ class RoleRecorder:
                     next_tick = time.monotonic() + period
                 with self.latest_lock:
                     latest = self.latest
-                if latest is None:
+                if latest is None or time.time() - self.stats.last_frame_at > STALE_WARN_S:
+                    if procs:
+                        log(f"[{self.role}] source stalled; closing annotated clip until frames return")
+                        close_procs()
+                        self.latest_event = None
+                    last_seq = -1
                     continue
                 jpeg, src_ts, seq = latest
-                held = seq == last_seq
+                held = (src_ts, seq) == last_seq
                 if not held:
                     bgr = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
                     if bgr is None:
                         continue
                     last_bgr = apply_picture(bgr, self.picture)
-                    last_seq = seq
+                    last_seq = (src_ts, seq)
                 if last_bgr is None:
                     continue
                 if held:
@@ -713,9 +743,13 @@ class RoleRecorder:
     def status(self) -> dict[str, Any]:
         st = self.stats
         age = time.time() - st.last_frame_at if st.last_frame_at else None
+        clips_age = time.time() - self.clips_last_at if self.clips_last_at else None
         return {
             "role": self.role,
-            "healthy": age is not None and age < STALE_WARN_S,
+            "healthy": age is not None and age < STALE_WARN_S and (
+                not self.want_clips or clips_age is not None and clips_age < STALE_WARN_S
+            ),
+            "seconds_since_clip_progress": round(clips_age, 1) if clips_age is not None else None,
             "seconds_since_frame": round(age, 1) if age is not None else None,
             "frames_received": st.frames_received,
             "bytes_received": st.bytes_received,
