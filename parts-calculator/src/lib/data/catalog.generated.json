@@ -530,6 +530,22 @@
 					"scr-m4-12-cs"
 				]
 			}
+		},
+		{
+			"id": "delete-bare-pico-and-header-pins",
+			"name": "Delete the bare Raspberry Pi Pico, its 2.54 mm header pins and the Pico with headers assembly",
+			"priority": "P4",
+			"condition": "retired",
+			"description": "Neither part reaches a bill of materials. The catalog specifies the Raspberry Pi Pico with pre-soldered headers (mcu-rpi-pico-presoldered) as of 2026-09-21, the same board bought with its two rows of 20 pins already fitted, so the bare Pico and the 40 header pins that went with it have no quantity anywhere. The Pico with headers sub-assembly is the hand-soldering of one onto the other, which is now an optional route rather than a step every build takes, and it goes with them. They should be deleted outright, but a minted part id has to stay resolvable once it exists, and the catalog's own consistency check refuses a change that removes one, so deleting them needs that check overridden by someone who can make that call, not an edit from here. The helper page describing the route stays either way: it is linked from the pre-soldered Pico as its alternative. Tracked as sorter-v2 issue #734.",
+			"targets": {
+				"hardware": [
+					"mcu-rpi-pico",
+					"header-pins-254"
+				],
+				"assemblies": [
+					"pico-headers"
+				]
+			}
 		}
 	],
 	"folders": [
@@ -4749,8 +4765,8 @@
 		},
 		{
 			"id": "ctrl-board-mount",
-			"uid": "rns2",
-			"version": "2",
+			"uid": "p5yl",
+			"version": "3",
 			"name": "basically Embedded Control Board Housing",
 			"description": "The basically Embedded Control Board closed into a two-part printed housing that bolts to the 2020 extrusion. The board screws straight to the base \u2014 no bracket, no standoffs \u2014 and the cover carries a 40 mm 24 V fan and a plunger that reaches the board's reset button from outside.",
 			"docs": "/hardware/electronics/installation/control-board-housing/",
@@ -4762,6 +4778,18 @@
 				{
 					"part": "ctrl-board-basically",
 					"qty": 1
+				},
+				{
+					"part": "drv-tmc2209",
+					"qty": 5
+				},
+				{
+					"part": "mcu-rpi-pico-presoldered",
+					"qty": 1
+				},
+				{
+					"part": "jumper-cap-254",
+					"qty": 10
 				},
 				{
 					"part": "scr-m3-6-bhcs",
@@ -4866,7 +4894,77 @@
 					"uid": "rns2",
 					"date": "2026-08-23",
 					"message": "The printed housing replaces the bracket and standoffs. The board bolts straight to the base on four of its eight heat inserts; the cover closes onto the other four, carries the 40 mm 24 V fan on self-tapping M3 \u00d7 12 mm button heads, and holds a plunger over the board's reset button. Adopted from candidate rns2 after a test print.",
-					"commit": "9ff8a1e3"
+					"commit": "9ff8a1e3",
+					"lines": [
+						{
+							"part": "ctrl-board-housing-base",
+							"qty": 1,
+							"uid": "204b"
+						},
+						{
+							"part": "ctrl-board-basically",
+							"qty": 1,
+							"uid": "yugu"
+						},
+						{
+							"part": "scr-m3-6-bhcs",
+							"qty": 4,
+							"uid": "e04c"
+						},
+						{
+							"part": "ctrl-board-housing-cover",
+							"qty": 1,
+							"uid": "ksh2"
+						},
+						{
+							"part": "scr-m3-12-cs",
+							"qty": 4,
+							"uid": "0a9x"
+						},
+						{
+							"part": "ctrl-board-housing-plunger",
+							"qty": 1,
+							"uid": "cljt"
+						},
+						{
+							"part": "ctrl-board-housing-plunger-retainer",
+							"qty": 1,
+							"uid": "g9sx"
+						},
+						{
+							"part": "scr-m3-8-cs",
+							"qty": 2,
+							"uid": "l6br"
+						},
+						{
+							"part": "fan-40mm-24v",
+							"qty": 1,
+							"uid": "7o57"
+						},
+						{
+							"part": "scr-m3-12-bhcs",
+							"qty": 4,
+							"uid": "izrb"
+						},
+						{
+							"part": "scr-m5-16-shcs",
+							"qty": 2,
+							"uid": "2e0s"
+						},
+						{
+							"part": "tnut-m5-2020",
+							"qty": 2,
+							"uid": "bpwm"
+						}
+					]
+				},
+				{
+					"version": "3",
+					"uid": "p5yl",
+					"date": "2026-09-21",
+					"message": "The five TMC2209 drivers, the Raspberry Pi Pico and the ten address jumper caps are placed on the board. Nothing about the housing changes: all three were always fitted to this board before the cover goes on, and they were carried as hand counts off the BOM sheet instead of lines, so their quantities did not come from the tree. The Pico is the pre-soldered one the catalog now buys.",
+					"breaking": false,
+					"commit": null
 				}
 			]
 		},
@@ -23002,11 +23100,9 @@
 			"description": "Driver for the all steppers",
 			"note": null,
 			"created_at": "2026-07-18",
-			"updated_at": "2026-07-18",
+			"updated_at": "2026-09-21",
 			"attributes": [],
-			"sheet_qty": {
-				"per_machine": 5
-			},
+			"sheet_qty": null,
 			"sheet_qty_text": null,
 			"stock": null,
 			"sourcing": {
@@ -23048,7 +23144,7 @@
 			"description": "Shunt for the control board's MS1/MS2 headers, which set each TMC2209's address on its UART bus. 10 per machine, two per driver.",
 			"note": null,
 			"created_at": "2026-08-23",
-			"updated_at": "2026-08-23",
+			"updated_at": "2026-09-21",
 			"attributes": [
 				{
 					"label": "Pitch",
@@ -23059,9 +23155,7 @@
 					"value": "Open-top shunt, 2-pin"
 				}
 			],
-			"sheet_qty": {
-				"per_machine": 10
-			},
+			"sheet_qty": null,
 			"sheet_qty_text": null,
 			"stock": null,
 			"sourcing": {
@@ -23090,14 +23184,12 @@
 			},
 			"name": "Raspberry Pi Pico",
 			"category": "Electronics",
-			"description": "Embedded MCU for controlling motors",
-			"note": null,
+			"description": "Retired, no longer counted into a machine. The catalog specifies the Pico bought with its headers already fitted (mcu-rpi-pico-presoldered) as of 2026-09-21. Kept as an unused entry rather than deleted, since a minted uid has to stay resolvable (see parts-calculator's own CLAUDE.md); deletion is tracked as sorter-v2 issue #734.",
+			"note": "Unused as of 2026-09-21. Buy mcu-rpi-pico-presoldered instead. If you already own a bare board, solder the headers on yourself: /hardware/helpers/pico-headers/.",
 			"created_at": "2026-07-18",
-			"updated_at": "2026-07-18",
+			"updated_at": "2026-09-21",
 			"attributes": [],
-			"sheet_qty": {
-				"per_machine": 1
-			},
+			"sheet_qty": null,
 			"sheet_qty_text": null,
 			"stock": null,
 			"sourcing": {
@@ -23115,9 +23207,59 @@
 			},
 			"alternative": null,
 			"caption": null,
-			"docs_page": null,
+			"docs_page": "/hardware/helpers/pico-headers/",
 			"conflicts": null,
 			"image": "https://assets.basically.website/sorter-parts/mcu-rpi-pico-full-35bf81d20d6e.jpg"
+		},
+		{
+			"id": "mcu-rpi-pico-presoldered",
+			"uid": "dq0q",
+			"kind": "cots",
+			"cots": {
+				"type": "mcu"
+			},
+			"name": "Raspberry Pi Pico with pre-soldered headers",
+			"category": "Electronics",
+			"description": "Embedded MCU for controlling motors. Bought with its two rows of 20 header pins already fitted, ready to seat in the control board.",
+			"note": null,
+			"created_at": "2026-09-21",
+			"updated_at": "2026-09-21",
+			"attributes": [
+				{
+					"label": "Chip",
+					"value": "RP2040"
+				},
+				{
+					"label": "Headers",
+					"value": "2 x 20 male pins, 2.54 mm, factory-fitted"
+				},
+				{
+					"label": "Debug pads",
+					"value": "Bare, no connector fitted"
+				}
+			],
+			"sheet_qty": null,
+			"sheet_qty_text": null,
+			"stock": null,
+			"sourcing": {
+				"vendors": [
+					{
+						"region": "US",
+						"vendor": "Amazon (waveshare)",
+						"url": "https://www.amazon.com/waveshare-Pico-Microcontroller-Development-Pre-soldered/dp/B0912M3T1H",
+						"affiliate_url": "https://www.amazon.com/waveshare-Pico-Microcontroller-Development-Pre-soldered/dp/B0912M3T1H?tag=sorterv2-20",
+						"price": 11.39,
+						"pack_qty": 1,
+						"as_of": "2026-09-21",
+						"note": "Ships with a loose 1x3 debug header and a micro USB cable; neither is needed."
+					}
+				]
+			},
+			"alternative": "A bare Raspberry Pi Pico plus 40 header pins, soldered on by hand: [[docs:/hardware/helpers/pico-headers/|Soldering Pico headers]]",
+			"caption": null,
+			"docs_page": null,
+			"conflicts": null,
+			"image": "https://assets.basically.website/sorter-parts/mcu-rpi-pico-presoldered-full-fc3efcd791b5.jpg"
 		},
 		{
 			"id": "header-pins-254",
@@ -23128,14 +23270,12 @@
 			},
 			"name": "2.54mm header pins",
 			"category": "Electronics",
-			"description": "Pico Headers",
-			"note": null,
+			"description": "Retired, no longer counted into a machine. Their only use was fitting headers to a bare Raspberry Pi Pico, and the catalog specifies the Pico bought with its headers already fitted (mcu-rpi-pico-presoldered) as of 2026-09-21. Kept as an unused entry rather than deleted, since a minted uid has to stay resolvable (see parts-calculator's own CLAUDE.md); deletion is tracked as sorter-v2 issue #734.",
+			"note": "Unused as of 2026-09-21. Needed only if you are soldering headers onto a bare Pico: /hardware/helpers/pico-headers/.",
 			"created_at": "2026-07-18",
-			"updated_at": "2026-07-18",
+			"updated_at": "2026-09-21",
 			"attributes": [],
-			"sheet_qty": {
-				"per_machine": 40
-			},
+			"sheet_qty": null,
 			"sheet_qty_text": null,
 			"stock": null,
 			"sourcing": {
@@ -23152,7 +23292,7 @@
 			},
 			"alternative": null,
 			"caption": null,
-			"docs_page": null,
+			"docs_page": "/hardware/helpers/pico-headers/",
 			"conflicts": null,
 			"image": "https://assets.basically.website/sorter-parts/header-pins-254-full-2f61f803bd83.jpg"
 		},
