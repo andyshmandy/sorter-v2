@@ -294,7 +294,9 @@ def start_ffmpeg(out_dir: str, role: str, w: int, h: int, fps: float, kbps: int,
         "-b:v", f"{kbps}k", "-maxrate", f"{int(kbps * 1.5)}k", "-bufsize", f"{kbps * 3}k",
         "-g", str(max(1, int(round(fps * 4)))), "-pix_fmt", "yuv420p",
         "-f", "segment", "-segment_time", str(segment_s), "-segment_format", "mp4",
-        "-segment_format_options", "movflags=+faststart",
+        # Fragmented MP4: every segment stays playable even if ffmpeg is killed mid-file.
+        # A stalled encoder on 2026-09-21 left three 15-minute files with no index.
+        "-segment_format_options", "movflags=+frag_keyframe+empty_moov+default_base_moof",
         "-reset_timestamps", "1", "-strftime", "1", pattern,
     ]
     env = dict(os.environ, TZ="UTC")
@@ -318,7 +320,9 @@ def start_ffmpeg_from_url(url: str, out_dir: str, role: str, kbps: int, encoder:
         "-b:v", f"{kbps}k", "-maxrate", f"{int(kbps * 1.5)}k", "-bufsize", f"{kbps * 3}k",
         "-g", str(max(1, int(round(fps * 4)))), "-pix_fmt", "yuv420p",
         "-f", "segment", "-segment_time", str(segment_s), "-segment_format", "mp4",
-        "-segment_format_options", "movflags=+faststart",
+        # Fragmented MP4: every segment stays playable even if ffmpeg is killed mid-file.
+        # A stalled encoder on 2026-09-21 left three 15-minute files with no index.
+        "-segment_format_options", "movflags=+frag_keyframe+empty_moov+default_base_moof",
         "-reset_timestamps", "1", "-strftime", "1", "-progress", "pipe:1", pattern,
     ]
     env = dict(os.environ, TZ="UTC")
