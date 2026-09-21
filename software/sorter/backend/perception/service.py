@@ -438,6 +438,16 @@ class PerceptionService:
     def channels(self) -> Dict[int, ChannelDef]:
         return dict(self._channels)
 
+    def channel_def(self, channel_id: int) -> Optional[ChannelDef]:
+        return self._channels.get(channel_id)
+
+    def debug_snapshot(self, channel_id: int) -> Optional[dict]:
+        """The worker's last inference cycle (the dict behind ``preview_frame``),
+        or None until it has completed one. Read-only; the recording events
+        stream serialises it."""
+        worker = self._workers.get(channel_id)
+        return worker.latest_debug if worker is not None else None
+
     def workers(self) -> Dict[int, InferenceWorker]:
         return dict(self._workers)
 

@@ -33,3 +33,8 @@ class CameraFrame:
     timestamp: float
     segmentation_map: Optional[np.ndarray] = field(default=None)
     uncorrected_raw: Optional[np.ndarray] = field(default=None)
+    # The camera's own JPEG for this frame, untouched (no rotation, flip or
+    # colour profile applied): what the recording tee ships. None when the
+    # capture path could not hand us the compressed buffer (non-MJPEG source,
+    # URL source, or a driver that ignores CAP_PROP_CONVERT_RGB).
+    raw_jpeg: Optional[bytes] = field(default=None, repr=False)
