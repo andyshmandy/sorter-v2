@@ -100,21 +100,27 @@ def serialize_debug(debug: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
-def raw_part(jpeg: bytes, timestamp: float, seq: int, dropped: int) -> bytes:
+def raw_part(jpeg: bytes, timestamp: float, seq: int, dropped: int, repeat: bool = False) -> bytes:
     """One multipart/x-mixed-replace part carrying the camera's JPEG plus the
-    capture timestamp and sequence number the recorder keys on."""
+    capture timestamp and sequence number the recorder keys on. A repeated part
+    (``X-Repeat: 1``) re-sends the last frame while the camera is quiet: it keeps
+    the connection alive and gives a wall-clock-paced encoder the held frame it
+    would show anyway, whereas an empty part of another content type makes
+    ffmpeg's mpjpeg demuxer stop."""
     head = (
         b"--" + RAW_BOUNDARY + b"\r\n"
         b"Content-Type: image/jpeg\r\n"
         b"Content-Length: " + str(len(jpeg)).encode() + b"\r\n"
         b"X-Timestamp: " + repr(float(timestamp)).encode() + b"\r\n"
         b"X-Seq: " + str(int(seq)).encode() + b"\r\n"
-        b"X-Dropped: " + str(int(dropped)).encode() + b"\r\n\r\n"
+        b"X-Dropped: " + str(int(dropped)).encode() + b"\r\n"
+        b"X-Repeat: " + (b"1" if repeat else b"0") + b"\r\n\r\n"
     )
     return head + jpeg + b"\r\n"
 
 
 def keepalive_part() -> bytes:
+    """Only before the first frame, when there is nothing to repeat yet."""
     return (
         b"--" + RAW_BOUNDARY + b"\r\n"
         b"Content-Type: application/x-keepalive\r\n"
@@ -196,18 +202,20 @@ def raw_stream(role: str, fps: float = 0.0):
     def generate() -> Iterator[bytes]:
         sub = thread.subscribe_raw(maxsize=RAW_QUEUE_FRAMES)
         last_sent = 0.0
+        last: tuple[bytes, float, int] | None = None
         try:
             while True:
                 try:
                     jpeg, ts, seq = sub.queue.get(timeout=RAW_KEEPALIVE_S)
                 except queue.Empty:
-                    yield keepalive_part()
+                    yield raw_part(*last, sub.dropped, repeat=True) if last else keepalive_part()
                     continue
                 if jpeg is None:
                     continue
                 if min_gap and (ts - last_sent) < min_gap:
                     continue
                 last_sent = ts
+                last = (jpeg, ts, seq)
                 yield raw_part(jpeg, ts, seq, sub.dropped)
         finally:
             thread.unsubscribe_raw(sub)

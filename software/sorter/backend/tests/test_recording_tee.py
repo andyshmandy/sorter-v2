@@ -63,6 +63,9 @@ def test_raw_part_framing_carries_timestamp_and_seq() -> None:
     assert b"X-Seq: 7\r\n" in head and b"X-Dropped: 3" in head
     assert body == jpeg + b"\r\n"
     assert keepalive_part().startswith(b"--frame\r\nContent-Type: application/x-keepalive\r\n")
+    repeated = raw_part(b"\xff\xd8", 1.5, 7, 0, repeat=True)
+    assert b"X-Repeat: 1\r\n" in repeated and b"Content-Type: image/jpeg\r\n" in repeated
+    assert b"X-Repeat: 0\r\n" in raw_part(b"\xff\xd8", 1.5, 7, 0)
 
 
 def test_serialize_debug_matches_what_the_feed_overlay_draws() -> None:
