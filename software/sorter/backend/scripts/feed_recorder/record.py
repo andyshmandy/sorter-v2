@@ -71,6 +71,13 @@ def utc_name(ts: float) -> str:
     return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(ts))
 
 
+def utc_name_ms(ts: float) -> str:
+    """For stills: the capture time to the millisecond, so a still can be matched exactly to
+    the inference event for its frame when the overlay is re-drawn offline. Whole seconds
+    were ambiguous by up to a second on a turning carousel."""
+    return time.strftime("%Y%m%dT%H%M%S", time.gmtime(ts)) + f".{int((ts % 1) * 1000):03d}Z"
+
+
 def human(n: float) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if n < 1024:
@@ -547,7 +554,7 @@ class RoleRecorder:
                             self.latest = (body, ts, seq)
                         if ts - last_still >= self.args.still_every:
                             last_still = ts
-                            path = os.path.join(self.stills_dir, f"{self.role}-{utc_name(ts)}.jpg")
+                            path = os.path.join(self.stills_dir, f"{self.role}-{utc_name_ms(ts)}.jpg")
                             tmp = path + ".part"
                             try:
                                 with open(tmp, "wb") as f:
