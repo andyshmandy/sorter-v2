@@ -5093,8 +5093,28 @@
       "name": "Powered USB Hub - 24v - 4 ports",
       "category": "Computer",
       "description": "Powered USB Hub(s) for webcams and Picos (see note)",
+      "alternative": "Waveshare USB3.2-Gen1-HUB-2IN-4OUT, or any powered 4-port hub whose DC input range covers 24 V.",
       "created_at": "2026-07-18",
-      "updated_at": "2026-07-18",
+      "updated_at": "2026-09-23",
+      "attributes": [
+        {
+          "label": "Part number",
+          "value": "Waveshare USB3.2-Gen1-HUB-4U"
+        },
+        {
+          "label": "Ports",
+          "value": "4x USB 3.2 Gen1 (USB-A)"
+        },
+        {
+          "label": "DC input",
+          "value": "7 to 36 V, 5.5 x 2.1 mm barrel jack"
+        },
+        {
+          "label": "Case",
+          "value": "Metal, with a slotted mounting flange at each end"
+        }
+      ],
+      "note": "The hub is fed 24 V, so it has to take 24 V DC in. Waveshare sell four hubs of this shape: USB3.2-Gen1-HUB-4U and USB3.2-Gen1-HUB-2IN-4OUT take 7 to 36 V and both work. USB-HUB-4U and USB-HUB-2IN-4OUT are 5 V only and will not run. Check the DC input range on the listing before you buy; the model is printed on the case.",
       "sheet_qty": {
         "per_machine": 1
       },
@@ -5109,6 +5129,14 @@
             "pack_qty": 1,
             "as_of": "2026-04-16",
             "affiliate_url": "https://www.amazon.com/Waveshare-Compatible-Windows-Wall-Mount-Driver-Free/dp/B0D97V3N3R?tag=sorterv2-20"
+          },
+          {
+            "region": "AU",
+            "vendor": "Amazon AU",
+            "url": "https://www.amazon.com.au/dp/B0BRN9QNY2",
+            "pack_qty": 1,
+            "as_of": "2026-09-23",
+            "note": "The USB3.2-Gen1-HUB-2IN-4OUT, which works here. The 4U itself has no Australian listing."
           }
         ]
       }
@@ -12496,14 +12524,18 @@
     },
     {
       "id": "electronics",
-      "uid": "k49u",
-      "version": "2",
+      "uid": "t22u",
+      "version": "3",
       "name": "Electronics",
-      "description": "The three boxes that bolt to the frame: the PSU, the control board, and the Orange Pi.",
+      "description": "The PSU, the control board and the Orange Pi, each in its own box bolted to the frame, plus the powered USB hub they share and its 24 V lead.",
       "docs": "/hardware/electronics/installation/",
       "lines": [
         {
           "assembly": "meanwell-psu-box",
+          "qty": 1
+        },
+        {
+          "part": "usb-hub-powered-24v",
           "qty": 1
         },
         {
@@ -12544,8 +12576,38 @@
         },
         {
           "version": "2",
+          "uid": "k49u",
           "date": "2026-09-23",
           "message": "The USB hub's 24 V lead joins Electronics. W2 on the power drawing, a barrel plug at each end. It sits at this level rather than on a load because the hub itself is not in the tree yet.",
+          "breaking": false,
+          "commit": null,
+          "lines": [
+            {
+              "assembly": "meanwell-psu-box",
+              "qty": 1,
+              "uid": "6uhi"
+            },
+            {
+              "assembly": "ctrl-board-mount",
+              "qty": 1,
+              "uid": "esvy"
+            },
+            {
+              "assembly": "orange-pi-mount",
+              "qty": 1,
+              "uid": "zczw"
+            },
+            {
+              "assembly": "harness-hub-24v",
+              "qty": 1,
+              "uid": "8b59"
+            }
+          ]
+        },
+        {
+          "version": "3",
+          "date": "2026-09-23",
+          "message": "Place the powered USB hub itself in the tree, beside the PSU box. It was a BOM-sheet hand count in no assembly at all; it runs off the PSU at 24 V and feeds the cameras and the Picos. v2 put its lead (W2) at this level because the hub was not in the tree yet, and that lead stays exactly where v2 put it. No physical change.",
           "breaking": false,
           "commit": null
         }
@@ -13445,7 +13507,7 @@
       "uid": "8b59",
       "version": "1",
       "name": "24 V USB hub lead (W2)",
-      "description": "The powered USB hub's feed, W2 on the power drawing: a barrel plug at each end, one into a PSU box jack and one into the hub's own jack. 12 in of 22 AWG. The hub itself is not placed in the tree yet, so this sits at the Electronics level beside the box the lead starts at. 1 per machine.",
+      "description": "The powered USB hub's feed, W2 on the power drawing: a barrel plug at each end, one into a PSU box jack and one into the hub's own jack. 12 in of 22 AWG. It sits at the Electronics level beside the box the lead starts at. 1 per machine.",
       "joining": [
         {
           "method": "solder",
