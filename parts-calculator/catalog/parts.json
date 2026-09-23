@@ -6666,6 +6666,7 @@
       "name": "IEC C14 inlet, switch + 10 A fuse",
       "category": "Power supply",
       "description": "Mains inlet for the PSU: switched, fused, pre-wired.",
+      "note": "Its red and blue leads are not consistent between units: both have arrived with the live on either colour. The fuse and the switch are in the live side, so pull the fuse and meter which lead loses continuity to its C14 pin, and land that one on the supply's L. Going by colour risks fusing and switching the neutral.",
       "created_at": "2026-07-18",
       "updated_at": "2026-09-21",
       "attributes": [
@@ -6707,6 +6708,57 @@
         ]
       },
       "image_url": "https://assets.basically.website/sorter-parts/psu-switch-one-full-1614496a00cc.png"
+    },
+    {
+      "id": "mains-cord-c13",
+      "uid": "nuya",
+      "kind": "cots",
+      "cots": {
+        "type": "cable"
+      },
+      "name": "Mains lead, IEC C13 to wall plug",
+      "category": "Power supply",
+      "description": "The cable from the wall socket to the machine. A C13 socket at the machine end, which is what the inlet's C14 mates with, and your country's plug at the other. The cord a desktop PC or a monitor comes with.",
+      "note": "Three core: the machine earths through this cable. 10 A or better, which matches the inlet's own fuse and is far more than the machine draws. It is listed so it is not forgotten at the end of a build, not because it has to be bought; most people have a spare one already.",
+      "created_at": "2026-09-23",
+      "updated_at": "2026-09-23",
+      "attributes": [
+        {
+          "label": "Machine end",
+          "value": "IEC 320 C13 socket, 3-pin"
+        },
+        {
+          "label": "Wall end",
+          "value": "Whatever plug your country uses"
+        },
+        {
+          "label": "Cores",
+          "value": "3, including earth. A 2-core figure-8 lead neither fits nor earths the machine"
+        },
+        {
+          "label": "Rating",
+          "value": "10 A or better, to match the inlet's 10 A fuse"
+        }
+      ],
+      "sheet_qty": {
+        "per_machine": 1
+      },
+      "caption": "One per machine, and the one part you probably already own.",
+      "docs_page": "/hardware/electronics/installation/psu-box/",
+      "sourcing": {
+        "vendors": [
+          {
+            "region": "US",
+            "vendor": "Amazon",
+            "url": "https://www.amazon.com/dp/B072BYGKZZ",
+            "affiliate_url": "https://www.amazon.com/dp/B072BYGKZZ?tag=sorterv2-20",
+            "price": 6.94,
+            "pack_qty": 1,
+            "as_of": "2026-09-23",
+            "note": "Amazon Basics 6 ft, NEMA 5-15P to C13, 18 AWG, UL listed. That is the US plug; outside the US buy the same cord with your own plug on it, or use one you already have."
+          }
+        ]
+      }
     },
     {
       "id": "fan-40mm-24v",
