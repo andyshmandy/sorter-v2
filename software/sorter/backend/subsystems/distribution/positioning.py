@@ -1,7 +1,7 @@
 import time
 import queue
 import random
-from typing import Optional
+from typing import Any, Optional
 import server.shared_state as shared_state
 from states.base_state import BaseState
 from subsystems.shared_variables import SharedVariables
@@ -49,6 +49,23 @@ def _allowMultiCategoryBins() -> bool:
         )
     except Exception:
         return False
+
+
+
+def _persistBinCategories(logger: Any, layout: DistributionLayout) -> None:
+    # Runs inside the control loop. If another writer holds the SQLite write
+    # lock (a media retention sweep, say) this write times out after
+    # busy_timeout and raises - and an exception here unwinds main() and takes
+    # the whole backend down to standby mid-sort. The in-memory layout already
+    # carries the assignment, and every call writes the full layout, so a
+    # missed write is repaired by the next successful one. Warn and carry on.
+    try:
+        setBinCategories(extractCategories(layout))
+    except Exception as exc:
+        logger.warning(
+            f"Positioning: failed to persist bin categories ({type(exc).__name__}: {exc}); "
+            "keeping the in-memory layout, will retry on the next assignment"
+        )
 
 
 class Positioning(BaseState):
@@ -113,6 +130,7 @@ class Positioning(BaseState):
                 self.logger.warn("Positioning: no piece ready for distribution")
                 self._setOccupancyState("positioning.wait_piece_for_distribution")
                 return DistributionState.IDLE
+            self.shared.distribution_positioned_uuid = piece.uuid
 
             if getattr(self.shared, "sample_collection_mode", False):
                 self.logger.info(
@@ -181,6 +199,30 @@ class Positioning(BaseState):
                     f"Positioning: piece {piece.uuid} ({piece.part_id}) not in active "
                     f"inventory — routing within not-in-inventory bins as {category_id}"
                 )
+            if getattr(self.shared, "bucket_passthrough_hold", False):
+                # The classification channel lost an unrouted multi-drop piece
+                # and it may still be riding the platter, about to fall the next
+                # time the channel turns. Closing a layer door now would catch
+                # that piece in this bin. Everything goes to the bucket until the
+                # channel says it is clean again.
+                self.logger.warning(
+                    f"Positioning: unrouted piece loose on the classification channel — "
+                    f"piece {piece.uuid} passes through to the bucket instead of claiming a bin"
+                )
+                self._clearBinsFullAlertIfOwned()
+                self._clearChuteJamAlertIfOwned()
+                self._openAllDoorsForPassthrough()
+                piece.stage = PieceStage.distributing
+                piece.distributing_at = time.time()
+                piece.distribution_target_selected_at = piece.distributing_at
+                piece.category_id = category_id
+                piece.destination_bin = None
+                piece.updated_at = time.time()
+                self._piece = piece
+                self.event_queue.put(knownObjectToEvent(piece))
+                self._setOccupancyState("positioning.passthrough_loose_piece")
+                return DistributionState.READY
+
             address, _ = self._findOrAssignBinForCategory(
                 category_id, not_in_inventory=route_not_in_inventory
             )
@@ -295,6 +337,12 @@ class Positioning(BaseState):
                 self._door_servo_index = address.layer_index
             self._target_address = address
             self._startChuteMove()
+            # Re-read the clock: `now` was taken at the top of step(), and the
+            # init phase above (bin lookup, servo selection, the move command
+            # itself) can block for seconds on the serial bus or a disk stall.
+            # Charging that time to the move budget produced a false
+            # "chute stepper did not stop" jam one second into a 2.8 s move.
+            now = time.monotonic()
             self._moving_started_at = now
             init_ms = (now - self._state_entered_at) * 1000
             if self.gc.disable_servos:
@@ -716,6 +764,13 @@ class Positioning(BaseState):
         falls straight through to the bottom tray. A follow-up
         ``_selectDoor`` on the next piece will re-close the appropriate
         layer.
+
+        Like ``_selectDoor``, this re-issues the open on every door rather than
+        consulting the servo's shadow angle. The shadow is set even when the
+        firmware rejects a move (``ServoMotor.move_to_and_release``), so a door
+        the software believes is open can physically be closed — and the
+        shadow-gated version would then never correct it, quietly dropping the
+        bucket's pieces into that layer's bin.
         """
         if self.gc.disable_servos:
             return
@@ -723,10 +778,9 @@ class Positioning(BaseState):
             if not self._isLayerUsable(i):
                 continue
             try:
-                if servo.isClosed():
-                    if hasattr(servo, "apply_open_speed"):
-                        servo.apply_open_speed()
-                    servo.open()
+                if hasattr(servo, "apply_open_speed"):
+                    servo.apply_open_speed()
+                servo.open()
             except Exception as exc:
                 self._markLayerUnavailable(
                     i,
@@ -894,7 +948,7 @@ class Positioning(BaseState):
         if first_unassigned is not None and category_id != MISC_CATEGORY:
             address, b = first_unassigned
             b.category_ids = [category_id]
-            setBinCategories(extractCategories(self.layout))
+            _persistBinCategories(self.logger, self.layout)
             self.logger.info(
                 f"Positioning: assigned category {category_id} to bin at layer={address.layer_index}, section={address.section_index}, bin={address.bin_index}"
             )
@@ -912,7 +966,7 @@ class Positioning(BaseState):
         ):
             _, _, address, b = best_combine
             b.category_ids.append(category_id)
-            setBinCategories(extractCategories(self.layout))
+            _persistBinCategories(self.logger, self.layout)
             self.logger.info(
                 f"Positioning: combined category {category_id} into shared bin at "
                 f"layer={address.layer_index}, section={address.section_index}, "

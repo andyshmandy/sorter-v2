@@ -1,5 +1,6 @@
 import logging
 import subprocess
+import queue
 import threading
 import time
 from collections import deque
@@ -723,6 +724,62 @@ def apply_camera_color_profile(
     return np.round(corrected[:, :, ::-1] * 255.0).astype(np.uint8)
 
 
+
+def _enable_raw_mjpeg_read(cap: cv2.VideoCapture, source: int | str, fourcc: str | None) -> bool:
+    """Ask OpenCV's V4L2 backend to hand back the camera's MJPEG buffer instead of
+    decoding it for us. We then decode with ``cv2.imdecode`` (the same libjpeg
+    call the backend would have made), so the CPU cost is unchanged and the
+    compressed bytes become available for the recording tee at zero extra USB or
+    encode cost. Only for local MJPEG sources on Linux; anything else keeps the
+    stock decode path."""
+    if platform.system() != "Linux" or not isinstance(source, int):
+        return False
+    if not (isinstance(fourcc, str) and fourcc.strip()[:4].upper() == "MJPG"):
+        return False
+    try:
+        return bool(cap.set(cv2.CAP_PROP_CONVERT_RGB, 0))
+    except Exception:
+        return False
+
+
+def _decode_raw_mjpeg_read(frame: Optional[np.ndarray]) -> tuple[Optional[np.ndarray], Optional[bytes]]:
+    """Split a ``cap.read()`` result taken with CAP_PROP_CONVERT_RGB off into
+    ``(bgr, jpeg_bytes)``. The raw buffer arrives as a 1xN (or N) uint8 array
+    starting with the JPEG SOI marker. A driver that ignored the flag hands us
+    the decoded HxWx3 image instead: pass it through with no bytes. A buffer
+    that is not a decodable JPEG returns ``(None, None)`` so the caller treats
+    it as a failed read."""
+    if frame is None:
+        return None, None
+    if frame.ndim == 3 and frame.shape[2] == 3:
+        return frame, None
+    buf = np.ascontiguousarray(frame).reshape(-1)
+    if buf.size < 4 or buf[0] != 0xFF or buf[1] != 0xD8:
+        return None, None
+    bgr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+    if bgr is None:
+        return None, None
+    return bgr, buf.tobytes()
+
+
+class RawFrameSubscription:
+    """One consumer of the capture thread's raw JPEG tee. The capture loop
+    offers every frame; a slow consumer loses frames (counted in ``dropped``)
+    rather than slowing the loop or growing memory."""
+
+    __slots__ = ("queue", "dropped")
+
+    def __init__(self, maxsize: int = 8) -> None:
+        self.queue: "queue.Queue[tuple[Optional[bytes], float, int]]" = queue.Queue(maxsize=maxsize)
+        self.dropped = 0
+
+    def offer(self, jpeg: Optional[bytes], timestamp: float, seq: int) -> None:
+        try:
+            self.queue.put_nowait((jpeg, timestamp, seq))
+        except queue.Full:
+            self.dropped += 1
+
+
 class CaptureThread:
     _thread: Optional[threading.Thread]
     _stop_event: threading.Event
@@ -750,6 +807,37 @@ class CaptureThread:
         self._color_profile_lock = threading.Lock()
         self._config_lock = threading.Lock()
         self._cap_lock = threading.Lock()
+        # Recording tee: consumers of the camera's own JPEG bytes per frame.
+        self._raw_subscribers: list[RawFrameSubscription] = []
+        self._raw_subscribers_lock = threading.Lock()
+        self._raw_seq = 0
+        self.raw_bytes_available = False
+
+    def subscribe_raw(self, maxsize: int = 8) -> RawFrameSubscription:
+        """Start receiving ``(jpeg_bytes, timestamp, seq)`` for every captured
+        frame. ``jpeg_bytes`` is None when the raw buffer is unavailable for
+        this source. Always pair with ``unsubscribe_raw``."""
+        sub = RawFrameSubscription(maxsize=maxsize)
+        with self._raw_subscribers_lock:
+            self._raw_subscribers.append(sub)
+        return sub
+
+    def unsubscribe_raw(self, sub: RawFrameSubscription) -> None:
+        with self._raw_subscribers_lock:
+            try:
+                self._raw_subscribers.remove(sub)
+            except ValueError:
+                pass
+
+    def _publish_raw(self, jpeg: Optional[bytes], timestamp: float) -> None:
+        if not self._raw_subscribers:
+            return
+        self._raw_seq += 1
+        seq = self._raw_seq
+        with self._raw_subscribers_lock:
+            subs = list(self._raw_subscribers)
+        for sub in subs:
+            sub.offer(jpeg, timestamp, seq)
 
     def drain_ring_buffer(self, max_frames: int) -> list[CameraFrame]:
         """Return up to ``max_frames`` most-recent frames from the ring buffer.
@@ -1028,6 +1116,7 @@ class CaptureThread:
         # Re-apply after the first successful read so the settings actually stick.
         post_stream_settings: dict[str, int | float | bool] | None = None
         post_stream_source: int | None = None
+        raw_mjpeg_mode = False
 
         while not self._stop_event.is_set():
             source, is_url, width, height, fps, fourcc = self._get_config_snapshot()
@@ -1124,6 +1213,7 @@ class CaptureThread:
                         cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
                         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
                         cap.set(cv2.CAP_PROP_FPS, fps)
+                        raw_mjpeg_mode = _enable_raw_mjpeg_read(cap, source, fourcc)
                         settings_to_apply = self.getDeviceSettings()
                         pre_settings = settings_to_apply or default_auto_camera_device_settings()
                         applied_device_settings = apply_camera_device_settings(
@@ -1151,6 +1241,11 @@ class CaptureThread:
                 ret, frame = cap.read()
             except Exception:
                 ret, frame = False, None
+            raw_jpeg: bytes | None = None
+            if ret and raw_mjpeg_mode:
+                frame, raw_jpeg = _decode_raw_mjpeg_read(frame)
+                if frame is None:
+                    ret = False
             if ret:
                 read_failures = 0
                 if not is_url and width > 0 and height > 0:
@@ -1192,10 +1287,13 @@ class CaptureThread:
                     results=[],
                     timestamp=time.time(),
                     uncorrected_raw=geom_frame,
+                    raw_jpeg=raw_jpeg,
                 )
                 self.latest_frame = camera_frame
                 # deque.append is atomic under the GIL — no lock needed.
                 self._ring_buffer.append(camera_frame)
+                self.raw_bytes_available = raw_jpeg is not None
+                self._publish_raw(raw_jpeg, camera_frame.timestamp)
             else:
                 read_failures += 1
                 # For URL sources, briefly wait then retry (stream may reconnect)

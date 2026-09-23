@@ -248,7 +248,41 @@ def _writeCrop(jpeg: bytes, meta: dict[str, Any]) -> None:
         conn.commit()
 
 
+def _unlinkEvictedFiles(rel_paths: list[str], base_dir: Path) -> None:
+    # Unlink everything first, then try ONE rmdir per emptied parent. rmdir on a
+    # non-empty directory just fails with ENOTEMPTY, so this never lists the
+    # directory - the old per-file `any(parent.iterdir())` read all ~200k names
+    # on every unlink, which under sorting load made a sweep take 15-30 minutes
+    # and starved crop capture for the duration.
+    parents: set[Path] = set()
+    for rel_path in rel_paths:
+        abs_path = base_dir / rel_path
+        try:
+            abs_path.unlink(missing_ok=True)
+        except OSError:
+            continue
+        if abs_path.parent != base_dir:
+            parents.add(abs_path.parent)
+    for parent in parents:
+        try:
+            parent.rmdir()
+        except OSError:
+            pass
+
+
 def _retentionSweep() -> None:
+    # Filesystem work happens OUTSIDE any transaction. The previous shape held
+    # one write transaction across every unlink; on a directory with ~200k
+    # entries that pinned the SQLite write lock for 10-20 minutes per sweep and
+    # starved every other writer of local_state.sqlite (run history, piece
+    # images, lifetime stats, cloud sync, and the control loop's own bin-layout
+    # persist, whose 5 s busy_timeout then became a fatal exception).
+    #
+    # Order: pick victims (short read) -> unlink files (no transaction) ->
+    # tombstone rows in one batch (short write). If the process dies between
+    # the unlink and the tombstone, the next sweep re-selects the same rows,
+    # the unlink of an already-missing file is a no-op, and the tombstone
+    # lands then - so nothing on disk is ever orphaned.
     with _connection() as conn:
         row = conn.execute(
             "SELECT COALESCE(SUM(bytes), 0) AS total FROM channel_crops WHERE deleted_at IS NULL"
@@ -263,34 +297,30 @@ def _retentionSweep() -> None:
             "SELECT id, file_path, bytes FROM channel_crops WHERE deleted_at IS NULL "
             "ORDER BY (synced_at IS NULL) ASC, created_at ASC LIMIT 1000"
         ).fetchall()
-        now = time.time()
-        freed = 0
-        evicted = 0
-        for r in rows:
-            if freed >= overage:
-                break
-            abs_path = channel_crops_dir() / str(r["file_path"])
-            try:
-                abs_path.unlink(missing_ok=True)
-                parent = abs_path.parent
-                if parent != channel_crops_dir() and not any(parent.iterdir()):
-                    parent.rmdir()
-            except OSError:
-                pass
-            conn.execute(
-                "UPDATE channel_crops SET deleted_at = ? WHERE id = ?",
-                (now, int(r["id"])),
-            )
-            freed += int(r["bytes"] or 0)
-            evicted += 1
-        conn.commit()
-    if evicted:
-        with _stats_lock:
-            _stats["evicted_files"] += evicted
-        _log(
-            "info",
-            f"channel_crop_store: retention evicted {evicted} files ({freed / 1024 / 1024:.1f} MB)",
+    victims: list[tuple[int, str]] = []
+    freed = 0
+    for r in rows:
+        if freed >= overage:
+            break
+        victims.append((int(r["id"]), str(r["file_path"])))
+        freed += int(r["bytes"] or 0)
+    if not victims:
+        return
+    _unlinkEvictedFiles([rel_path for _, rel_path in victims], channel_crops_dir())
+    now = time.time()
+    with _connection() as conn:
+        conn.executemany(
+            "UPDATE channel_crops SET deleted_at = ? WHERE id = ?",
+            [(now, crop_id) for crop_id, _ in victims],
         )
+        conn.commit()
+    evicted = len(victims)
+    with _stats_lock:
+        _stats["evicted_files"] += evicted
+    _log(
+        "info",
+        f"channel_crop_store: retention evicted {evicted} files ({freed / 1024 / 1024:.1f} MB)",
+    )
 
 
 def _rowToDict(r: sqlite3.Row) -> dict[str, Any]:
