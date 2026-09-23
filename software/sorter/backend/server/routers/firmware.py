@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 import threading
 import time
 import uuid
@@ -23,7 +24,7 @@ router = APIRouter()
 GITHUB_REPO = "basicallysource/sorter-v2"
 GITHUB_RELEASES_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
 RELEASES_CACHE_TTL_S = 60.0
-UPLOAD_DIR = "/tmp/sorter-firmware-uploads"
+UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "sorter-firmware-uploads")
 MAX_UF2_SIZE_BYTES = 16 * 1024 * 1024
 MAX_UPLOADS_KEPT = 8
 MAX_JOBS_KEPT = 10

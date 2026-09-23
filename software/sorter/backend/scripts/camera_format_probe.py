@@ -21,6 +21,7 @@ of USB iso bandwidth."
 from __future__ import annotations
 
 import argparse
+import platform
 import re
 import subprocess
 import sys
@@ -199,6 +200,10 @@ def reportSimultaneous(indices: list[int], fourcc: str, width: int, height: int,
 
 
 def main() -> int:
+    if platform.system() != "Linux":
+        print("camera_format_probe.py is Linux-only. It depends on /dev/video* and v4l2-ctl.")
+        return 2
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--multi", action="store_true", help="also open all capture-capable cams simultaneously in MJPG")
     parser.add_argument("--multi-fourcc", default="MJPG")

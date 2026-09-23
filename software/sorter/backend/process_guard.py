@@ -72,9 +72,6 @@ def acquire_backend_process_guard(
     cleanup_port_conflicts: bool = True,
     lock_path: Path | None = None,
 ) -> BackendProcessGuard:
-    if fcntl is None:
-        raise ProcessGuardError("Backend process guard requires fcntl support on this platform.")
-
     resolved_script = script_path.resolve()
     resolved_repo = repo_root.resolve()
     resolved_lock_path = lock_path.resolve() if lock_path is not None else _default_lock_path(resolved_repo)
@@ -82,6 +79,19 @@ def acquire_backend_process_guard(
 
     resolved_lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = resolved_lock_path.open("a+", encoding="utf-8")
+
+    if fcntl is None:
+        try:
+            _write_metadata(handle, metadata)
+        except Exception:
+            handle.close()
+            raise
+        _log(
+            logger,
+            "warning",
+            "Backend process guard is running without fcntl support on this platform; single-instance locking is disabled.",
+        )
+        return BackendProcessGuard(resolved_lock_path, handle, metadata)
 
     try:
         _acquire_or_replace_lock(

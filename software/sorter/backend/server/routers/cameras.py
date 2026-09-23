@@ -14,6 +14,7 @@ import os
 import platform
 import re
 import subprocess
+import tempfile
 import threading
 import time
 from functools import lru_cache
@@ -77,6 +78,8 @@ CAMERA_SETUP_ROLES = {
     "classification_top",
     "classification_bottom",
 }
+
+CALIBRATION_GALLERY_ROOT = Path(tempfile.gettempdir()) / "calibration-gallery"
 
 _DASHBOARD_CROP_PADDING_FACTOR = 0.14
 _DASHBOARD_CROP_MIN_PADDING_PX = 48.0
@@ -2778,7 +2781,7 @@ def _cleanup_old_gallery_dirs(max_age_seconds: float = 3600.0) -> None:
     """Remove calibration gallery directories older than max_age_seconds."""
     import shutil
 
-    gallery_root = Path("/tmp/calibration-gallery")
+    gallery_root = CALIBRATION_GALLERY_ROOT
     if not gallery_root.exists():
         return
     now = time.time()
@@ -2817,7 +2820,7 @@ def _run_camera_calibration_sync(
     # Create gallery directory for this calibration run
     _cleanup_old_gallery_dirs()
     gallery_id = task_id or uuid4().hex
-    gallery_dir = Path("/tmp/calibration-gallery") / gallery_id
+    gallery_dir = CALIBRATION_GALLERY_ROOT / gallery_id
     gallery_dir.mkdir(parents=True, exist_ok=True)
 
     _, raw_config = _read_machine_params_config()
@@ -5104,7 +5107,7 @@ def get_camera_device_settings_calibration_task(role: str, task_id: str) -> Dict
 @router.get("/api/cameras/device-settings/{role}/calibrate-target/{task_id}/gallery")
 def get_calibration_gallery(role: str, task_id: str) -> Dict[str, Any]:
     """List all frames saved during a calibration run."""
-    gallery_dir = Path("/tmp/calibration-gallery") / task_id
+    gallery_dir = CALIBRATION_GALLERY_ROOT / task_id
     if not gallery_dir.exists():
         raise HTTPException(status_code=404, detail="Gallery not found for this calibration task.")
 
@@ -5132,7 +5135,7 @@ def get_calibration_gallery_image(role: str, task_id: str, filename: str) -> Str
     """Serve a single saved calibration frame."""
     if ".." in filename or "/" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename.")
-    image_path = Path("/tmp/calibration-gallery") / task_id / filename
+    image_path = CALIBRATION_GALLERY_ROOT / task_id / filename
     if not image_path.exists() or not image_path.suffix == ".jpg":
         raise HTTPException(status_code=404, detail="Image not found.")
     return StreamingResponse(

@@ -10,6 +10,7 @@ Usage (from software/sorter/backend/):
 from __future__ import annotations
 
 import argparse
+import platform
 import sys
 import threading
 import time
@@ -656,8 +657,21 @@ def buildGc(debug: bool) -> GlobalConfig:
 
 
 def _enumerate_cameras() -> dict[str, int]:
-    """Return {label: device_index} for /dev/video* nodes that have actual capture formats."""
+  """Return {label: device_index} for locally available camera indices."""
     result: dict[str, int] = {}
+  if platform.system() != "Linux":
+    try:
+      from cv2_enumerate_cameras import enumerate_cameras
+
+      for camera in enumerate_cameras():
+        index = getattr(camera, "index", None)
+        if isinstance(index, int) and not isinstance(index, bool):
+          label = getattr(camera, "name", None) or f"camera{index}"
+          result[str(label)] = index
+    except Exception:
+      pass
+    return result
+
     for path in sorted(glob.glob("/dev/video[0-9]*")):
         try:
             out = subprocess.run(

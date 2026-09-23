@@ -91,7 +91,7 @@ def rebootToBootloader(gc: GlobalConfig, port: str) -> None:
 
 
 def findBootloaderBlockdev() -> Optional[str]:
-    if platform.system() == "Darwin":
+    if platform.system() in {"Darwin", "Windows"}:
         return None
     try:
         result = subprocess.run(
@@ -110,10 +110,72 @@ def findBootloaderBlockdev() -> Optional[str]:
     return None
 
 
+def _windows_bootloader_mount() -> Optional[str]:
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        drives_mask = int(kernel32.GetLogicalDrives())
+        if drives_mask <= 0:
+            return None
+
+        get_volume_information = kernel32.GetVolumeInformationW
+        get_volume_information.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(wintypes.DWORD),
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+        ]
+        get_volume_information.restype = wintypes.BOOL
+
+        drive_type = kernel32.GetDriveTypeW
+        drive_type.argtypes = [wintypes.LPCWSTR]
+        drive_type.restype = wintypes.UINT
+
+        DRIVE_REMOVABLE = 2
+        DRIVE_FIXED = 3
+
+        for index in range(26):
+            if not (drives_mask & (1 << index)):
+                continue
+            root = f"{chr(ord('A') + index)}:\\"
+            if drive_type(root) not in {DRIVE_REMOVABLE, DRIVE_FIXED}:
+                continue
+
+            volume_name = ctypes.create_unicode_buffer(261)
+            serial_number = wintypes.DWORD()
+            max_component_len = wintypes.DWORD()
+            fs_flags = wintypes.DWORD()
+            fs_name = ctypes.create_unicode_buffer(261)
+
+            ok = get_volume_information(
+                root,
+                volume_name,
+                len(volume_name),
+                ctypes.byref(serial_number),
+                ctypes.byref(max_component_len),
+                ctypes.byref(fs_flags),
+                fs_name,
+                len(fs_name),
+            )
+            if ok and volume_name.value.upper() == "RPI-RP2":
+                return root
+    except Exception:
+        return None
+    return None
+
+
 def findBootloaderMount() -> Optional[str]:
     if platform.system() == "Darwin":
         path = "/Volumes/RPI-RP2"
         return path if os.path.isdir(path) else None
+    if platform.system() == "Windows":
+        return _windows_bootloader_mount()
     for pattern in ["/media/*/RPI-RP2", "/run/media/*/RPI-RP2", "/mnt/RPI-RP2"]:
         matches = glob.glob(pattern)
         if matches:
@@ -139,7 +201,7 @@ def waitForBootloaderMount(
         path = findBootloaderMount()
         if path:
             return path
-        if platform.system() != "Darwin":
+        if platform.system() == "Linux":
             dev = findBootloaderBlockdev()
             if dev:
                 os.makedirs(LINUX_MOUNT_POINT, exist_ok=True)

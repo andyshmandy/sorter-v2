@@ -44,6 +44,10 @@ def _timestamp() -> float:
     return time.time()
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
 class BackendSupervisor:
     def __init__(
         self,
@@ -193,13 +197,19 @@ class BackendSupervisor:
                 return
             self._manual_stop_requested = False
 
-            child = subprocess.Popen(
-                self._command,
-                cwd=str(self._cwd),
-                env=self._environment,
-                start_new_session=True,
-                stderr=subprocess.PIPE,
-            )
+            popen_kwargs: dict[str, Any] = {
+                "cwd": str(self._cwd),
+                "env": self._environment,
+                "stderr": subprocess.PIPE,
+            }
+            if _is_windows():
+                popen_kwargs["creationflags"] = getattr(
+                    subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+                )
+            else:
+                popen_kwargs["start_new_session"] = True
+
+            child = subprocess.Popen(self._command, **popen_kwargs)
             self._process = child
             self._process_group_pid = child.pid
             self._process_started_at = _timestamp()
@@ -345,10 +355,7 @@ class BackendSupervisor:
                 return
             self._last_exit_reason = reason
 
-        try:
-            os.killpg(pgid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
+        self._terminate_process(process, pgid)
 
         deadline = time.time() + self._stop_timeout_s
         while time.time() < deadline:
@@ -357,10 +364,7 @@ class BackendSupervisor:
             time.sleep(0.1)
 
         if process.poll() is None:
-            try:
-                os.killpg(pgid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            self._kill_process(process, pgid)
             deadline = time.time() + 2.0
             while time.time() < deadline:
                 if process.poll() is not None:
@@ -378,6 +382,45 @@ class BackendSupervisor:
                     if self._shutdown.is_set() or self._manual_stop_requested
                     else "restarting"
                 )
+
+    def _terminate_process(self, process: subprocess.Popen[bytes], pgid: int) -> None:
+        if _is_windows():
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
+            except OSError:
+                pass
+            return
+
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    def _kill_process(self, process: subprocess.Popen[bytes], pgid: int) -> None:
+        if _is_windows():
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+            except OSError:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                except OSError:
+                    pass
+            return
+
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 def _handler_factory(supervisor: BackendSupervisor):

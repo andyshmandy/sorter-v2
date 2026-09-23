@@ -22,6 +22,7 @@ import os
 import platform
 import socket
 import uuid
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
 
@@ -34,6 +35,8 @@ _BOOTED_AT = datetime.now(timezone.utc).isoformat()
 
 
 def _v4l2CameraModel(index: int) -> str | None:
+    if platform.system() != "Linux":
+        return None
     try:
         with open(f"/sys/class/video4linux/video{index}/name") as handle:
             name = handle.read().strip()
@@ -250,18 +253,42 @@ def _controllerBoards() -> dict[str, Any]:
 
 def _system() -> dict[str, Any]:
     info: dict[str, Any] = {"ram_bytes": None, "disk_total_bytes": None, "cpu_count": os.cpu_count()}
-    try:
-        with open("/proc/meminfo") as handle:
-            for line in handle:
-                if line.startswith("MemTotal:"):
-                    info["ram_bytes"] = int(line.split()[1]) * 1024
-                    break
-    except Exception:
-        pass
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+
+            class _MemoryStatus(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_uint32),
+                    ("dwMemoryLoad", ctypes.c_uint32),
+                    ("ullTotalPhys", ctypes.c_uint64),
+                    ("ullAvailPhys", ctypes.c_uint64),
+                    ("ullTotalPageFile", ctypes.c_uint64),
+                    ("ullAvailPageFile", ctypes.c_uint64),
+                    ("ullTotalVirtual", ctypes.c_uint64),
+                    ("ullAvailVirtual", ctypes.c_uint64),
+                    ("sullAvailExtendedVirtual", ctypes.c_uint64),
+                ]
+
+            status = _MemoryStatus()
+            status.dwLength = ctypes.sizeof(_MemoryStatus)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                info["ram_bytes"] = int(status.ullTotalPhys)
+        except Exception:
+            pass
+    else:
+        try:
+            with open("/proc/meminfo") as handle:
+                for line in handle:
+                    if line.startswith("MemTotal:"):
+                        info["ram_bytes"] = int(line.split()[1]) * 1024
+                        break
+        except Exception:
+            pass
     try:
         import shutil
 
-        info["disk_total_bytes"] = int(shutil.disk_usage("/").total)
+        info["disk_total_bytes"] = int(shutil.disk_usage(Path.cwd()).total)
     except Exception:
         pass
     return info
@@ -269,20 +296,25 @@ def _system() -> dict[str, Any]:
 
 def _macAddresses() -> list[str]:
     macs: set[str] = set()
-    try:
-        base = "/sys/class/net"
-        for iface in os.listdir(base):
-            if iface == "lo":
-                continue
-            try:
-                with open(f"{base}/{iface}/address") as handle:
-                    mac = handle.read().strip()
-                if mac and mac != "00:00:00:00:00:00":
-                    macs.add(mac)
-            except OSError:
-                continue
-    except OSError:
-        pass
+    if platform.system() == "Linux":
+        try:
+            base = "/sys/class/net"
+            for iface in os.listdir(base):
+                if iface == "lo":
+                    continue
+                try:
+                    with open(f"{base}/{iface}/address") as handle:
+                        mac = handle.read().strip()
+                    if mac and mac != "00:00:00:00:00:00":
+                        macs.add(mac)
+                except OSError:
+                    continue
+        except OSError:
+            pass
+    if not macs:
+        node = uuid.getnode()
+        if (node >> 40) % 2 == 0:
+            macs.add(":".join(f"{(node >> shift) & 0xFF:02x}" for shift in range(40, -1, -8)))
     return sorted(macs)
 
 
@@ -299,6 +331,8 @@ def _localIps() -> list[str]:
 
 
 def _cpuSerial() -> str | None:
+    if platform.system() != "Linux":
+        return None
     try:
         with open("/proc/cpuinfo") as handle:
             for line in handle:

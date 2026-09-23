@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import glob
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from server import shared_state
 router = APIRouter()
 
 _MAX_READ_BYTES = 512_000
+_TMPDIR = tempfile.gettempdir()
 
 _LOG_SOURCES = [
     {
@@ -19,11 +21,11 @@ _LOG_SOURCES = [
         "label": "Machine Backend",
         "description": "Current sorter runtime and backend process output.",
         "patterns": [
-            "/tmp/sorter-client-main.log",
-            "/tmp/sorter-client.log",
-            "/tmp/sorter-client-backend.log",
-            "/tmp/legosorter-machine-backend.log",
-            "/tmp/legosorter-client-backend.log",
+            os.path.join(_TMPDIR, "sorter-client-main.log"),
+            os.path.join(_TMPDIR, "sorter-client.log"),
+            os.path.join(_TMPDIR, "sorter-client-backend.log"),
+            os.path.join(_TMPDIR, "legosorter-machine-backend.log"),
+            os.path.join(_TMPDIR, "legosorter-client-backend.log"),
         ],
     },
     {
@@ -31,16 +33,16 @@ _LOG_SOURCES = [
         "label": "Machine API",
         "description": "Standalone API-only machine logs, if available.",
         "patterns": [
-            "/tmp/sorter-client-api.log",
-            "/tmp/legosorter-machine-api-only.log",
-            "/tmp/legosorter-client-api.log",
+            os.path.join(_TMPDIR, "sorter-client-api.log"),
+            os.path.join(_TMPDIR, "legosorter-machine-api-only.log"),
+            os.path.join(_TMPDIR, "legosorter-client-api.log"),
         ],
     },
     {
         "id": "ui-frontend",
         "label": "UI Frontend",
         "description": "Svelte/Vite frontend output.",
-        "patterns": ["/tmp/sorter-ui.log"],
+        "patterns": [os.path.join(_TMPDIR, "sorter-ui.log")],
     },
 ]
 

@@ -51,6 +51,8 @@ else:
 
 
 def _try_v4l2ctl_set_format(source: int, fourcc: str, width: int | None, height: int | None) -> bool:
+    if platform.system() != "Linux":
+        return False
     # Some cameras (e.g. Innomaker U30CAM) ignore OpenCV's CAP_V4L2 FOURCC
     # param and stay at their firmware default (often YUYV full-res), saturating
     # shared USB 2.0 bandwidth. Force the format at the kernel level while the

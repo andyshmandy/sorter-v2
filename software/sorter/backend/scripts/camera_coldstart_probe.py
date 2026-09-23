@@ -21,6 +21,7 @@ This script fires all STREAMON calls in parallel, matching the live assign flow.
 from __future__ import annotations
 
 import argparse
+import platform
 import re
 import subprocess
 import sys
@@ -147,6 +148,10 @@ def _camWorker(
 
 
 def main() -> int:
+    if platform.system() != "Linux":
+        print("camera_coldstart_probe.py is Linux-only. It depends on /dev/video* and v4l2-ctl.")
+        return 2
+
     parser = argparse.ArgumentParser(description="Parallel camera cold-start probe (brownout reproducer)")
     parser.add_argument(
         "--indices",
