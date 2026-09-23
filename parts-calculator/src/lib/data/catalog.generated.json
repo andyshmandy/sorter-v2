@@ -5841,10 +5841,10 @@
 		},
 		{
 			"id": "electronics",
-			"uid": "t22u",
-			"version": "3",
+			"uid": "46xn",
+			"version": "4",
 			"name": "Electronics",
-			"description": "The PSU, the control board and the Orange Pi, each in its own box bolted to the frame, plus the powered USB hub they share and its 24 V lead.",
+			"description": "The PSU, the control board and the Orange Pi, each in its own box bolted to the frame, plus the powered USB hub they share, its 24 V lead, and the converter that powers the Pi off the 24 V supply.",
 			"docs": "/hardware/electronics/installation/",
 			"lines": [
 				{
@@ -5861,6 +5861,10 @@
 				},
 				{
 					"assembly": "orange-pi-mount",
+					"qty": 1
+				},
+				{
+					"part": "buck-24v-5v-usbc",
 					"qty": 1
 				},
 				{
@@ -5926,6 +5930,41 @@
 					"uid": "t22u",
 					"date": "2026-09-23",
 					"message": "Place the powered USB hub itself in the tree, beside the PSU box. It was a BOM-sheet hand count in no assembly at all; it runs off the PSU at 24 V and feeds the cameras and the Picos. v2 put its lead (W2) at this level because the hub was not in the tree yet, and that lead stays exactly where v2 put it. No physical change.",
+					"breaking": false,
+					"commit": null,
+					"lines": [
+						{
+							"assembly": "meanwell-psu-box",
+							"qty": 1,
+							"uid": "6uhi"
+						},
+						{
+							"part": "usb-hub-powered-24v",
+							"qty": 1,
+							"uid": "krx5"
+						},
+						{
+							"assembly": "ctrl-board-mount",
+							"qty": 1,
+							"uid": "esvy"
+						},
+						{
+							"assembly": "orange-pi-mount",
+							"qty": 1,
+							"uid": "zczw"
+						},
+						{
+							"assembly": "harness-hub-24v",
+							"qty": 1,
+							"uid": "8b59"
+						}
+					]
+				},
+				{
+					"version": "4",
+					"uid": "46xn",
+					"date": "2026-09-23",
+					"message": "The 24 V to 5 V USB-C buck converter is a member of this group now, beside the Orange Pi mount rather than inside it. It was in the catalog with a hand-written per-machine count and in no assembly, so browsing the machine never reached it. Beside and not inside because nothing holds it: the converter is potted, has no mounting feature, and no page places or retains it, so a line inside the mount would assert a joint that does not exist. v3 placed the powered USB hub for the same reason and that line is untouched.",
 					"breaking": false,
 					"commit": null
 				}
