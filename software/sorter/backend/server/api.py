@@ -5,8 +5,27 @@ from typing import List, Optional, Dict, Any
 import asyncio
 import json
 import os
+import sys
 import time
 from pathlib import Path
+
+if sys.platform == "win32":
+    # Windows' ProactorEventLoop logs a spurious ConnectionResetError
+    # ("WinError 10054") whenever a client (browser tab refresh, UI restart,
+    # etc.) drops a socket abruptly instead of closing it cleanly. It's
+    # harmless noise, not a real error — silence it. See
+    # https://github.com/python/cpython/issues/83413
+    from asyncio.proactor_events import _ProactorBasePipeTransport
+
+    _orig_call_connection_lost = _ProactorBasePipeTransport._call_connection_lost
+
+    def _quiet_call_connection_lost(self, exc):
+        try:
+            _orig_call_connection_lost(self, exc)
+        except ConnectionResetError:
+            pass
+
+    _ProactorBasePipeTransport._call_connection_lost = _quiet_call_connection_lost
 
 from defs.events import (
     IdentityEvent,
