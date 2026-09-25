@@ -9,6 +9,23 @@ $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 
+function Ensure-UvAvailable {
+        $uvCommand = Get-Command uv -ErrorAction SilentlyContinue
+        if ($uvCommand) {
+                return
+        }
+
+        throw @"
+uv is required to run the sorter backend.
+
+Install it, open a fresh PowerShell window, then run this command again:
+    winget install Astral-sh.uv
+
+If winget is unavailable, use:
+    powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"
+"@
+}
+
 function Stop-PortListeners {
     param([int[]]$Ports)
 
@@ -67,26 +84,60 @@ function Ensure-FrontendDependencies {
     Invoke-InProjectShell -WorkingDirectory $FrontendPath -Command "npm install"
 }
 
+function Test-BackendImports {
+    param([string]$BackendPath)
+
+    Push-Location $BackendPath
+    try {
+        $null = & uv run python -c "import cv2, fastapi, serial, onnxruntime" 2>$null
+        return $LASTEXITCODE -eq 0
+    }
+    finally {
+        Pop-Location
+    }
+}
+
+function Ensure-BackendDependencies {
+    param([string]$BackendPath)
+
+    Ensure-UvAvailable
+
+    if (Test-BackendImports -BackendPath $BackendPath) {
+        return
+    }
+
+    Write-Host "Backend dependencies missing or incomplete; running uv sync..."
+    Invoke-InProjectShell -WorkingDirectory $BackendPath -Command "uv sync --locked"
+
+    if (-not (Test-BackendImports -BackendPath $BackendPath)) {
+        throw "Backend dependency check still failed after uv sync. Try 'cd sorter/backend; uv run python -c \"import cv2, fastapi, serial, onnxruntime\"' to see the exact import error."
+    }
+}
+
 switch ($Mode) {
     "backend" {
         Stop-PortListeners @(8000, 8001)
+        $backendPath = Join-Path $Root "sorter/backend"
+        Ensure-BackendDependencies -BackendPath $backendPath
         $backendCommand = if ($FeederOnly) {
             '$env:LEGOSORTER_FEEDER_ONLY="1"; uv run python supervisor.py'
         }
         else {
             'Remove-Item Env:LEGOSORTER_FEEDER_ONLY -ErrorAction SilentlyContinue; uv run python supervisor.py'
         }
-        Invoke-InProjectShell -WorkingDirectory (Join-Path $Root "sorter/backend") -Command $backendCommand
+        Invoke-InProjectShell -WorkingDirectory $backendPath -Command $backendCommand
     }
     "api" {
         Stop-PortListeners @(8000)
+        $backendPath = Join-Path $Root "sorter/backend"
+        Ensure-BackendDependencies -BackendPath $backendPath
         $apiCommand = if ($FeederOnly) {
             '$env:LEGOSORTER_FEEDER_ONLY="1"; uv run python api_only.py'
         }
         else {
             'Remove-Item Env:LEGOSORTER_FEEDER_ONLY -ErrorAction SilentlyContinue; uv run python api_only.py'
         }
-        Invoke-InProjectShell -WorkingDirectory (Join-Path $Root "sorter/backend") -Command $apiCommand
+        Invoke-InProjectShell -WorkingDirectory $backendPath -Command $apiCommand
     }
     "frontend" {
         Stop-PortListeners @(5173)
@@ -99,6 +150,7 @@ switch ($Mode) {
         $frontendPath = Join-Path $Root "sorter/frontend"
         $backendPath = Join-Path $Root "sorter/backend"
         Ensure-FrontendDependencies -FrontendPath $frontendPath
+        Ensure-BackendDependencies -BackendPath $backendPath
         $backendEnvCommand = if ($FeederOnly) {
             '$env:LEGOSORTER_FEEDER_ONLY="1"; '
         }
