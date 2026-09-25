@@ -388,6 +388,78 @@ class TestDownloadJobManager:
         assert installed[0]["inert"] is False
         assert installed[0]["compatible"] is True
 
+    def test_installed_rknn_model_is_incompatible_without_rknn_runtime(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(hive_models, "LOCAL_MODELS_DIR", tmp_path)
+        monkeypatch.setattr(hive_models, "runtime_supported_on_this_machine", lambda runtime: runtime != "rknn")
+        entry = tmp_path / "hive-rknn"
+        entry.mkdir()
+        (entry / "run.json").write_text(
+            json.dumps(
+                {
+                    "name": "RKNN Only",
+                    "model_family": "yolo",
+                    hive_models.HIVE_SENTINEL_KEY: {
+                        "target_id": "hive-a",
+                        "model_id": "rknn-only",
+                        "variant_runtime": "rknn",
+                        "sha256": "abc",
+                    },
+                }
+            )
+        )
+        installed = hive_models.list_installed_models()
+        assert installed[0]["compatible"] is False
+
+    def test_enqueue_all_deployable_variants_skips_machine_incompatible_runtimes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _configure_target(monkeypatch)
+
+        detail = _make_detail()
+        detail["variants"] = [
+            {
+                "id": "variant-rknn",
+                "runtime": "rknn",
+                "file_name": "detector.rknn",
+                "file_size": 1234,
+                "sha256": "expected-rknn",
+                "format_meta": {},
+                "uploaded_at": "2026-04-01T00:00:00Z",
+            },
+            {
+                "id": "variant-onnx",
+                "runtime": "onnx",
+                "file_name": "detector.onnx",
+                "file_size": 1234,
+                "sha256": "expected-onnx",
+                "format_meta": {},
+                "uploaded_at": "2026-04-01T00:00:00Z",
+            },
+        ]
+
+        class _StubClient:
+            def get_model(self, model_id: str) -> dict:
+                return detail
+
+        monkeypatch.setattr(hive_models, "_get_client_for_target", lambda _target_id: (_StubClient(), {"id": "hive-a"}))
+        monkeypatch.setattr(hive_models, "runtime_supported_on_this_machine", lambda runtime: runtime == "onnx")
+
+        manager = hive_models.DownloadJobManager()
+        job_ids = manager.enqueue_all_deployable_variants("hive-a", "model-1")
+
+        assert len(job_ids) == 1
+        job = manager.get(job_ids[0])
+        assert job is not None
+        assert job["variant_runtime"] == "onnx"
+
+    def test_pick_runtime_for_this_machine_returns_none_when_only_unsupported_variants_exist(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(hive_models, "runtime_supported_on_this_machine", lambda runtime: False)
+        assert hive_models.pick_runtime_for_this_machine(["rknn"]) is None
+
     def test_ncnn_tarball_rejects_path_traversal(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

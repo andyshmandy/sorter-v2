@@ -1066,7 +1066,7 @@
 													{PURPOSE_LABELS[purposeOf(entry)] ?? purposeOf(entry)}
 												</span>
 											{:else if !isCompatible}
-												<Tooltip text={`Variant runtime "${entry.variant_runtime}" cannot be loaded by the sorter — only ONNX, NCNN, Hailo and RKNN are deployable.`}>
+												<Tooltip text={`Variant runtime "${entry.variant_runtime}" is installed, but this machine cannot run it.`}>
 													<span class="inline-flex items-center bg-warning/20 px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-warning-dark dark:text-warning">
 														Not supported
 													</span>

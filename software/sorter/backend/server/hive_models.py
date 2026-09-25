@@ -12,6 +12,7 @@ a generated ``job_id`` so the UI can poll.
 from __future__ import annotations
 
 import json
+import importlib.util
 import logging
 import os
 import platform
@@ -212,27 +213,45 @@ def pick_runtime_for_this_machine(variant_runtimes: list[str]) -> str | None:
         return None
     runtimes = set(variant_runtimes)
 
-    if "hailo" in runtimes and _has_hailo():
+    if "hailo" in runtimes and runtime_supported_on_this_machine("hailo"):
         return "hailo"
 
-    if "rknn" in runtimes and _has_rknn_npu():
+    if "rknn" in runtimes and runtime_supported_on_this_machine("rknn"):
         return "rknn"
 
     machine = platform.machine().lower()
     on_arm = machine in {"aarch64", "armv7l", "arm64"}
-    if on_arm and "ncnn" in runtimes:
+    if on_arm and "ncnn" in runtimes and runtime_supported_on_this_machine("ncnn"):
         return "ncnn"
 
-    if "onnx" in runtimes:
+    if "onnx" in runtimes and runtime_supported_on_this_machine("onnx"):
         return "onnx"
 
     # Fallback order when none of the preferred runtimes are present.
     for candidate in ("ncnn", "hailo", "pytorch"):
-        if candidate in runtimes:
+        if candidate in runtimes and runtime_supported_on_this_machine(candidate):
             return candidate
 
-    # variant_runtimes had at least one entry but none matched known runtimes.
-    return variant_runtimes[0]
+    for candidate in variant_runtimes:
+        if runtime_supported_on_this_machine(candidate):
+            return candidate
+
+    return None
+
+
+def runtime_supported_on_this_machine(runtime: str) -> bool:
+    runtime = runtime.lower()
+    if runtime not in DEPLOYABLE_RUNTIMES:
+        return False
+    if runtime == "onnx":
+        return True
+    if runtime == "ncnn":
+        return platform.machine().lower() in {"aarch64", "armv7l", "arm64"}
+    if runtime == "hailo":
+        return _has_hailo()
+    if runtime == "rknn":
+        return _has_rknn_npu() and importlib.util.find_spec("rknnlite") is not None
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +309,7 @@ def _scan_models_dir(root: Path, *, bundled: bool) -> list[dict]:
         purpose = raw_purpose if isinstance(raw_purpose, str) and raw_purpose else DEFAULT_PURPOSE
         compatible = (
             isinstance(variant_runtime, str)
-            and variant_runtime.lower() in DEPLOYABLE_RUNTIMES
+            and runtime_supported_on_this_machine(variant_runtime)
             # An inert-purpose model is installed correctly but has no consumer
             # on the machine yet, so it can't be activated against a scope.
             and purpose not in INERT_PURPOSES
@@ -660,18 +679,18 @@ class DownloadJobManager:
                 if isinstance(variant, dict) and isinstance(variant.get("runtime"), str):
                     runtimes.append(variant["runtime"])
 
-        deployable = [r for r in runtimes if r.lower() in DEPLOYABLE_RUNTIMES]
-        if not deployable:
+        compatible = [r for r in runtimes if runtime_supported_on_this_machine(r)]
+        if not compatible:
             offered = ", ".join(runtimes) if runtimes else "none"
             return [
                 self._record_failure(
                     target_id,
                     model_id,
                     None,
-                    f"no deployable variants for this sorter (offered: {offered})",
+                    f"no machine-compatible variants for this sorter (offered: {offered})",
                 )
             ]
-        return [self.enqueue(target_id, model_id, runtime) for runtime in deployable]
+        return [self.enqueue(target_id, model_id, runtime) for runtime in compatible]
 
     def _record_failure(
         self,
