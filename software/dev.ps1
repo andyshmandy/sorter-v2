@@ -110,7 +110,13 @@ function Ensure-BackendDependencies {
     Invoke-InProjectShell -WorkingDirectory $BackendPath -Command "uv sync --locked"
 
     if (-not (Test-BackendImports -BackendPath $BackendPath)) {
-        throw "Backend dependency check still failed after uv sync. Try 'cd sorter/backend; uv run python -c \"import cv2, fastapi, serial, onnxruntime\"' to see the exact import error."
+        throw @"
+Backend dependency check still failed after uv sync.
+
+Try this to see the exact import error:
+  cd sorter/backend
+  uv run python -c "import cv2, fastapi, serial, onnxruntime"
+"@
     }
 }
 
