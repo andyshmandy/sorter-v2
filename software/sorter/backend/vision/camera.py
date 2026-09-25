@@ -83,6 +83,8 @@ def _open_capture_source(
 ) -> cv2.VideoCapture:
     if isinstance(source, int) and platform.system() == "Darwin":
         return cv2.VideoCapture(source, cv2.CAP_AVFOUNDATION)
+    if isinstance(source, int) and platform.system() == "Windows":
+        return cv2.VideoCapture(source, cv2.CAP_DSHOW)
     if isinstance(source, int) and platform.system() == "Linux":
         # V4L2 MJPEG capture via cv2.VideoCapture (software JPEG decode). A HW
         # GStreamer mppjpegdec path used to live here; it was removed because it
