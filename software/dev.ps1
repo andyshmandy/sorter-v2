@@ -1,6 +1,8 @@
 param(
     [ValidateSet("all", "backend", "api", "frontend")]
-    [string]$Mode = "all"
+    [string]$Mode = "all",
+
+    [switch]$FeederOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -56,11 +58,23 @@ function Invoke-InProjectShell {
 switch ($Mode) {
     "backend" {
         Stop-PortListeners @(8000, 8001)
-        Invoke-InProjectShell -WorkingDirectory (Join-Path $Root "sorter/backend") -Command "uv run python supervisor.py"
+        $backendCommand = if ($FeederOnly) {
+            '$env:LEGOSORTER_FEEDER_ONLY="1"; uv run python supervisor.py'
+        }
+        else {
+            'Remove-Item Env:LEGOSORTER_FEEDER_ONLY -ErrorAction SilentlyContinue; uv run python supervisor.py'
+        }
+        Invoke-InProjectShell -WorkingDirectory (Join-Path $Root "sorter/backend") -Command $backendCommand
     }
     "api" {
         Stop-PortListeners @(8000)
-        Invoke-InProjectShell -WorkingDirectory (Join-Path $Root "sorter/backend") -Command "uv run python api_only.py"
+        $apiCommand = if ($FeederOnly) {
+            '$env:LEGOSORTER_FEEDER_ONLY="1"; uv run python api_only.py'
+        }
+        else {
+            'Remove-Item Env:LEGOSORTER_FEEDER_ONLY -ErrorAction SilentlyContinue; uv run python api_only.py'
+        }
+        Invoke-InProjectShell -WorkingDirectory (Join-Path $Root "sorter/backend") -Command $apiCommand
     }
     "frontend" {
         Stop-PortListeners @(5173)
@@ -81,9 +95,14 @@ switch ($Mode) {
         Start-Process powershell -ArgumentList @(
             "-NoExit",
             "-Command",
-            "Set-Location '$backendPath'; uv run python supervisor.py"
+            ((if ($FeederOnly) { '$env:LEGOSORTER_FEEDER_ONLY="1"; ' } else { 'Remove-Item Env:LEGOSORTER_FEEDER_ONLY -ErrorAction SilentlyContinue; ' }) + "Set-Location '$backendPath'; uv run python supervisor.py")
         ) | Out-Null
 
-        Write-Host "Started frontend and backend in separate PowerShell windows."
+        if ($FeederOnly) {
+            Write-Host "Started frontend and backend in separate PowerShell windows (feeder-only mode)."
+        }
+        else {
+            Write-Host "Started frontend and backend in separate PowerShell windows."
+        }
     }
 }

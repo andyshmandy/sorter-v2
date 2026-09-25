@@ -602,17 +602,20 @@ def get_setup_wizard_summary() -> Dict[str, Any]:
     servo_settings = _servo_settings_from_config(config)
     discovery = _discover_control_board_summary()
     active_irl = shared_state.getActiveIRL()
+    feeder_only_mode = bool(getattr(shared_state.gc_ref, "feeder_only_mode", False))
 
     readiness = {
         "machine_named": bool(getMachineNickname()),
         "boards_detected": len(discovery["boards"]) > 0,
         "camera_layout_selected": camera_assignments["layout"] in {"default", "split_feeder"},
         "cameras_assigned": _camera_assignments_complete(camera_assignments),
-        "servo_configured": (
-            servo_settings["backend"] == "waveshare"
-            or bool(discovery["pca_available"])
-        )
-        and int(servo_settings.get("layer_count", 0)) > 0,
+        "servo_configured": feeder_only_mode or (
+            (
+                servo_settings["backend"] == "waveshare"
+                or bool(discovery["pca_available"])
+            )
+            and int(servo_settings.get("layer_count", 0)) > 0
+        ),
         "ready_for_motion_test": shared_state.hardware_state == "ready",
     }
 

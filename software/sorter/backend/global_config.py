@@ -54,6 +54,7 @@ class GlobalConfig:
     run_id: str
     disable_chute: bool
     disable_servos: bool
+    feeder_only_mode: bool
     disable_c_channels: set[int]  # {1, 2, 3, 4} — c-channel rotor steppers to suppress
     disable_carousel: bool         # carousel stepper (same physical motor as c_channel_4)
     no_power_development_mode: bool
@@ -98,6 +99,7 @@ class GlobalConfig:
         # honored) or LEGOSORTER_DISABLE env, or flip back here once the
         # layer-servo bus is reattached.
         self.disable_servos = True
+        self.feeder_only_mode = False
         self.disable_c_channels: set[int] = set()
         self.disable_carousel = False
         self.no_power_development_mode = False
@@ -165,10 +167,14 @@ def mkGlobalConfig() -> GlobalConfig:
     all_disable = set(args.disable) | env_disable
     gc.disable_chute = "chute" in all_disable
     gc.disable_servos = "servos" in all_disable
+    gc.feeder_only_mode = os.getenv("LEGOSORTER_FEEDER_ONLY", "0") == "1"
     for ch in (1, 2, 3, 4):
         if f"c_channel_{ch}" in all_disable:
             gc.disable_c_channels.add(ch)
     gc.disable_carousel = "carousel" in all_disable
+    if gc.feeder_only_mode:
+        gc.disable_chute = True
+        gc.disable_servos = True
     gc.no_power_development_mode = os.getenv("NO_POWER_DEVELOPMENT_MODE", "0") == "1"
     if gc.no_power_development_mode:
         gc.disable_chute = True

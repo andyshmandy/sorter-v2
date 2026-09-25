@@ -12,6 +12,20 @@ from sorting_profile import SortingProfile
 from vision import VisionManager
 
 
+class NoOpDistributionRuntime:
+    def __init__(self, *, gc: GlobalConfig, shared) -> None:
+        self.gc = gc
+        self.shared = shared
+        self.chute = None
+
+    def step(self) -> None:
+        if not bool(getattr(self.shared, "distribution_ready", True)):
+            self.shared.set_distribution_gate(True, reason="feeder_only_mode")
+
+    def cleanup(self) -> None:
+        return
+
+
 class MachineRuntime(ABC):
     def __init__(self, setup_definition: MachineSetupDefinition):
         self.setup_definition = setup_definition
@@ -68,6 +82,12 @@ class MachineRuntime(ABC):
         event_queue: queue.Queue,
         vision: VisionManager | None = None,
     ):
+        if bool(getattr(gc, "feeder_only_mode", False)):
+            gc.logger.info(
+                "Feeder-only mode enabled: using no-op distribution runtime."
+            )
+            return NoOpDistributionRuntime(gc=gc, shared=shared)
+
         from subsystems.distribution.state_machine import DistributionStateMachine
 
         cooldown_s = 0.0

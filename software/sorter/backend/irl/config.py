@@ -1585,28 +1585,35 @@ def mkIRLInterface(config: IRLConfig, gc: GlobalConfig) -> IRLInterface:
         irl_interface.carousel_home_pin = None
         irl_interface.carousel_hw = None
 
-    from subsystems.distribution.chute import Chute
-
-    if distribution_board is None:
-        raise RuntimeError("Distribution board not found — cannot initialize chute homing")
-    chute_calibration = loadChuteCalibrationConfig(
-        gc, machine_specific_params, dict(distribution_board.input_aliases)
-    )
-    chute_home_pin = distribution_board.get_input(chute_calibration.home_pin_channel)
-    if chute_home_pin is None:
-        raise RuntimeError(
-            f"Distribution board chute home input channel {chute_calibration.home_pin_channel} is unavailable."
+    feeder_only_mode = bool(getattr(gc, "feeder_only_mode", False))
+    if feeder_only_mode:
+        gc.logger.info(
+            "Feeder-only mode enabled: skipping distribution board and chute initialization."
         )
-    irl_interface.chute = Chute(
-        gc,
-        irl_interface.chute_stepper,
-        chute_home_pin,
-        irl_interface.distribution_layout,
-        num_sections=chute_calibration.num_sections,
-        section_width_deg=chute_calibration.section_width_deg,
-        first_section_offset_deg=chute_calibration.first_section_offset_deg,
-        endstop_active_high=chute_calibration.endstop_active_high,
-        operating_speed_microsteps_per_second=chute_calibration.operating_speed_microsteps_per_second,
-    )
+        irl_interface.chute = None
+    else:
+        from subsystems.distribution.chute import Chute
+
+        if distribution_board is None:
+            raise RuntimeError("Distribution board not found — cannot initialize chute homing")
+        chute_calibration = loadChuteCalibrationConfig(
+            gc, machine_specific_params, dict(distribution_board.input_aliases)
+        )
+        chute_home_pin = distribution_board.get_input(chute_calibration.home_pin_channel)
+        if chute_home_pin is None:
+            raise RuntimeError(
+                f"Distribution board chute home input channel {chute_calibration.home_pin_channel} is unavailable."
+            )
+        irl_interface.chute = Chute(
+            gc,
+            irl_interface.chute_stepper,
+            chute_home_pin,
+            irl_interface.distribution_layout,
+            num_sections=chute_calibration.num_sections,
+            section_width_deg=chute_calibration.section_width_deg,
+            first_section_offset_deg=chute_calibration.first_section_offset_deg,
+            endstop_active_high=chute_calibration.endstop_active_high,
+            operating_speed_microsteps_per_second=chute_calibration.operating_speed_microsteps_per_second,
+        )
 
     return irl_interface
