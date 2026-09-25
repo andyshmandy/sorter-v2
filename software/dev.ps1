@@ -85,6 +85,12 @@ switch ($Mode) {
 
         $frontendPath = Join-Path $Root "sorter/frontend"
         $backendPath = Join-Path $Root "sorter/backend"
+        $backendEnvCommand = if ($FeederOnly) {
+            '$env:LEGOSORTER_FEEDER_ONLY="1"; '
+        }
+        else {
+            'Remove-Item Env:LEGOSORTER_FEEDER_ONLY -ErrorAction SilentlyContinue; '
+        }
 
         Start-Process powershell -ArgumentList @(
             "-NoExit",
@@ -95,7 +101,7 @@ switch ($Mode) {
         Start-Process powershell -ArgumentList @(
             "-NoExit",
             "-Command",
-            ((if ($FeederOnly) { '$env:LEGOSORTER_FEEDER_ONLY="1"; ' } else { 'Remove-Item Env:LEGOSORTER_FEEDER_ONLY -ErrorAction SilentlyContinue; ' }) + "Set-Location '$backendPath'; uv run python supervisor.py")
+            ($backendEnvCommand + "Set-Location '$backendPath'; uv run python supervisor.py")
         ) | Out-Null
 
         if ($FeederOnly) {
