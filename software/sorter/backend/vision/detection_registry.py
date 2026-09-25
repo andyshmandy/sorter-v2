@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import importlib.util
+import platform
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -137,6 +139,23 @@ _cached_hive_algorithms: tuple[DetectionAlgorithmDefinition, ...] | None = None
 _cached_bundled_algorithms: tuple[DetectionAlgorithmDefinition, ...] | None = None
 
 
+def _runtime_supported_on_this_machine(runtime: str) -> bool:
+    runtime = runtime.lower()
+    if runtime != "rknn":
+        return True
+
+    if platform.system().lower() != "linux":
+        return False
+    if platform.machine().lower() not in {"aarch64", "arm64"}:
+        return False
+    if not (
+        Path("/sys/kernel/debug/rknpu/version").exists()
+        or Path("/usr/lib/librknnrt.so").exists()
+    ):
+        return False
+    return importlib.util.find_spec("rknnlite") is not None
+
+
 def invalidate_registry() -> None:
     """Drop the cache so the next registry read rescans the model dirs."""
     global _cached_hive_algorithms, _cached_bundled_algorithms
@@ -203,6 +222,15 @@ def _discover_model_algorithms(
         if variant_runtime not in {"onnx", "ncnn", "hailo", "rknn"}:
             log.info(
                 "Skipping %s model %s — unsupported runtime %r",
+                kind,
+                entry.name,
+                variant_runtime,
+            )
+            continue
+
+        if not _runtime_supported_on_this_machine(variant_runtime):
+            log.info(
+                "Skipping %s model %s — runtime %r unsupported on this machine",
                 kind,
                 entry.name,
                 variant_runtime,

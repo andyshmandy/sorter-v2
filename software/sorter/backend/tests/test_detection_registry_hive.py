@@ -159,3 +159,56 @@ def test_missing_hive_sentinel_skipped(tmp_path, monkeypatch):
     (entry / "run.json").write_text(json.dumps({"model_family": "yolo", "scopes": []}))
     registry.invalidate_registry()
     assert not any(a.kind == "hive" for a in registry.all_detection_algorithms())
+
+
+def test_rknn_model_skipped_when_runtime_unsupported(tmp_path, monkeypatch):
+    monkeypatch.setattr(registry, "HIVE_MODELS_DIR", tmp_path)
+    monkeypatch.setattr(registry, "_runtime_supported_on_this_machine", lambda runtime: runtime != "rknn")
+
+    entry = tmp_path / "hive-rknn"
+    (entry / "exports").mkdir(parents=True)
+    (entry / "exports" / "best.rknn").write_bytes(b"not a real rknn")
+    meta = {
+        "name": "rknn-only",
+        "model_family": "yolo",
+        "scopes": ["c_channel"],
+        "imgsz": 320,
+        "hive": {
+            "target_id": "target-1",
+            "model_id": "abc",
+            "variant_runtime": "rknn",
+            "sha256": "deadbeef",
+            "downloaded_at": "2026-04-17T00:00:00+00:00",
+        },
+    }
+    (entry / "run.json").write_text(json.dumps(meta))
+    registry.invalidate_registry()
+
+    ids = [a.id for a in registry.all_detection_algorithms()]
+    assert not any(a.startswith("hive:") for a in ids)
+
+
+def test_default_feeder_algorithm_falls_back_to_builtin_when_only_rknn_models_exist(tmp_path, monkeypatch):
+    monkeypatch.setattr(registry, "BUNDLED_MODELS_DIR", tmp_path)
+    monkeypatch.setattr(registry, "_runtime_supported_on_this_machine", lambda runtime: runtime != "rknn")
+
+    entry = tmp_path / "bundled-rknn"
+    (entry / "exports").mkdir(parents=True)
+    (entry / "exports" / "best.rknn").write_bytes(b"not a real rknn")
+    meta = {
+        "name": "bundled-rknn-only",
+        "model_family": "yolo",
+        "scopes": ["c_channel"],
+        "imgsz": 320,
+        "hive": {
+            "target_id": "bundled",
+            "model_id": "bundled-rknn-only",
+            "variant_runtime": "rknn",
+            "sha256": "deadbeef",
+            "downloaded_at": "2026-04-17T00:00:00+00:00",
+        },
+    }
+    (entry / "run.json").write_text(json.dumps(meta))
+    registry.invalidate_registry()
+
+    assert registry.default_detection_algorithm("feeder") == "mog2"

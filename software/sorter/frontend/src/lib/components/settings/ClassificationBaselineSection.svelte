@@ -203,7 +203,6 @@
 								typeof value?.label === 'string' &&
 								typeof value?.needs_baseline === 'boolean'
 						)
-						.filter((value: DetectionAlgorithmOption) => value.kind !== 'builtin')
 				: [];
 			availableOpenrouterModels = Array.isArray(payload?.available_openrouter_models)
 				? payload.available_openrouter_models.filter(
