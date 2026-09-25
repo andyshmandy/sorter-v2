@@ -45,3 +45,8 @@ software/sorteros/v3/build/.env
 .DS_Store
 
 docs/scripts/__pycache__/
+software/sorter/backend/local_metrics.sqlite
+software/sorter/backend/local_metrics.sqlite-shm
+software/sorter/backend/local_metrics.sqlite-wal
+.vscode/settings.json
+package-lock.json
