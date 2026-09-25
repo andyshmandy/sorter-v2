@@ -55,6 +55,18 @@ function Invoke-InProjectShell {
     }
 }
 
+function Ensure-FrontendDependencies {
+    param([string]$FrontendPath)
+
+    $viteShim = Join-Path $FrontendPath "node_modules/.bin/vite.cmd"
+    if (Test-Path $viteShim) {
+        return
+    }
+
+    Write-Host "Frontend dependencies missing; running npm install..."
+    Invoke-InProjectShell -WorkingDirectory $FrontendPath -Command "npm install"
+}
+
 switch ($Mode) {
     "backend" {
         Stop-PortListeners @(8000, 8001)
@@ -78,6 +90,7 @@ switch ($Mode) {
     }
     "frontend" {
         Stop-PortListeners @(5173)
+        Ensure-FrontendDependencies -FrontendPath (Join-Path $Root "sorter/frontend")
         Invoke-InProjectShell -WorkingDirectory (Join-Path $Root "sorter/frontend") -Command "npm run dev"
     }
     "all" {
@@ -85,6 +98,7 @@ switch ($Mode) {
 
         $frontendPath = Join-Path $Root "sorter/frontend"
         $backendPath = Join-Path $Root "sorter/backend"
+        Ensure-FrontendDependencies -FrontendPath $frontendPath
         $backendEnvCommand = if ($FeederOnly) {
             '$env:LEGOSORTER_FEEDER_ONLY="1"; '
         }

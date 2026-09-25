@@ -149,7 +149,13 @@
 
 	function humanizeStepperError(message: string): string {
 		if (message.includes('Controller not initialized')) {
-			return 'Hardware not started. Press Start in the dashboard first.';
+			return 'Hardware not started. Use Home or Initialize (no homing) from the power menu first.';
+		}
+		if (
+			message.includes('Hardware not initialized. Start or home the system first.') ||
+			message.includes('run Safe Home first')
+		) {
+			return 'Hardware is still in standby. Use Home or Initialize (no homing) from the power menu first.';
 		}
 		return message;
 	}
