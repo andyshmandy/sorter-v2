@@ -89,7 +89,7 @@ function Test-BackendImports {
 
     Push-Location $BackendPath
     try {
-        $null = & uv run python -c "import cv2, fastapi, serial, onnxruntime" 2>$null
+        $null = & uv run --active python -c "import cv2, fastapi, serial, onnxruntime"
         return $LASTEXITCODE -eq 0
     }
     finally {
