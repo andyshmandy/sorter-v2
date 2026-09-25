@@ -33,6 +33,7 @@ from .inference import InferenceWorker, OnExitEdge
 from .overlay import renderFeedOverlay
 from .runtime import InferenceRuntime, RknnYoloRuntime
 from .state import ChannelState, EMPTY_STATE, LatestStateSlot
+from vision.detection_registry import normalize_detection_algorithm
 
 
 # How often the reconcile loop re-reads the saved zone/camera/algorithm state
@@ -601,20 +602,30 @@ def _resolve_algorithm_id_per_channel(
     feeder_config: dict | None,
     carousel_config: dict | None,
 ) -> Dict[int, str]:
-    """Return {channel_id: algorithm_id}, read 1:1 from each subsystem's own
-    TOML slot — NO fallback. ch4 (the classification C4 / carousel station)
-    reads ``detection.carousel.algorithm``; the C-channels read their own
-    ``detection.feeder.algorithm_by_role`` entry. An unset slot leaves that
-    channel unwired (no detector) rather than silently inheriting another
-    subsystem's model — the operator picks a model per subsystem explicitly."""
+    """Return {channel_id: algorithm_id} using the same normalized per-scope
+    defaults as legacy detection, without leaking one subsystem's saved choice
+    into another subsystem.
+
+    ch4 (the classification C4 / carousel station) resolves from
+    ``detection.carousel.algorithm`` with carousel-scope normalization. The
+    C-channels first read their own ``detection.feeder.algorithm_by_role``
+    entry, then the shared ``detection.feeder.algorithm`` fallback, and finally
+    feeder-scope normalization. This keeps perception aligned with the rest of
+    the backend when a fresh machine has no explicit per-role TOML slots yet.
+    """
     out: Dict[int, str] = {}
     feeder_by_role = (feeder_config or {}).get("algorithm_by_role") or {}
     for ch_id, (role, _polygon_key, _angle_key) in CHANNEL_REGISTRY.items():
         if ch_id == 4:
-            algo = (carousel_config or {}).get("algorithm")
+            algo = normalize_detection_algorithm(
+                "carousel", (carousel_config or {}).get("algorithm")
+            )
         else:
-            algo = feeder_by_role.get(role)
-        if isinstance(algo, str) and algo:
+            fallback = (feeder_config or {}).get("algorithm")
+            algo = normalize_detection_algorithm(
+                "feeder", feeder_by_role.get(role) or fallback
+            )
+        if algo:
             out[ch_id] = algo
     return out
 
