@@ -1,10 +1,49 @@
 from abc import ABC, abstractmethod
 import json
+import os
+import threading
 from typing import Any, Optional
 
 from global_config import GlobalConfig
 
 MISC_CATEGORY = "misc"
+
+# A profile file carries the compiled part map and runs to tens of MB, and
+# json.loads holds the GIL for 1 to 2 s on the Pi: every thread stops, the
+# control loop included. Each version of a file is parsed once; everything but
+# the part map is kept here for the API, and the runtime's own parse fills it.
+_summaries: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
+_summaries_lock = threading.Lock()
+
+
+def _summarize(data: dict[str, Any]) -> dict[str, Any]:
+    summary = {k: v for k, v in data.items() if k != "part_to_category"}
+    summary["part_count"] = len(data.get("part_to_category") or {})
+    return summary
+
+
+def _fileVersion(path: str) -> tuple[int, int]:
+    stat = os.stat(path)
+    return stat.st_mtime_ns, stat.st_size
+
+
+def profileSummary(path: str) -> dict[str, Any]:
+    """Everything in a profile file except its part map, plus `part_count`.
+    Raises OSError or ValueError when the file is missing or not a JSON object."""
+    path = str(path)
+    version = _fileVersion(path)
+    with _summaries_lock:
+        cached = _summaries.get(path)
+        if cached is not None and cached[0] == version:
+            return cached[1]
+    with open(path, "r") as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict):
+        raise ValueError("sorting profile file is not a JSON object")
+    summary = _summarize(data)
+    with _summaries_lock:
+        _summaries[path] = (version, summary)
+    return summary
 
 
 class SortingProfile(ABC):
@@ -48,6 +87,7 @@ class JsonSortingProfile(SortingProfile):
 
     def _loadData(self) -> None:
         try:
+            version = _fileVersion(self._sorting_profile_path)
             with open(self._sorting_profile_path, "r") as f:
                 content = f.read()
             if not content.strip():
@@ -68,6 +108,8 @@ class JsonSortingProfile(SortingProfile):
             return
         if "part_to_category" not in data:
             raise ValueError("sorting profile json missing part_to_category")
+        with _summaries_lock:
+            _summaries[str(self._sorting_profile_path)] = (version, _summarize(data))
         self._loadRuntimeSortingProfile(data)
 
     def _loadRuntimeSortingProfile(self, data: dict) -> None:

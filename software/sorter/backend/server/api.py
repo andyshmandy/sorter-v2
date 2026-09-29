@@ -4,12 +4,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import asyncio
-import json
 import os
 import time
 from pathlib import Path
 
 import machine_toml
+from sorting_profile import profileSummary
 
 from defs.events import (
     IdentityEvent,
@@ -385,28 +385,16 @@ class SortingProfileSetViewPartStateResponse(BaseModel):
 
 
 def _loadSortingProfileRaw() -> dict | None:
+    """The active profile without its part map (see sorting_profile.profileSummary)."""
     if shared_state.gc_ref is None:
         return None
     gc = shared_state.gc_ref
     path = gc.sorting_profile_path
     try:
-        with open(path, "r") as f:
-            content = f.read()
-    except FileNotFoundError:
-        gc.logger.warn(f"sorting profile file not found: {path}")
+        return profileSummary(path)
+    except (OSError, ValueError) as e:
+        gc.logger.warn(f"sorting profile unreadable ({e}): {path}")
         return None
-    if not content.strip():
-        gc.logger.warn(f"sorting profile file is empty: {path}")
-        return None
-    try:
-        data = json.loads(content)
-    except json.JSONDecodeError as e:
-        gc.logger.warn(f"sorting profile file is corrupt ({e}): {path}")
-        return None
-    if not isinstance(data, dict):
-        gc.logger.warn(f"sorting profile file is not a JSON object: {path}")
-        return None
-    return data
 
 
 @app.get("/sorting-profile/metadata", response_model=SortingProfileMetadataResponse)

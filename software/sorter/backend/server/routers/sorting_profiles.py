@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from blob_manager import getHiveConfig, getSortingProfileSyncState, setSortingProfileSyncState
 from local_state import start_new_sorting_session
 from server import shared_state
+from sorting_profile import profileSummary
 from server.routers.hardware import (
     clear_bin_category_assignments,
     _current_bin_categories,
@@ -225,24 +226,9 @@ def _unique_local_path(base: str) -> Path:
     return candidate
 
 
-# Sorting-profile JSON files carry the full compiled part map and routinely run
-# tens of MB, so json.load costs ~1-2s (worse under CPU contention). Cache the
-# small metadata we surface, keyed by (mtime, size), so repeated reads — the 10s
-# poll, re-renders, the bundled /library — don't re-parse.
-_profile_meta_cache: dict[str, tuple[float, int, dict[str, Any]]] = {}
-
-
 def _profile_file_meta(path: Path) -> dict[str, Any]:
-    stat = path.stat()
-    key = str(path)
-    cached = _profile_meta_cache.get(key)
-    if cached is not None and cached[0] == stat.st_mtime and cached[1] == stat.st_size:
-        return cached[2]
-    with open(path, "r") as handle:
-        data = json.load(handle)
-    if not isinstance(data, dict):
-        raise ValueError("profile file is not a JSON object")
-    meta: dict[str, Any] = {
+    data = profileSummary(path)
+    return {
         "name": data.get("name"),
         "description": data.get("description"),
         "profile_type": data.get("profile_type"),
@@ -251,10 +237,8 @@ def _profile_file_meta(path: Path) -> dict[str, Any]:
         "updated_at": data.get("updated_at"),
         "rule_count": len(data.get("rules", []) or []),
         "category_count": len(data.get("categories", {}) or {}),
-        "part_count": len(data.get("part_to_category", {}) or {}),
+        "part_count": data["part_count"],
     }
-    _profile_meta_cache[key] = (stat.st_mtime, stat.st_size, meta)
-    return meta
 
 
 def _mtime_iso(path: Path) -> str | None:
