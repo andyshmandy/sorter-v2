@@ -164,7 +164,12 @@ def _startPerception(gc: GlobalConfig, irl_config, camera_service) -> None:
         definition = detection_algorithm_definition(algorithm_id)
         if definition is None or definition.model_path is None:
             return None
-        return definition.model_path, int(definition.imgsz or 320)
+        return (
+            definition.model_path,
+            int(definition.imgsz or 320),
+            definition.runtime or "onnx",
+            definition.model_family or "yolo",
+        )
 
     service = perception_service_mod.build(
         gc=gc,

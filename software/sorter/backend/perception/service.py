@@ -31,7 +31,7 @@ from .capture import CaptureWorker
 from .channel import CHANNEL_REGISTRY, ChannelDef, channelDefFromBlob
 from .inference import InferenceWorker, OnExitEdge
 from .overlay import renderFeedOverlay
-from .runtime import InferenceRuntime, RknnYoloRuntime
+from .runtime import InferenceRuntime, ProcessorRuntime, RknnYoloRuntime
 from .state import ChannelState, EMPTY_STATE, LatestStateSlot
 
 
@@ -251,12 +251,28 @@ class PerceptionService:
                 runtime = self._runtimes.get(channel_id) if reuse_runtime else None
                 if runtime is None:
                     try:
-                        runtime = ctx.runtime_factory(
-                            model_path=gathered.model_path,
-                            imgsz=int(gathered.imgsz),
-                            core_mask_name=gathered.core_name,
-                            conf_threshold=gathered.conf,
-                        )
+                        if ctx.runtime_factory is not None:
+                            runtime = ctx.runtime_factory(
+                                model_path=gathered.model_path,
+                                imgsz=int(gathered.imgsz),
+                                core_mask_name=gathered.core_name,
+                                conf_threshold=gathered.conf,
+                            )
+                        elif gathered.runtime == "rknn":
+                            runtime = RknnYoloRuntime(
+                                model_path=gathered.model_path,
+                                imgsz=int(gathered.imgsz),
+                                core_mask_name=gathered.core_name,
+                                conf_threshold=gathered.conf,
+                            )
+                        else:
+                            runtime = ProcessorRuntime(
+                                model_path=gathered.model_path,
+                                imgsz=int(gathered.imgsz),
+                                runtime=gathered.runtime,
+                                model_family=gathered.model_family,
+                                conf_threshold=gathered.conf,
+                            )
                     except Exception as exc:
                         _log(ctx.gc, "warning",
                              f"[perception] channel {channel_id} ({gathered.role}) "
@@ -691,6 +707,8 @@ class _GatheredChannel:
     algorithm_id: str
     model_path: Any
     imgsz: int
+    runtime: str
+    model_family: str
     core_name: str
     conf: float
     fingerprint: _ChannelFingerprint
@@ -757,7 +775,11 @@ def _gather_channel(
     model_info = ctx.model_path_lookup(algorithm_id)
     if model_info is None:
         return None
-    model_path, imgsz = model_info
+    if len(model_info) == 2:
+        model_path, imgsz = model_info
+        model_runtime, model_family = "rknn", "yolo"
+    else:
+        model_path, imgsz, model_runtime, model_family = model_info
     core_name = _core_for_channel(channel_id)
     conf = float(ctx.resolved_conf.get(channel_id, 0.25))
     arc_entry = disk.arc_params.get(polygon_key) or disk.arc_params.get(angle_key)
@@ -771,7 +793,15 @@ def _gather_channel(
         + repr(tuple(frame_shape)).encode()
     ).hexdigest()
     fingerprint = _ChannelFingerprint(
-        runtime=(algorithm_id, str(model_path), int(imgsz), core_name, conf),
+        runtime=(
+            algorithm_id,
+            str(model_path),
+            int(imgsz),
+            str(model_runtime),
+            str(model_family),
+            core_name,
+            conf,
+        ),
         worker=(cd_hash, id(capture_thread), conf),
     )
     return _GatheredChannel(
@@ -781,6 +811,8 @@ def _gather_channel(
         algorithm_id=algorithm_id,
         model_path=model_path,
         imgsz=int(imgsz),
+        runtime=str(model_runtime),
+        model_family=str(model_family),
         core_name=core_name,
         conf=conf,
         fingerprint=fingerprint,
@@ -806,7 +838,7 @@ def build(
     irl_config: Any,
     camera_service: Any,
     model_path_lookup,                  # callable: algorithm_id -> (model_path, imgsz) or None
-    runtime_factory=RknnYoloRuntime,    # injectable for tests
+    runtime_factory=None,               # optional injectable factory for tests
     conf_thresholds: Optional[Dict[int, float]] = None,
     on_c3_exit_edge: Optional[OnExitEdge] = None,
 ) -> PerceptionService:

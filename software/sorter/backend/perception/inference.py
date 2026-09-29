@@ -230,6 +230,7 @@ class InferenceWorker:
         self.inferences: int = 0
         self.source_id_assertions: int = 0   # hard fails; must stay 0
         self.errors: int = 0
+        self._last_loop_error: tuple[str, str] | None = None
 
     # --- lifecycle -------------------------------------------------------
 
@@ -742,6 +743,7 @@ class InferenceWorker:
                 self._maybe_log_bbox_sizes(on_mask, time.time())
                 self._last_frame_ts = frame.timestamp
                 self.inferences += 1
+                self._last_loop_error = None
 
                 cycle_ms = _now_ms() - cycle_t0
                 _observe(self._runtime_stats, f"perception.{self.source_id}.cycle_ms", cycle_ms)
@@ -759,11 +761,13 @@ class InferenceWorker:
 
             except Exception as exc:
                 self.errors += 1
-                if self._logger is not None:
+                error = (type(exc).__name__, str(exc))
+                if self._logger is not None and error != self._last_loop_error:
                     try:
                         self._logger.warning(
                             f"[perception] {self.source_id} loop error: {exc}"
                         )
                     except Exception:
                         pass
+                self._last_loop_error = error
                 self._stop.wait(0.1)

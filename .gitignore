@@ -45,3 +45,6 @@ software/sorteros/v3/build/.env
 .DS_Store
 
 docs/scripts/__pycache__/
+.vscode/settings.json
+software/package-lock.json
+software/sorter/frontend/package-lock.json

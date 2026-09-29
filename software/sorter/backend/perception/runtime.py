@@ -141,6 +141,92 @@ class RknnYoloRuntime:
         return out
 
 
+class ProcessorRuntime:
+    """Inference adapter for the selected non-RKNN model runtime."""
+
+    __slots__ = (
+        "_processor", "_model_path", "_runtime", "_model_family", "_imgsz",
+        "_conf_threshold", "_iou_threshold",
+    )
+
+    def __init__(
+        self,
+        *,
+        model_path,
+        imgsz: int,
+        runtime: str,
+        model_family: str,
+        conf_threshold: float = 0.25,
+        iou_threshold: float = 0.45,
+    ) -> None:
+        from vision.ml.factory import create_processor
+
+        self._model_path = model_path
+        self._runtime = runtime
+        self._model_family = model_family
+        self._imgsz = int(imgsz)
+        self._conf_threshold = float(conf_threshold)
+        self._iou_threshold = float(iou_threshold)
+        self._processor = create_processor(
+            model_path=model_path,
+            model_family=model_family,
+            runtime=runtime,
+            imgsz=imgsz,
+            conf_threshold=conf_threshold,
+            iou_threshold=iou_threshold,
+        )
+
+    @property
+    def model_path(self):
+        return self._model_path
+
+    @property
+    def runtime(self) -> str:
+        return self._runtime
+
+    @property
+    def model_family(self) -> str:
+        return self._model_family
+
+    @property
+    def imgsz(self) -> int:
+        return self._imgsz
+
+    @property
+    def conf_threshold(self) -> float:
+        return self._conf_threshold
+
+    @property
+    def iou_threshold(self) -> float:
+        return self._iou_threshold
+
+    def infer(
+        self, bgr: np.ndarray, *, conf_threshold: Optional[float] = None
+    ) -> Sequence[Bbox]:
+        detections = self._infer(bgr, conf_threshold)
+        return [
+            (int(d.bbox[0]), int(d.bbox[1]), int(d.bbox[2]), int(d.bbox[3]))
+            for d in detections
+        ]
+
+    def inferWithScores(
+        self, bgr: np.ndarray, *, conf_threshold: Optional[float] = None
+    ) -> Sequence[ScoredBbox]:
+        detections = self._infer(bgr, conf_threshold)
+        return [
+            (
+                (int(d.bbox[0]), int(d.bbox[1]), int(d.bbox[2]), int(d.bbox[3])),
+                float(d.score),
+            )
+            for d in detections
+        ]
+
+    def _infer(self, bgr: np.ndarray, conf_threshold: Optional[float]):
+        if self._model_family == "nanodet":
+            return self._processor.infer(bgr)
+        return self._processor.infer(bgr, conf_threshold=conf_threshold)
+
+
 class StubRuntime:
     """Test runtime: returns a fixed list of bboxes for any input.
 
