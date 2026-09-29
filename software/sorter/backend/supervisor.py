@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import ipaddress
 import json
 import mimetypes
 import os
@@ -200,6 +201,19 @@ def _file_in(root: Path, url_path: str) -> Path | None:
         return None
 
 
+def _names_this_machine(host: str) -> bool:
+    """Whether a Host header names this machine the way people reach it: an IP
+    address, localhost, a bare or mDNS (.local) name, or a Tailscale name. A
+    public domain means DNS rebinding: another site's page, reaching this
+    machine under that site's own name, where Origin matches Host."""
+    name = urlsplit(f"//{host}").hostname or ""
+    try:
+        ipaddress.ip_address(name)
+        return True
+    except ValueError:
+        return name == "localhost" or "." not in name or name.endswith((".local", ".ts.net"))
+
+
 def _ui_handler(supervisor: BackendSupervisor, build_dir: Path) -> type[BaseHTTPRequestHandler]:
     not_built = (
         "<!doctype html><meta charset=utf-8><title>Sorter UI not built</title>"
@@ -209,7 +223,10 @@ def _ui_handler(supervisor: BackendSupervisor, build_dir: Path) -> type[BaseHTTP
     ).encode()
 
     class UIHandler(BaseHTTPRequestHandler):
-        timeout = 60  # a connection that never sends its request is dropped
+        # Keep-alive: a page load's files share a few connections instead of
+        # opening one each. An idle connection is dropped after the timeout.
+        protocol_version = "HTTP/1.1"
+        timeout = 60
 
         def do_GET(self) -> None:
             self._serve(body=True)
@@ -256,8 +273,9 @@ def _ui_handler(supervisor: BackendSupervisor, build_dir: Path) -> type[BaseHTTP
             # Another site's page can post here too, but its browser names that
             # site in Origin: only the UI served from here may restart.
             origin = urlsplit(self.headers.get("Origin") or "").netloc.lower()
-            if not origin or origin != (self.headers.get("Host") or "").lower():
-                self._send_json(403, {"ok": False, "message": "Origin must match Host."})
+            host = (self.headers.get("Host") or "").lower()
+            if not origin or origin != host or not _names_this_machine(host):
+                self._send_json(403, {"ok": False, "message": "Origin must match Host, and name this machine."})
                 return
             print(f"[supervisor] restart requested by {self.client_address[0]}", flush=True)
             accepted = supervisor.request_restart()

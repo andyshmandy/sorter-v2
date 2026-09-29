@@ -164,6 +164,36 @@ def test_only_the_ui_served_here_may_restart_the_backend(build: Path, serve) -> 
     assert backend.restarts == 1
 
 
+def test_a_page_under_another_sites_name_may_not_restart_it(build: Path, serve) -> None:
+    # DNS rebinding: another site's page reaching this machine under that
+    # site's own name sends an Origin that matches the Host.
+    backend = _Supervisor()
+    port = serve(build, backend)
+    for name in ("attacker.example", "sorter.example.com"):
+        status, _headers, _body = _get(
+            port, sup.RESTART_PATH, method="POST", Host=f"{name}:{port}", Origin=f"http://{name}:{port}"
+        )
+        assert status == 403, name
+    for name in ("sorter.local", "sorter", "sorter.tail1234.ts.net", "192.168.1.20", "[fe80::1]", "localhost"):
+        status, _headers, _body = _get(port, sup.RESTART_PATH, method="POST", Host=name, Origin=f"http://{name}")
+        assert status == 202, name
+    assert backend.restarts == 6
+
+
+def test_a_page_loads_its_files_over_one_connection(build: Path, serve) -> None:
+    port = serve(build)
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        for path in ("/", SCRIPT_PATH, "/settings"):
+            conn.request("GET", path)
+            response = conn.getresponse()
+            response.read()
+            assert response.status == 200
+            assert not response.will_close, path
+    finally:
+        conn.close()
+
+
 def test_the_ui_takes_its_port_once_it_is_free(build: Path, capsys: pytest.CaptureFixture[str]) -> None:
     holder = socket.socket()
     holder.bind(("0.0.0.0", 0))
