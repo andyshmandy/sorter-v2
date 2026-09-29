@@ -13,8 +13,8 @@ from typing import Any
 
 import requests
 
-from blob_manager import getHiveConfig
 from hive_telemetry import HiveTelemetryClient, TelemetryBlocked, telemetryAllows
+from local_state import get_hive_config
 from machine_network import buildNetworkBlock
 from server.sample_payloads import build_sample_payload
 
@@ -137,7 +137,7 @@ class HiveUploader:
         self._heartbeat_thread.start()
 
     def _reload_config(self) -> None:
-        config = getHiveConfig()
+        config = get_hive_config()
         targets = config.get("targets") if isinstance(config, dict) else None
         previous = self._targets
         self._targets = {}

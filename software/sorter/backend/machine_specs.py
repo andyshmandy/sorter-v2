@@ -153,7 +153,7 @@ def _cameras() -> dict[str, Any]:
         return _withCalibration(live)
     # Fall back to the TOML setup when the camera service isn't up yet.
     try:
-        from blob_manager import getCameraSetup
+        from toml_config import getCameraSetup
 
         setup = getCameraSetup()
     except Exception:

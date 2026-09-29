@@ -11,7 +11,7 @@ is no further role-string dispatch on the hot path. The
 and on ``inference.InferenceWorker.__init__``'s source_id check.
 
 This module is the one place perception depends on the rest of the
-backend (camera_service, detection_registry, toml_config, blob_manager).
+backend (camera_service, detection_registry, toml_config, local_state).
 That dependency is read-only at boot — no method here is called on the
 hot path.
 """
@@ -698,20 +698,17 @@ class _GatheredChannel:
 
 def _read_disk_inputs(gc: Any) -> _DiskInputs:
     """Read the saved zone blob + detection config that perception is driven
-    by. Cheap (small JSON via blob_manager) — safe to call every reconcile
-    pass and on every UI-save poke.
+    by. Cheap (small JSON via local_state and toml_config) — safe to call
+    every reconcile pass and on every UI-save poke.
 
     Saved blob shape: { "polygons": {"second_channel": [...], ...},
                         "channel_angles": {"second": ..., ...},
                         "arc_params": {"second": {drop_zone, exit_zone, ...}, ...} }
     """
-    from blob_manager import (
-        getChannelPolygons,
-        getFeederDetectionConfig,
-        getCarouselDetectionConfig,
-    )
+    from local_state import get_channel_polygons
+    from toml_config import getDetectionConfig
 
-    raw_polygons = getChannelPolygons() or {}
+    raw_polygons = get_channel_polygons() or {}
     channel_angles = raw_polygons.get("channel_angles") or {}
     arc_params = raw_polygons.get("arc_params") or {}
     secondary_zones = raw_polygons.get("secondary_zones") or {}
@@ -726,7 +723,7 @@ def _read_disk_inputs(gc: Any) -> _DiskInputs:
         except Exception:
             continue
     algo_by_channel = _resolve_algorithm_id_per_channel(
-        getFeederDetectionConfig(), getCarouselDetectionConfig()
+        getDetectionConfig("feeder"), getDetectionConfig("carousel")
     )
     return _DiskInputs(
         saved_polygons=saved_polygons,

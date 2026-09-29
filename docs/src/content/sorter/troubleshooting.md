@@ -156,7 +156,7 @@ The wizard's Controller Discovery step lists no controllers, and the issue banne
 
 **Cause:** Wrong URL/token, or Hive is unreachable from this machine. The uploader keeps samples on disk and backs off — nothing is dropped.
 
-**Fix:** Test with `curl -fsS "$HIVE_URL/api/health"`. If that fails, fix the network. If it returns but uploads still 401, the token is wrong. Set both under **Settings → Hive** in the UI (stored via `blob_manager`, not `.env`).
+**Fix:** Test with `curl -fsS "$HIVE_URL/api/health"`. If that fails, fix the network. If it returns but uploads still 401, the token is wrong. Set both under **Settings → Hive** in the UI (stored in the backend's `local_state.sqlite`, not `.env`).
 
 **Verify:** The pending queue drains at roughly one upload per second per worker.
 

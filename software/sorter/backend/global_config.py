@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
 from logger import Logger
-from blob_manager import getMachineId
+from local_state import get_or_create_machine_id
 
 if TYPE_CHECKING:
     from run_recorder import RunRecorder
@@ -137,7 +137,7 @@ def mkGlobalConfig() -> GlobalConfig:
     # Uploaded BrickStore inventory (.bsx) files for "not in inventory" routing.
     gc.bsx_files_dir = str(backend_dir / "bsx_files")
     os.makedirs(gc.bsx_files_dir, exist_ok=True)
-    gc.machine_id = getMachineId()
+    gc.machine_id = get_or_create_machine_id()
     gc.run_id = str(uuid.uuid4())
     # Allow env-var fallback so the launching supervisor can flip these
     # without needing to thread CLI args through to a child main.py — useful

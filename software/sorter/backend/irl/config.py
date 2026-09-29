@@ -45,7 +45,7 @@ from .parse_user_toml import (
     applyStepperStallguard,
 )
 from .leds import LedController, discoverLedOutputs
-from blob_manager import getBinCategories
+from bin_layout_store import get_bin_categories, get_not_in_inventory_bins
 from local_state import get_led_state, get_servo_states
 
 HARDWARE_INIT_COMMAND_ATTEMPTS = 4
@@ -1109,7 +1109,7 @@ def mkIRLInterface(config: IRLConfig, gc: GlobalConfig) -> IRLInterface:
         restore_servo_states(irl_interface.servos, gc)
 
 
-    saved_categories = getBinCategories()
+    saved_categories = get_bin_categories()
     if saved_categories is not None:
         if layoutMatchesCategories(irl_interface.distribution_layout, saved_categories):
             applyCategories(irl_interface.distribution_layout, saved_categories)
@@ -1117,7 +1117,6 @@ def mkIRLInterface(config: IRLConfig, gc: GlobalConfig) -> IRLInterface:
         else:
             gc.logger.warn("Saved bin categories don't match layout, ignoring")
 
-    from bin_layout_store import get_not_in_inventory_bins
     from irl.bin_layout import applyNotInInventory, notInInventoryMatchesLayout
     saved_nii = get_not_in_inventory_bins()
     if saved_nii is not None:

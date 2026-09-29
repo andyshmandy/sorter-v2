@@ -11,7 +11,7 @@ from irl.bin_layout import DistributionLayout, Bin, extractCategories
 from irl.config import IRLInterface
 from global_config import GlobalConfig
 from sorting_profile import SortingProfile, MISC_CATEGORY
-from blob_manager import setBinCategories
+from bin_layout_store import set_bin_categories
 import db
 from defs.events import PauseCommandData, PauseCommandEvent
 from defs.known_object import PieceStage
@@ -73,7 +73,7 @@ def _persistBinCategories(layout: DistributionLayout) -> None:
     # thread. The in-memory layout already carries the assignment, and every
     # call writes the full layout, so a failed write is repaired by the next.
     categories = extractCategories(layout)
-    db.defer("set_bin_categories", lambda: setBinCategories(categories))
+    db.defer("set_bin_categories", lambda: set_bin_categories(categories))
 
 
 class Positioning(BaseState):

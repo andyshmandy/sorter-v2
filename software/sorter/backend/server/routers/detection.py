@@ -14,18 +14,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from blob_manager import (
-    BLOB_DIR,
-    getApiKeys,
-    getCarouselDetectionConfig,
-    getFeederDetectionConfig,
-    getHiveConfig,
-    getMachineNickname,
-    setApiKeys,
-    setCarouselDetectionConfig,
-    setFeederDetectionConfig,
-    setHiveConfig,
-)
+import local_state
 from hive_telemetry import (
     getTargetTelemetrySettings,
     resetTargetTelemetrySettings,
@@ -34,9 +23,10 @@ from hive_telemetry import (
 )
 from perception.overlay import drawChannelZones
 from server import shared_state
-from server.classification_training import getClassificationTrainingManager
+from server.classification_training import TRAINING_ROOT, getClassificationTrainingManager
 from server.machine_naming import display_name_from_hostname, random_display_name
 from server.routers.tailscale import current_hostname
+from toml_config import getDetectionConfig, getMachineNickname, setDetectionConfig
 from vision.detection_registry import (
     detection_algorithm_options,
     normalize_detection_algorithm,
@@ -355,7 +345,7 @@ class HivePurgePayload(BaseModel):
 
 @router.get("/api/settings/api-keys")
 def get_api_keys() -> Dict[str, Any]:
-    saved = getApiKeys()
+    saved = local_state.get_api_keys()
     masked: Dict[str, str | None] = {}
     for provider in SUPPORTED_API_KEY_PROVIDERS:
         key = saved.get(provider) or os.environ.get("OPENROUTER_API_KEY", "")
@@ -371,7 +361,7 @@ def save_api_key(payload: ApiKeySavePayload) -> Dict[str, Any]:
     if payload.provider not in SUPPORTED_API_KEY_PROVIDERS:
         raise HTTPException(400, f"Unsupported provider '{payload.provider}'.")
     saved = {"openrouter": payload.key.strip()}
-    setApiKeys(saved)
+    local_state.set_api_keys(saved)
     os.environ["OPENROUTER_API_KEY"] = payload.key.strip()
     return {"ok": True, "message": f"API key for {payload.provider} saved and activated."}
 
@@ -380,7 +370,7 @@ def save_api_key(payload: ApiKeySavePayload) -> Dict[str, Any]:
 
 
 def _load_hive_targets() -> list[dict[str, Any]]:
-    config = getHiveConfig() or {}
+    config = local_state.get_hive_config() or {}
     targets = config.get("targets")
     if not isinstance(targets, list):
         return []
@@ -389,9 +379,9 @@ def _load_hive_targets() -> list[dict[str, Any]]:
 
 def _save_hive_targets(targets: list[dict[str, Any]], primary_target_id: str | None = None) -> None:
     if primary_target_id is None:
-        existing = getHiveConfig() or {}
+        existing = local_state.get_hive_config() or {}
         primary_target_id = existing.get("primary_target_id")
-    setHiveConfig({"targets": targets, "primary_target_id": primary_target_id})
+    local_state.set_hive_config({"targets": targets, "primary_target_id": primary_target_id})
 
 
 def _reloadHiveConsumers() -> dict[str, Any]:
@@ -405,7 +395,7 @@ def _reloadHiveConsumers() -> dict[str, Any]:
 
 
 def _load_hive_primary_id() -> str | None:
-    config = getHiveConfig() or {}
+    config = local_state.get_hive_config() or {}
     primary = config.get("primary_target_id")
     return primary if isinstance(primary, str) else None
 
@@ -702,7 +692,7 @@ def hive_purge(payload: HivePurgePayload = HivePurgePayload()) -> Dict[str, Any]
 @router.get("/api/feeder/detection-config")
 def get_feeder_detection_config(role: str | None = Query(default=None)) -> Dict[str, Any]:
     role = _normalize_feeder_role(role)
-    saved = getFeederDetectionConfig() or {}
+    saved = getDetectionConfig("feeder") or {}
     algorithm_by_role = _feeder_algorithm_by_role_from_config(saved)
     algorithm = (
         algorithm_by_role[role]
@@ -726,7 +716,7 @@ def save_feeder_detection_config(
     role = _normalize_feeder_role(role)
     if not scope_supports_detection_algorithm("feeder", payload.algorithm):
         raise HTTPException(status_code=400, detail="Unsupported feeder detection algorithm.")
-    saved = getFeederDetectionConfig() or {}
+    saved = getDetectionConfig("feeder") or {}
     current = saved.get("algorithm_by_role")
     algorithm_by_role = dict(current) if isinstance(current, dict) else {}
     if role is not None:
@@ -735,7 +725,7 @@ def save_feeder_detection_config(
         algorithm_by_role = {channel_role: payload.algorithm for channel_role in FEEDER_DETECTION_ROLES}
         saved["algorithm"] = payload.algorithm
     saved["algorithm_by_role"] = algorithm_by_role
-    setFeederDetectionConfig(saved)
+    setDetectionConfig("feeder", saved)
     _reconcilePerception()
     return get_feeder_detection_config(role)
 
@@ -745,7 +735,7 @@ def save_feeder_detection_config(
 
 @router.get("/api/carousel/detection-config")
 def get_carousel_detection_config() -> Dict[str, Any]:
-    saved = getCarouselDetectionConfig() or {}
+    saved = getDetectionConfig("carousel") or {}
     return {
         "ok": True,
         "algorithm": _normalize_carousel_detection_algorithm(saved.get("algorithm")),
@@ -757,9 +747,9 @@ def get_carousel_detection_config() -> Dict[str, Any]:
 def save_carousel_detection_config(payload: DetectionConfigPayload) -> Dict[str, Any]:
     if not scope_supports_detection_algorithm("carousel", payload.algorithm):
         raise HTTPException(status_code=400, detail="Unsupported carousel detection algorithm.")
-    saved = getCarouselDetectionConfig() or {}
+    saved = getDetectionConfig("carousel") or {}
     saved["algorithm"] = payload.algorithm
-    setCarouselDetectionConfig(saved)
+    setDetectionConfig("carousel", saved)
     _reconcilePerception()
     return get_carousel_detection_config()
 
@@ -1053,8 +1043,6 @@ def _classification_channel_role_sectors(
 
 
 # Sample storage management
-
-TRAINING_ROOT = BLOB_DIR / "classification_training"
 
 
 def _session_stats(session_dir: Path) -> Dict[str, Any]:

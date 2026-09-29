@@ -174,6 +174,15 @@ def set_machine_id(machine_id: str) -> None:
     _write_state(STATE_KEY_MACHINE_ID, normalized)
 
 
+def get_or_create_machine_id() -> str:
+    machine_id = get_machine_id()
+    if machine_id is not None:
+        return machine_id
+    machine_id = str(uuid.uuid4())
+    set_machine_id(machine_id)
+    return machine_id
+
+
 # The anonymous install identity for the status ping (status_ping.py). Kept
 # deliberately SEPARATE from machine_id: machine_id is sent to Hive at account
 # registration and is therefore account-linked, whereas this id is random,

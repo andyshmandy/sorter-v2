@@ -86,7 +86,7 @@ class BinResetActionTests(unittest.TestCase):
 
         with (
             patch("server.routers.bins._runtime_distribution_layout", return_value=None),
-            patch("server.routers.bins.getBinCategories", return_value=None),
+            patch("server.routers.bins.get_bin_categories", return_value=None),
             patch("server.routers.bins.getBinLayout", return_value=layout),
             patch(
                 "server.routers.bins.clear_current_session_bins",
@@ -129,7 +129,7 @@ class BinResetActionTests(unittest.TestCase):
 
         with (
             patch("server.routers.bins._runtime_distribution_layout", return_value=layout),
-            patch("server.routers.bins.setBinCategories") as set_categories_mock,
+            patch("server.routers.bins.set_bin_categories") as set_categories_mock,
             patch(
                 "server.routers.bins.clear_current_session_bins",
                 return_value={"ok": True, "cleared_bins": 2},

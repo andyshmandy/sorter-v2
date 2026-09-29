@@ -4,8 +4,8 @@ import threading
 import time
 from typing import Any, Optional
 
-from blob_manager import getHiveConfig
 from global_config import GlobalConfig
+from local_state import get_hive_config
 
 # The sorter-client ``HiveClient`` lives alongside the sorter tree and is
 # injected onto ``sys.path`` by ``server.hive_models`` at import time.
@@ -42,7 +42,7 @@ _bricklink_colors_lock = threading.Lock()
 
 
 def getPrimaryHiveTarget() -> Optional[dict[str, Any]]:
-    config = getHiveConfig()
+    config = get_hive_config()
     if not isinstance(config, dict):
         return None
     targets = [
