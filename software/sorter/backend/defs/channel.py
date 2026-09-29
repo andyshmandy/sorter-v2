@@ -20,12 +20,3 @@ class ChannelGeometry:
     second_channel: PolygonChannel | None
     third_channel: PolygonChannel | None
 
-
-@dataclass
-class ChannelDetection:
-    bbox: Tuple[int, int, int, int]
-    channel_id: int
-    channel: PolygonChannel
-    global_id: int | None = None
-    source_role: str | None = None
-    motion_confirmed: bool = True

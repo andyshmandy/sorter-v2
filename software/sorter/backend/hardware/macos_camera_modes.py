@@ -5,7 +5,6 @@ from functools import lru_cache
 import json
 import subprocess
 import sys
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -146,10 +145,6 @@ def _cached_raw_modes() -> dict[str, list[dict]]:
     return _enumerate_in_process()
 
 
-def invalidate_cache() -> None:
-    _cached_raw_modes.cache_clear()
-
-
 def _collapse_modes(entries: list[dict]) -> list[CameraMode]:
     """Pick max FPS per (width, height). Prefer MJPEG/420v (compressed-decoded) over YUY2/yuvs."""
 
@@ -199,19 +194,3 @@ def list_modes_for_unique_id(unique_id: str) -> list[CameraMode]:
     entries = raw.get(unique_id) or []
     return _collapse_modes(entries)
 
-
-def list_modes_for_location_id(location_id: int) -> list[CameraMode]:
-    raw = _cached_raw_modes()
-    for unique_id, entries in raw.items():
-        parsed = _parse_location_id(unique_id)
-        if parsed is not None and parsed == location_id:
-            return _collapse_modes(entries)
-    return []
-
-
-def find_unique_id_for_location(location_id: int) -> Optional[str]:
-    raw = _cached_raw_modes()
-    for unique_id in raw:
-        if _parse_location_id(unique_id) == location_id:
-            return unique_id
-    return None

@@ -169,29 +169,6 @@ _REFERENCE_TILE_LAB: dict[str, tuple[float, float, float]] = {
 }
 
 
-def analyze_calibration_target(frame: np.ndarray) -> CalibrationAnalysis | None:
-    if frame is None or frame.size == 0:
-        return None
-
-    fixed_target = _analyze_fixed_color_target(frame)
-    if fixed_target is not None:
-        return fixed_target
-
-    detection = _detect_checkerboard(frame)
-    if detection is not None:
-        pattern_size, corners = detection
-        cells = _sample_cells(frame, corners, pattern_size)
-        if len(cells) >= 8:
-            analysis = _build_analysis_from_cells(frame.shape, pattern_size, cells, _corners_bbox(corners))
-            if analysis is not None:
-                return analysis
-
-    plate_quad = _detect_plate_quad(frame)
-    if plate_quad is None:
-        return None
-    return _analyze_plate_quad(frame, plate_quad)
-
-
 def analyze_color_plate_target(frame: np.ndarray) -> CalibrationAnalysis | None:
     if frame is None or frame.size == 0:
         return None

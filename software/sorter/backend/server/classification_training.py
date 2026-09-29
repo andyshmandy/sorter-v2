@@ -121,32 +121,6 @@ class ClassificationTrainingManager:
             }
         )
 
-    def startSession(self, session_name: str | None = None) -> dict[str, Any]:
-        with self._lock:
-            self._createSessionLocked(session_name)
-            self._persistConfig()
-            return {
-                "ok": True,
-                "session_id": self._session_id,
-                "session_name": self._session_name,
-                "session_dir": str(self._session_dir) if self._session_dir is not None else None,
-                "created_at": self._created_at,
-            }
-
-    def setProcessor(self, processor: str) -> dict[str, Any]:
-        normalized = processor.strip() if isinstance(processor, str) else ""
-        if normalized not in SUPPORTED_PROCESSORS:
-            raise ValueError(f"Unsupported sample processor '{processor}'.")
-        with self._lock:
-            self._processor = normalized
-            self._persistConfig()
-            return {
-                "ok": True,
-                "processor": self._processor,
-                "session_id": self._session_id,
-                "session_name": self._session_name,
-            }
-
     def getStorageStatus(self) -> dict[str, Any]:
         with self._lock:
             if self._last_usage_bytes is None:
@@ -247,9 +221,6 @@ class ClassificationTrainingManager:
     def getHiveUploaderStatus(self) -> dict[str, Any]:
         return self._hive.status()
 
-    def hasEnabledHiveTargets(self) -> bool:
-        return self._hive.has_enabled_targets()
-
     def reloadHiveUploader(self) -> dict[str, Any]:
         return self._hive.reload()
 
@@ -265,17 +236,6 @@ class ClassificationTrainingManager:
         target_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         return self._hive.purge(target_ids=target_ids)
-
-    def resolveSessionDir(self, session_id: str) -> Path:
-        session_dir = (TRAINING_ROOT / session_id).resolve()
-        root = TRAINING_ROOT.resolve()
-        try:
-            session_dir.relative_to(root)
-        except ValueError as exc:
-            raise ValueError("Unknown sample session.") from exc
-        if not session_dir.exists() or not session_dir.is_dir():
-            raise ValueError("Unknown sample session.")
-        return session_dir
 
     def _ensureSessionLocked(self) -> bool:
         if self._session_dir is None or not self._session_dir.is_dir():
@@ -326,16 +286,6 @@ class ClassificationTrainingManager:
             "mode": "runtime_archive_only",
         }
         (session_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
-
-    @staticmethod
-    def _readJsonFile(path: Path) -> dict[str, Any] | None:
-        if not path.exists():
-            return None
-        try:
-            payload = json.loads(path.read_text())
-        except Exception:
-            return None
-        return payload if isinstance(payload, dict) else None
 
     def _writeImage(self, path: Path, image: np.ndarray | None) -> None:
         if image is None:

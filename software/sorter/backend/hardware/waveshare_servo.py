@@ -158,9 +158,6 @@ class ScServoBus:
             return None
         return struct.unpack(">H", data)[0]  # big-endian
 
-    def write_word(self, servo_id: int, address: int, value: int) -> bool:
-        return self.write_bytes(servo_id, address, struct.pack(">H", value))
-
     def write_byte(self, servo_id: int, address: int, value: int) -> bool:
         return self.write_bytes(servo_id, address, bytes([value]))
 

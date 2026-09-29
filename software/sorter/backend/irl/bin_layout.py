@@ -347,27 +347,6 @@ def calibratedAnglesForLayer(config: "BinLayoutConfig", layer_index: int, servo_
     return open_angle, closed_angle
 
 
-def snapshotLayout(config: "BinLayoutConfig", bin_categories=None, not_in_inventory=None) -> dict:
-    """Snapshot a layout for the bin_layouts presets table: geometry + enabled +
-    section flags + layer->channel ref + assignments + NII. NO servo angles
-    (those are per-channel and machine-level)."""
-    return {
-        "layers": [
-            {
-                "sections": layer.sections,
-                "enabled": layer.enabled,
-                "servo_channel_id": layer.servo_channel_id,
-                "max_pieces_per_bin": layer.max_pieces_per_bin,
-                "max_dimension_mm": layer.max_dimension_mm,
-                "section_enabled": layer.section_enabled,
-            }
-            for layer in config.layers
-        ],
-        "bin_categories": bin_categories,
-        "not_in_inventory_bins": not_in_inventory,
-    }
-
-
 def mkLayoutFromConfig(config: BinLayoutConfig) -> DistributionLayout:
     layers = []
     for layer_config in config.layers:
@@ -414,13 +393,6 @@ def applyNotInInventory(
         for section_idx, section in enumerate(layer.sections):
             for bin_idx, b in enumerate(section.bins):
                 b.not_in_inventory = bool(flags[layer_idx][section_idx][bin_idx])
-
-
-def emptyNotInInventory(layout: DistributionLayout) -> list[list[list[bool]]]:
-    return [
-        [[False for _ in section.bins] for section in layer.sections]
-        for layer in layout.layers
-    ]
 
 
 def notInInventoryMatchesLayout(

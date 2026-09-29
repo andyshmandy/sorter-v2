@@ -78,26 +78,6 @@ class Profiler:
     def timer(self, name: str) -> _TimerContext:
         return _TimerContext(self, name)
 
-    def startTimer(self, name: str, key: str = "") -> None:
-        if not self.enabled:
-            return
-        thread_id = threading.get_ident()
-        timer_key = (f"{thread_id}:{name}", key)
-        with self._lock:
-            self._active_timers[timer_key] = time.perf_counter()
-
-    def endTimer(self, name: str, key: str = "") -> None:
-        if not self.enabled:
-            return
-        thread_id = threading.get_ident()
-        timer_key = (f"{thread_id}:{name}", key)
-        with self._lock:
-            start = self._active_timers.pop(timer_key, None)
-        if start is None:
-            return
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        self.observeDuration(name, elapsed_ms)
-
     def observeDuration(self, name: str, elapsed_ms: float) -> None:
         if not self.enabled:
             return
@@ -123,20 +103,6 @@ class Profiler:
                 stat = CounterStat()
                 self._counters[name] = stat
             stat.count += count
-
-    def observeValue(self, name: str, value: float) -> None:
-        if not self.enabled:
-            return
-        with self._lock:
-            stat = self._values.get(name)
-            if stat is None:
-                stat = ValueStat()
-                self._values[name] = stat
-            stat.count += 1
-            stat.total += value
-            stat.last_value = value
-            if value > stat.max_value:
-                stat.max_value = value
 
     def mark(self, name: str) -> None:
         if not self.enabled:
