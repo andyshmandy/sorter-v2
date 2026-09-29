@@ -99,11 +99,16 @@ function Resolve-DevCommand {
             "works in this same window before re-running dev.ps1."
     }
     $ext = [System.IO.Path]::GetExtension($cmd.Source)
+    # Start-Process joins -ArgumentList elements with a space but does not
+    # quote ones that contain spaces themselves, so an unquoted path like
+    # "C:\Program Files\nodejs\pnpm.ps1" splits into two arguments on the
+    # child's command line. Quote it explicitly.
+    $quotedSource = '"' + $cmd.Source + '"'
     if ($ext -in ".cmd", ".bat") {
-        return @{ FilePath = "cmd.exe"; ArgumentList = @("/c", $cmd.Source) + $ArgumentList }
+        return @{ FilePath = "cmd.exe"; ArgumentList = @("/c", $quotedSource) + $ArgumentList }
     }
     if ($ext -eq ".ps1") {
-        return @{ FilePath = "powershell.exe"; ArgumentList = @("-NoProfile", "-File", $cmd.Source) + $ArgumentList }
+        return @{ FilePath = "powershell.exe"; ArgumentList = @("-NoProfile", "-File", $quotedSource) + $ArgumentList }
     }
     return @{ FilePath = $cmd.Source; ArgumentList = $ArgumentList }
 }
