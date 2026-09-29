@@ -109,6 +109,20 @@ class MachineTomlEditTests(unittest.TestCase):
                 raise RuntimeError("validation failed")
         self.assertFalse(self.path.exists())
 
+    def test_a_read_parses_the_file_once_until_it_changes(self) -> None:
+        self.path.write_text('[machine]\nnickname = "Bench"\n', encoding="utf-8")
+        self.assertEqual(machine_toml.read(), {"machine": {"nickname": "Bench"}})
+        with mock.patch.object(machine_toml.tomllib, "loads", side_effect=AssertionError("parsed again")):
+            config = machine_toml.read()
+        config["machine"]["nickname"] = "changed by a caller"
+        self.assertEqual(machine_toml.read(), {"machine": {"nickname": "Bench"}})
+
+        self.path.write_text('[machine]\nnickname = "Shelf"\n', encoding="utf-8")
+        self.assertEqual(machine_toml.read(), {"machine": {"nickname": "Shelf"}})
+        with machine_toml.edit() as config:
+            config["machine"]["nickname"] = "Rack"
+        self.assertEqual(machine_toml.read(), {"machine": {"nickname": "Rack"}})
+
     def test_malformed_file_raises(self) -> None:
         self.path.write_text("[machine\nnickname = ", encoding="utf-8")
         with self.assertRaises(machine_toml.MachineTomlError):

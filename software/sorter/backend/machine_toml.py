@@ -29,6 +29,10 @@ BACKEND_DIR = Path(__file__).resolve().parent
 DEFAULT_PATH = BACKEND_DIR.parents[1] / "machine.toml"  # software/, beside machine.example.toml
 
 _LOCK = threading.RLock()
+# The control loop reads settings every tick, so the last parse is reused while
+# the file's text is unchanged: reading 5 KB is cheap, parsing it is not.
+_parsed: tuple[tuple[Path, str], dict[str, Any]] | None = None
+_resolved: tuple[str, Path] | None = None
 
 
 class MachineTomlError(Exception):
@@ -41,15 +45,22 @@ def machine_toml_path() -> Path:
     A relative value is taken from the backend directory: machines set it in
     software/.env as "../../machine.toml", written for a backend started there,
     and a script started anywhere else has to find the same file."""
+    global _resolved
     raw = os.environ.get(ENV_VAR, "").strip()
     if not raw:
         return DEFAULT_PATH
+    cached = _resolved
+    if cached is not None and cached[0] == raw:
+        return cached[1]
     path = Path(raw).expanduser()
-    return path if path.is_absolute() else (BACKEND_DIR / path).resolve()
+    path = path if path.is_absolute() else (BACKEND_DIR / path).resolve()
+    _resolved = (raw, path)
+    return path
 
 
 def read() -> dict[str, Any]:
-    """The parsed file, or {} when there is none yet."""
+    """The parsed file, or {} when there is none yet. A copy: change it freely."""
+    global _parsed
     path = machine_toml_path()
     try:
         text = path.read_text(encoding="utf-8")
@@ -57,10 +68,14 @@ def read() -> dict[str, Any]:
         return {}
     except OSError as exc:
         raise MachineTomlError(f"can't read {path}: {exc}") from exc
-    try:
-        return tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        raise MachineTomlError(f"{path} is not valid TOML: {exc}") from exc
+    cached = _parsed
+    if cached is None or cached[0] != (path, text):
+        try:
+            cached = ((path, text), tomllib.loads(text))
+        except tomllib.TOMLDecodeError as exc:
+            raise MachineTomlError(f"{path} is not valid TOML: {exc}") from exc
+        _parsed = cached
+    return copy.deepcopy(cached[1])
 
 
 @contextmanager
