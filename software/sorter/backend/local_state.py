@@ -63,7 +63,7 @@ def _legacy_set_progress_path() -> Path:
 
 
 def _connection(op: str | None = None):
-    return db.connect(op=op, sync_normal=True)
+    return db.connect(op=op)
 
 
 def _read_json_file(path: Path) -> Any | None:

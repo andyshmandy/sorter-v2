@@ -56,9 +56,7 @@ def watch_realtime_thread() -> None:
 
 
 @contextmanager
-def connect(
-    schema: Schema | None = None, *, op: str | None = None, sync_normal: bool = False
-) -> Iterator[sqlite3.Connection]:
+def connect(schema: Schema | None = None, *, op: str | None = None) -> Iterator[sqlite3.Connection]:
     """A connection for one operation, closed on exit. `schema` creates the
     caller's tables; it runs once per database file, before its first use."""
     path = local_state_db_path()
@@ -67,7 +65,7 @@ def connect(
     if threading.get_ident() in _realtime_threads:
         _note_realtime(op or _caller())
     started = time.perf_counter()
-    conn = _open(path, sync_normal)
+    conn = _open(path)
     try:
         yield conn
     finally:
@@ -77,11 +75,14 @@ def connect(
             _warn(f"[db] slow {op or _caller()} {held_ms:.0f}ms on {threading.current_thread().name}")
 
 
-def _open(path: Path, sync_normal: bool) -> sqlite3.Connection:
+def _open(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path, timeout=5.0)
     conn.row_factory = sqlite3.Row
-    if sync_normal:
-        conn.execute("PRAGMA synchronous = NORMAL")
+    # WAL with synchronous=NORMAL: a commit appends to the WAL without an
+    # fsync; only checkpoints sync. A power cut can lose the last commits but
+    # never corrupts the file. FULL (SQLite's default) fsyncs every commit,
+    # which on an SD card costs more than the write itself.
+    conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
@@ -100,7 +101,7 @@ def _prepare(path: Path, schema: Schema | None) -> None:
             _keeper, _keeper_path = keeper, path
         if schema is None or (path, schema) in _prepared:
             return
-        conn = _open(path, sync_normal=True)
+        conn = _open(path)
         try:
             schema(conn)
             conn.commit()

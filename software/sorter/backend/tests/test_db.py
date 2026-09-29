@@ -46,6 +46,11 @@ class DbTests(unittest.TestCase):
             conn.commit()
         self.assertTrue(os.path.exists(os.environ["LOCAL_STATE_DB_PATH"] + "-wal"))
 
+    def test_every_connection_is_wal_with_synchronous_normal(self) -> None:
+        with db.connect() as conn:
+            self.assertEqual("wal", conn.execute("PRAGMA journal_mode").fetchone()[0])
+            self.assertEqual(1, conn.execute("PRAGMA synchronous").fetchone()[0])
+
     def test_a_connection_held_too_long_is_logged(self) -> None:
         with mock.patch.object(db, "SLOW_MS", 0.0):
             with db.connect() as conn:

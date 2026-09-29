@@ -154,7 +154,7 @@ def _createTables(conn: sqlite3.Connection) -> None:
 
 
 def _connection():
-    return db.connect(_createTables, sync_normal=True)
+    return db.connect(_createTables)
 
 
 def _noteNewImages(piece_uuid: str, total_images: int) -> int:

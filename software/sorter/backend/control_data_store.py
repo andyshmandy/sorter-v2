@@ -103,7 +103,7 @@ def _createTables(conn: sqlite3.Connection) -> None:
 
 
 def _connection():
-    return db.connect(_createTables, sync_normal=True)
+    return db.connect(_createTables)
 
 
 def beginSegment(meta: dict[str, Any]) -> bool:
