@@ -37,13 +37,8 @@
 	};
 
 	const WINDOW_S = 180;
-	const OCCUPANCY_LANE_PREFERRED_ORDER = [
-		'feeder.ch1',
-		'feeder.ch2',
-		'feeder.ch3',
-		'classification.occupancy',
-		'distribution.occupancy'
-	];
+	// The classification channel reports its phase as "classification".
+	const OCCUPANCY_LANE_PREFERRED_ORDER = ['classification', 'distribution.occupancy'];
 
 	const machine_ctx = getMachineContext();
 
@@ -190,16 +185,12 @@
 	}
 
 	function machineGroup(machine_name: string): string {
-		if (machine_name.startsWith('feeder.')) return 'feeder';
-		if (machine_name.startsWith('classification.')) return 'classification';
-		if (machine_name.startsWith('distribution.')) return 'distribution';
-		return 'other';
+		const group = machine_name.split('.')[0];
+		return ['feeder', 'classification', 'distribution'].includes(group) ? group : 'other';
 	}
 
 	function isOccupancyMachine(machine_name: string): boolean {
-		if (machine_name.startsWith('feeder.ch')) return true;
-		if (machine_name.endsWith('.occupancy')) return true;
-		return false;
+		return machine_name === 'classification' || machine_name.endsWith('.occupancy');
 	}
 
 	function orderedOccupancyMachines(machine_names: string[]): string[] {
