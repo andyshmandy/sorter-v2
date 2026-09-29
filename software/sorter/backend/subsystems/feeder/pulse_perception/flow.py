@@ -126,9 +126,9 @@ class PulsePerceptionFeeding(BaseState):
         cfg: PulsePerceptionConfig,
         enforce_min: bool = True,
     ) -> bool:
-        # The pause window paces pulses start to start, but the time estimate
-        # ignores the acceleration ramp: send only once the board says the axis
-        # stopped, or the firmware refuses the pulse and the channel idles.
+        # The window is the ramp-aware move time plus the pause, so the pause
+        # follows the end of the move; the board's own stopped state is the
+        # check, since the firmware refuses a pulse on an axis still moving.
         if self._busy(stepper) or not stepper.stopped:
             return False
         speed = channelMoveSpeed(cfg, channel)

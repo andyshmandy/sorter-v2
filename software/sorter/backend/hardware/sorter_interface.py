@@ -5,6 +5,7 @@
 # Licensed under the MIT License. See LICENSE file in the project root for full license information.
 
 
+import math
 import os
 import time
 import json
@@ -139,6 +140,11 @@ class DigitalOutputPin:
     @property
     def channel(self):
         return self._channel
+
+# What a stepper runs at before anything is configured (Stepper.cpp).
+FIRMWARE_DEFAULT_ACCELERATION = 10000
+FIRMWARE_DEFAULT_MIN_SPEED = 16
+
 
 def _controlDataRecordCommand(payload: dict) -> None:
     # Feeder-dynamics capture: every motor command is half of a (state, action)
@@ -620,12 +626,23 @@ class StepperMotor:
         return self.move_steps_blocking(steps, timeout_ms=timeout_ms)
 
     def estimateMoveStepsMs(self, steps: int, max_speed: int = 5000) -> int:
-        """Estimate the time (in milliseconds) it will take to move a given number of steps."""
-        if steps == 0:
+        """How long the firmware takes to move `steps` microsteps: from the minimum
+        speed it accelerates at the stepper's acceleration up to max_speed and
+        brakes the same way (Stepper::moveSteps). Distance over top speed alone was
+        about 130 ms short on a feeder pulse."""
+        distance = abs(steps)
+        if distance == 0:
             return 0
-        steps = abs(steps)
-        estimated_seconds = steps / max_speed
-        return max(1, int(estimated_seconds * 1000))
+        accel = self._applied_acceleration or self._default_acceleration or FIRMWARE_DEFAULT_ACCELERATION
+        v0 = self._applied_speed_limits[0] if self._applied_speed_limits else FIRMWARE_DEFAULT_MIN_SPEED
+        vmax = max(max_speed, v0)
+        ramp = (vmax * vmax - v0 * v0) / (2 * accel)  # microsteps to reach vmax
+        if 2 * ramp >= distance:
+            peak = math.sqrt(v0 * v0 + accel * distance)
+            seconds = 2 * (peak - v0) / accel
+        else:
+            seconds = 2 * (vmax - v0) / accel + (distance - 2 * ramp) / vmax
+        return max(1, int(seconds * 1000))
 
     def estimateMoveDegreesMs(self, degrees: float, max_speed: int = 5000) -> int:
         """Estimate movement time for a move specified in degrees."""
