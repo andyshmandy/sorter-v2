@@ -163,10 +163,12 @@ def _buildUi() -> Optional[str]:
     """Install the checked-out UI's packages and build it, which the
     supervisor serves from then on. What went wrong, or None."""
     frontend = _repoRoot() / "software" / "sorter" / "frontend"
+    # CI: pnpm may need to replace node_modules, which it only asks a terminal about.
+    env = {**os.environ, "CI": "true"}
     for command in (["pnpm", "install", "--frozen-lockfile"], ["pnpm", "build"]):
         try:
             result = subprocess.run(
-                command, cwd=frontend, capture_output=True, text=True, timeout=UI_BUILD_TIMEOUT_S
+                command, cwd=frontend, env=env, capture_output=True, text=True, timeout=UI_BUILD_TIMEOUT_S
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             return f"{' '.join(command)}: {exc}"

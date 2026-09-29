@@ -1,5 +1,6 @@
-from environment_sync import syncEnvironment
+from environment_sync import retireOldUiUnits, syncEnvironment
 syncEnvironment()
+retireOldUiUnits()
 
 from dotenv import load_dotenv
 import os
