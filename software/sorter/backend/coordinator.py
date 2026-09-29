@@ -116,10 +116,12 @@ class Coordinator:
         return incident.get("source_kind") == "c4_stall_watchdog"
 
     def step(self) -> None:
-        # GIL-stall detector: wall-clock vs CPU time. A large gap means the
-        # main thread spent its tick blocked on the GIL while another thread
-        # held it (typically AnyIO worker threads running YOLO + image work).
-        _coord_cpu_t0 = time.process_time()
+        # GIL-stall detector: wall-clock vs this thread's CPU time. A large gap
+        # means the control loop spent its tick waiting: on the GIL while
+        # another thread held it (typically worker threads running YOLO and
+        # image work), or on the serial bus. process_time() would count every
+        # thread's CPU and hide the gap.
+        _coord_cpu_t0 = time.thread_time()
         coordinator_started = time.perf_counter()
         self.bus.begin_tick()
         active_incident = self._active_incident()
@@ -156,7 +158,7 @@ class Coordinator:
             (time.perf_counter() - feeder_started) * 1000.0,
         )
         _coord_wall_ms = (time.perf_counter() - coordinator_started) * 1000.0
-        _coord_cpu_ms = (time.process_time() - _coord_cpu_t0) * 1000.0
+        _coord_cpu_ms = (time.thread_time() - _coord_cpu_t0) * 1000.0
         self.gc.runtime_stats.observePerfMs(
             "coordinator.step.total_ms",
             _coord_wall_ms,
