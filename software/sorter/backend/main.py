@@ -209,20 +209,24 @@ def runServer(gc: GlobalConfig) -> None:
     # any host that can route to this machine, so only do that on a trusted
     # network. CORS is widened to match in server/api.py.
     host = os.getenv("SORTER_API_HOST", "127.0.0.1") or "127.0.0.1"
+    from local_state import get_tailscale_hostname, set_tailscale_hostname
     from server.security import (
         compute_allowed_ui_origins,
         explicit_allowed_origins,
         allow_any_origin,
-        _this_device_hosts,
+        keep_tailscale_name,
+        refresh_device_identity,
         _ui_port,
     )
 
+    keep_tailscale_name(get_tailscale_hostname(), set_tailscale_hostname)
+    device_hosts = refresh_device_identity()
     gc.logger.info(
         f"[server] binding host={host!r} port={BACKEND_PORT} ui_port={_ui_port()!r} "
         f"allow_any_origin={allow_any_origin()} "
         f"SORTER_API_ALLOWED_ORIGINS_override={explicit_allowed_origins()} "
         f"effective_allowed_origins={compute_allowed_ui_origins()} "
-        f"device_hosts={sorted(_this_device_hosts())}"
+        f"device_hosts={sorted(device_hosts)}"
     )
     # log_config=None disables uvicorn's logging.config.dictConfig() pass. This
     # backend routes everything through its own Logger, so uvicorn's logging
