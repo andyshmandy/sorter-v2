@@ -209,15 +209,6 @@ class WaveshareBusRegistry:
                 self._services[normalized] = service
             return service
 
-    def close_service(self, port: str) -> None:
-        normalized = port.strip()
-        if not normalized:
-            return
-        with self._lock:
-            service = self._services.pop(normalized, None)
-        if service is not None:
-            service.close()
-
     def close_all(self) -> None:
         with self._lock:
             services = list(self._services.values())

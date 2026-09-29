@@ -60,18 +60,6 @@ print(json.dumps(result))
 """
 
 
-def _parse_location_id(unique_id: str) -> int | None:
-    if not isinstance(unique_id, str) or not unique_id.startswith("0x"):
-        return None
-    hex_digits = unique_id[2:]
-    if len(hex_digits) < 16:
-        return None
-    try:
-        return int(hex_digits[:8], 16)
-    except ValueError:
-        return None
-
-
 def _enumerate_via_subprocess() -> dict[str, list[dict]]:
     try:
         result = subprocess.run(

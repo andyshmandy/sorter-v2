@@ -28,7 +28,7 @@ import numpy as np
 
 from .arcs import bboxInsideChannelMask
 from .capture import CaptureWorker
-from .channel import CHANNEL_REGISTRY, SECTION_DEG, ChannelDef, channelDefFromBlob
+from .channel import CHANNEL_REGISTRY, ChannelDef, channelDefFromBlob
 from .inference import InferenceWorker, OnExitEdge
 from .overlay import renderFeedOverlay
 from .runtime import InferenceRuntime, RknnYoloRuntime
@@ -372,16 +372,6 @@ class PerceptionService:
             return None
         return worker.latest_pieces_frame
 
-    def read_detections(self, channel_id: int):
-        """Latest in-crop ``Detection`` list for this channel, each tagged with
-        ``in_primary`` and the secondary-zone ids it falls in. Display/tag only —
-        the state machine still reads the primary-only slot / ``latest_raw``.
-        Returns ``None`` if the channel isn't wired or hasn't produced a cycle."""
-        worker = self._workers.get(channel_id)
-        if worker is None:
-            return None
-        return worker.latest_detections
-
     def secondary_zone_occupied(
         self,
         channel_id: int,
@@ -416,22 +406,6 @@ class PerceptionService:
                 return True
         return False
 
-    def channel_center(self, channel_id: int):
-        """Center pixel of the channel's rotation arc as ``(cx, cy)``, or
-        ``None`` if the channel isn't wired in this service instance."""
-        ch = self._channels.get(channel_id)
-        return ch.center if ch is not None else None
-
-    def precise_zone_len_deg(self, channel_id: int) -> float:
-        """Angular length (output degrees) of this channel's precise sub-arc, or
-        0.0 if the channel isn't wired / has no precise zone. Static per channel
-        (sections are immutable on the ChannelDef). The fast-eject controller
-        uses this as the default trigger distance when the tuning value is 0."""
-        ch = self._channels.get(channel_id)
-        if ch is None:
-            return 0.0
-        return float(len(ch.precise_sections)) * SECTION_DEG
-
     # --- introspection --------------------------------------------------
 
     def channels(self) -> Dict[int, ChannelDef]:
@@ -455,9 +429,6 @@ class PerceptionService:
 
     def runtimes(self) -> Dict[int, InferenceRuntime]:
         return dict(self._runtimes)
-
-    def source_id_assertion_count(self) -> int:
-        return sum(w.source_id_assertions for w in self._workers.values())
 
     def channel_id_for_source(self, camera_source_id: str) -> Optional[int]:
         for channel_id, channel in self._channels.items():
