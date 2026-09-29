@@ -47,32 +47,6 @@ def setClassificationChannelRev01Config(updates: dict[str, Any]) -> dict[str, An
 
 
 # ---------------------------------------------------------------------------
-# Profiler toggle
-# ---------------------------------------------------------------------------
-
-
-def getProfilerConfig() -> dict[str, Any]:
-    """Whether the detailed code profiler is enabled. Defaults to True so a
-    fresh machine collects profiling out of the box."""
-    config = machine_toml.read()
-    section = config.get("profiler")
-    enabled = True
-    if isinstance(section, dict) and isinstance(section.get("enabled"), bool):
-        enabled = section["enabled"]
-    return {"enabled": enabled}
-
-
-def setProfilerConfig(updates: dict[str, Any]) -> dict[str, Any]:
-    with machine_toml.edit() as config:
-        section = config.get("profiler")
-        base = dict(section) if isinstance(section, dict) else {}
-        if "enabled" in updates:
-            base["enabled"] = bool(updates["enabled"])
-        config["profiler"] = base
-    return getProfilerConfig()
-
-
-# ---------------------------------------------------------------------------
 # Perception object-tracker: active-tracker selection + per-tracker tuning
 # ---------------------------------------------------------------------------
 # The active tracker type lives in [object_tracker].type; each tracker's params

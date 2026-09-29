@@ -46,25 +46,17 @@ class DistributionStateMachine:
                 post_distribute_cooldown_s=post_distribute_cooldown_s,
             ),
         }
-        self.gc.profiler.enterState("distribution", self.current_state.value)
         if hasattr(self.gc, "runtime_stats"):
             self.gc.runtime_stats.observeStateTransition(
                 "distribution", None, self.current_state.value
             )
 
     def step(self) -> None:
-        self.gc.profiler.hit("distribution.state_machine.step.calls")
-        with self.gc.profiler.timer(
-            f"distribution.state_machine.state_step_ms.{self.current_state.value}"
-        ):
-            next_state = self.states_map[self.current_state].step()
+        next_state = self.states_map[self.current_state].step()
         if next_state and next_state != self.current_state:
             prev_state = self.current_state
             self.logger.info(
                 f"Distribution: {prev_state.value} -> {next_state.value}"
-            )
-            self.gc.profiler.hit(
-                f"distribution.state_machine.transition.{prev_state.value}->{next_state.value}"
             )
             self.states_map[prev_state].cleanup()
             self.current_state = next_state
@@ -72,8 +64,6 @@ class DistributionStateMachine:
                 self.gc.runtime_stats.observeStateTransition(
                     "distribution", prev_state.value, next_state.value
                 )
-            self.gc.profiler.enterState("distribution", self.current_state.value)
 
     def cleanup(self) -> None:
-        self.gc.profiler.exitState("distribution")
         self.states_map[self.current_state].cleanup()

@@ -169,13 +169,6 @@ export interface RuntimeStatsEvent {
   tag: "runtime_stats";
   data: RuntimeStatsData;
 }
-export interface SetProfilerEnabledData {
-  enabled: boolean;
-}
-export interface SetProfilerEnabledEvent {
-  tag: "set_profiler_enabled";
-  data: SetProfilerEnabledData;
-}
 export interface SorterStateData {
   state: string;
 }

@@ -26,25 +26,17 @@ class FeederStateMachine:
             FeederState.IDLE: Idle(irl, gc, shared),
             FeederState.FEEDING: PulsePerceptionFeeding(irl, irl_config, gc, shared, vision),
         }
-        self.gc.profiler.enterState("feeder", self.current_state.value)
         if hasattr(self.gc, "runtime_stats"):
             self.gc.runtime_stats.observeStateTransition(
                 "feeder", None, self.current_state.value
             )
 
     def step(self) -> None:
-        self.gc.profiler.hit("feeder.state_machine.step.calls")
-        with self.gc.profiler.timer(
-            f"feeder.state_machine.state_step_ms.{self.current_state.value}"
-        ):
-            next_state = self.states_map[self.current_state].step()
+        next_state = self.states_map[self.current_state].step()
         if next_state and next_state != self.current_state:
             prev_state = self.current_state
             self.logger.info(
                 f"Feeder: {prev_state.value} -> {next_state.value}"
-            )
-            self.gc.profiler.hit(
-                f"feeder.state_machine.transition.{prev_state.value}->{next_state.value}"
             )
             self.states_map[prev_state].cleanup()
             self.current_state = next_state
@@ -52,8 +44,6 @@ class FeederStateMachine:
                 self.gc.runtime_stats.observeStateTransition(
                     "feeder", prev_state.value, next_state.value
                 )
-            self.gc.profiler.enterState("feeder", self.current_state.value)
 
     def cleanup(self) -> None:
-        self.gc.profiler.exitState("feeder")
         self.states_map[self.current_state].cleanup()

@@ -445,29 +445,26 @@ def main() -> None:
     setCommandQueue(server_to_main_queue)
     startup_total_start = time.time()
 
-    with gc.profiler.timer("startup.irl_config_ms"):
-        irl_config = mkIRLConfig()
+    irl_config = mkIRLConfig()
 
     # Create a minimal IRL interface (no hardware discovery yet)
     irl = _mkIRLInterfaceStandby(irl_config, gc)
 
-    with gc.profiler.timer("startup.camera_service_init_ms"):
-        from vision.camera_service import CameraService
-        from defs.events import CameraHealthEvent, CameraHealthData
-        camera_service = CameraService(irl_config, gc)
-        setCameraService(camera_service)
+    from vision.camera_service import CameraService
+    from defs.events import CameraHealthEvent, CameraHealthData
+    camera_service = CameraService(irl_config, gc)
+    setCameraService(camera_service)
 
-        def _on_camera_health_change(health_map: dict[str, str]) -> None:
-            event = CameraHealthEvent(
-                tag="camera_health",
-                data=CameraHealthData(cameras=health_map),
-            )
-            main_to_server_queue.put(event)
+    def _on_camera_health_change(health_map: dict[str, str]) -> None:
+        event = CameraHealthEvent(
+            tag="camera_health",
+            data=CameraHealthData(cameras=health_map),
+        )
+        main_to_server_queue.put(event)
 
-        camera_service.set_health_event_callback(_on_camera_health_change)
-    with gc.profiler.timer("startup.vision_init_ms"):
-        vision = VisionManager(gc, camera_service)
-        setVisionManager(vision)
+    camera_service.set_health_event_callback(_on_camera_health_change)
+    vision = VisionManager(gc, camera_service)
+    setVisionManager(vision)
     # Controller is deferred until hardware is started
     controller = None
     controller_lock = threading.RLock()
@@ -547,10 +544,8 @@ def main() -> None:
     except Exception:
         pass
 
-    with gc.profiler.timer("startup.camera_service_start_ms"):
-        camera_service.start()
-    with gc.profiler.timer("startup.perception_start_ms"):
-        _startPerception(gc, irl_config, camera_service)
+    camera_service.start()
+    _startPerception(gc, irl_config, camera_service)
     # Mode-agnostic: the sample collector runs in every config, gated only by
     # its own enable toggle (persisted). Started after cameras so feeds exist.
     from sample_collector import SampleCollector
@@ -563,17 +558,15 @@ def main() -> None:
     hive_sync_worker = HiveSyncWorker(gc)
     hive_sync_worker.start()
     gc.hive_sync_worker = hive_sync_worker
-    with gc.profiler.timer("startup.vision_start_ms"):
-        vision.start()
+    vision.start()
     # A detection slot with no usable model gets Hive's default for this
     # machine's runtime, in the background (nothing happens when every slot
     # has one). See server/default_model.py.
     from server import default_model
     default_model.start(gc.logger)
-    with gc.profiler.timer("startup.waveshare_inventory_ms"):
-        waveshare_inventory = get_waveshare_inventory_manager()
-        waveshare_inventory.start()
-        waveshare_inventory.refresh()
+    waveshare_inventory = get_waveshare_inventory_manager()
+    waveshare_inventory.start()
+    waveshare_inventory.refresh()
 
     startup_total_ms = (time.time() - startup_total_start) * 1000
     gc.logger.info(f"standby startup complete in {startup_total_ms:.0f}ms")
@@ -850,8 +843,6 @@ def main() -> None:
         while not shutdown_requested.is_set():
             loop_started = time.perf_counter()
             marks = [("start", loop_started)]
-            gc.profiler.hit("main.loop.calls")
-            gc.profiler.mark("main.loop.interval_ms")
             gc.runtime_stats.observePerfMs(
                 "main.loop.interval_ms",
                 (loop_started - last_main_loop_started) * 1000.0,
@@ -876,8 +867,7 @@ def main() -> None:
                 current_time - last_frame_record
                 >= FRAME_RECORD_INTERVAL_MS / 1000.0
             ):
-                with gc.profiler.timer("main.loop.record_frames_ms"):
-                    vision.recordFrames()
+                vision.recordFrames()
                 last_frame_record = current_time
             marks.append(("frames", time.perf_counter()))
 
@@ -891,16 +881,15 @@ def main() -> None:
             with controller_lock:
                 current_controller = controller
             if current_controller is not None:
-                with gc.profiler.timer("main.loop.controller_step_ms"):
-                    controller_step_started = time.perf_counter()
-                    try:
-                        current_controller.step()
-                    except MCUBusError as exc:
-                        _parkAfterLinkFailure(gc, current_controller, exc)
-                    gc.runtime_stats.observePerfMs(
-                        "main.loop.controller_step_ms",
-                        (time.perf_counter() - controller_step_started) * 1000.0,
-                    )
+                controller_step_started = time.perf_counter()
+                try:
+                    current_controller.step()
+                except MCUBusError as exc:
+                    _parkAfterLinkFailure(gc, current_controller, exc)
+                gc.runtime_stats.observePerfMs(
+                    "main.loop.controller_step_ms",
+                    (time.perf_counter() - controller_step_started) * 1000.0,
+                )
             marks.append(("step", time.perf_counter()))
 
             time.sleep(gc.timeouts.main_loop_sleep_ms / 1000.0)

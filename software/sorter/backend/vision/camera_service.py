@@ -318,12 +318,9 @@ class CameraService:
 
     def _health_poll_loop(self) -> None:
         while not self._health_stop.is_set():
-            prof = self._gc.profiler
-            prof.hit("camera_service.health_thread.calls")
-            with prof.timer("camera_service.health_thread.total_ms"):
-                # Health is derived from the capture thread's latest frame age.
-                # No JPEG encoding happens on this thread.
-                self._check_health_changes()
+            # Health is derived from the capture thread's latest frame age.
+            # No JPEG encoding happens on this thread.
+            self._check_health_changes()
 
             self._health_stop.wait(_HEALTH_POLL_INTERVAL_S)
 

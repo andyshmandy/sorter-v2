@@ -55,11 +55,6 @@ class _Logger:
         self.messages.append(("error", str(msg)))
 
 
-class _Profiler:
-    def hit(self, *_args, **_kwargs) -> None:
-        return
-
-
 class _AllCategoriesProfile(SortingProfile):
     def __init__(self, category_id: str = "cat_a") -> None:
         self._category_id = category_id
@@ -117,7 +112,6 @@ class ServoBusFatalTests(unittest.TestCase):
         self.gc = SimpleNamespace(
             logger=self.logger,
             disable_servos=False,
-            profiler=_Profiler(),
             runtime_stats=self.runtime_stats,
             run_recorder=SimpleNamespace(markPaused=lambda: None, markRunning=lambda: None),
         )

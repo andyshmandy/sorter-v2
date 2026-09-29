@@ -570,7 +570,6 @@ class Positioning(BaseState):
         )
         self.logger.error(message)
         try:
-            self.gc.profiler.hit("distribution.servo_bus_offline")
             self.gc.runtime_stats.observeBlockedReason(
                 "distribution", "servo_bus_offline"
             )
@@ -709,7 +708,6 @@ class Positioning(BaseState):
         )
         self.logger.error(message)
         try:
-            self.gc.profiler.hit("distribution.chute_jam")
             self.gc.runtime_stats.observeBlockedReason("distribution", "chute_jam")
         except Exception:
             pass

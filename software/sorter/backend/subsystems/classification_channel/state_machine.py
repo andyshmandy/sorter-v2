@@ -68,7 +68,6 @@ class ClassificationChannelStateMachine:
             event_queue,
             SimpleStateMachineRev01Context(),
         )
-        self.gc.profiler.enterState("classification", self.current_state.value)
         if hasattr(self.gc, "runtime_stats"):
             self.gc.runtime_stats.observeStateTransition(
                 "classification", None, self.current_state.value
@@ -261,7 +260,6 @@ class ClassificationChannelStateMachine:
         runtime_stats.setActiveIncident(failed)
 
     def cleanup(self) -> None:
-        self.gc.profiler.exitState("classification")
         # Fresh watchdog window on the next start — a pause/standby stretch must
         # not count toward "stalled".
         self._last_progress_at = time.monotonic()

@@ -7,7 +7,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
 from logger import Logger
-from profiler import Profiler
 from blob_manager import getMachineId
 
 if TYPE_CHECKING:
@@ -50,7 +49,6 @@ class GlobalConfig:
     disable_c_channels: set[int]  # {1, 2, 3, 4} — c-channel rotor steppers to suppress
     disable_carousel: bool         # carousel stepper (same physical motor as c_channel_4)
     no_power_development_mode: bool
-    profiler: Profiler
     rotary_channel_steppers_can_operate_in_parallel: bool
     run_recorder: "RunRecorder"
     runtime_stats: "RuntimeStatsCollector"
@@ -185,12 +183,4 @@ def mkGlobalConfig() -> GlobalConfig:
     # are actually writing one.
     from pruner import runPruningAsync
     runPruningAsync(gc, log_dir, log_file if gc.dump_logs_to_file else None)
-    # Profiler enable lives in machine_params.toml ([profiler] enabled), toggled
-    # from the Performance settings page. Defaults OFF: profiling adds per-call
-    # timing overhead across hot loops (notably the frontend camera feed) — it's
-    # a diagnostic for comparing systems, not something to leave on during
-    # normal sorting.
-    from toml_config import getProfilerConfig
-    gc.profiler = Profiler(enabled=bool(getProfilerConfig().get("enabled", False)))
-
     return gc

@@ -275,15 +275,6 @@ class ResumeCommandEvent(BaseModel):
     data: ResumeCommandData
 
 
-class SetProfilerEnabledData(BaseModel):
-    enabled: bool
-
-
-class SetProfilerEnabledEvent(BaseModel):
-    tag: Literal["set_profiler_enabled"]
-    data: SetProfilerEnabledData
-
-
 SocketEvent = Union[
     HeartbeatEvent,
     IdentityEvent,
@@ -306,5 +297,5 @@ MainThreadToServerCommand = Union[
     RuntimeStatsEvent,
 ]
 ServerToMainThreadEvent = Union[
-    HeartbeatEvent, PauseCommandEvent, ResumeCommandEvent, SetProfilerEnabledEvent
+    HeartbeatEvent, PauseCommandEvent, ResumeCommandEvent
 ]

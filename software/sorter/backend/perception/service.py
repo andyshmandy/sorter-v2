@@ -275,7 +275,6 @@ class PerceptionService:
                     conf_threshold=gathered.conf,
                     on_exit_edge=ctx.on_c3_exit_edge if channel_id == 3 else None,
                     runtime_stats=getattr(ctx.gc, "runtime_stats", None),
-                    profiler=getattr(ctx.gc, "profiler", None),
                     logger=getattr(ctx.gc, "logger", None),
                     log_attribution=getattr(ctx.gc, "log_perception_attribution", False),
                 )

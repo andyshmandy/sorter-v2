@@ -17,31 +17,6 @@ from subsystems.distribution.states import DistributionState
 from subsystems.shared_variables import SharedVariables
 
 
-class _NullTimer:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        return None
-
-
-class _Profiler:
-    def hit(self, *args, **kwargs) -> None:
-        pass
-
-    def mark(self, *args, **kwargs) -> None:
-        pass
-
-    def timer(self, *args, **kwargs):
-        return _NullTimer()
-
-    def enterState(self, *args, **kwargs) -> None:
-        pass
-
-    def exitState(self, *args, **kwargs) -> None:
-        pass
-
-
 class _Logger:
     def info(self, *args, **kwargs) -> None:
         pass
@@ -64,7 +39,6 @@ class _RunRecorder:
 class _GlobalConfig:
     def __init__(self) -> None:
         self.logger = _Logger()
-        self.profiler = _Profiler()
         self.runtime_stats = RuntimeStatsCollector()
         self.run_recorder = _RunRecorder()
         self.set_progress_tracker = None
