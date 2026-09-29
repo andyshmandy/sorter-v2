@@ -91,6 +91,24 @@ class MCUBusError(Exception):
     pass
 
 
+PORT_BUSY_WAIT_S = 2.0
+
+
+def _openExclusive(port: str, *, baudrate: int, timeout: float) -> serial.Serial:
+    """Open the port exclusively. A second opener (a UI probe, the flasher, a
+    scan racing the runtime's discovery) must not interleave its bytes with the
+    owner's or re-initialize a board the owner configured, so it waits for the
+    port to be closed, and fails if the owner keeps it (the runtime, while up)."""
+    give_up_at = time.monotonic() + PORT_BUSY_WAIT_S
+    while True:
+        try:
+            return serial.Serial(port, baudrate=baudrate, timeout=timeout, exclusive=True)
+        except serial.SerialException as exc:
+            if "exclusively lock" not in str(exc) or time.monotonic() >= give_up_at:
+                raise
+            time.sleep(0.05)
+
+
 class MCUBus:
     """Class for communicating with the MCU over a serial bus using a custom protocol."""
 
@@ -103,10 +121,7 @@ class MCUBus:
             timeout: The read timeout in seconds (default 0.01s = 10ms)
         """
 
-        # Exclusive: a second opener (a UI probe, the flasher, a scan racing the
-        # runtime's discovery) fails to open instead of interleaving its bytes
-        # with the owner's and re-initializing a board the owner configured.
-        self._serial = serial.Serial(port, baudrate=baudrate, timeout=timeout, exclusive=True)
+        self._serial = _openExclusive(port, baudrate=baudrate, timeout=timeout)
         self._lock = Lock()
         self._port = port
 

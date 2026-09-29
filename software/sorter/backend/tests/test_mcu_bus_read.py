@@ -152,3 +152,36 @@ def test_a_failing_port_is_an_mcu_bus_error() -> None:
 
     with pytest.raises(MCUBusError, match="Serial port failed"):
         _mkBus(_GonePort([])).send_command(0, GET_STALL_STATUS, 0, b"", retries=0)
+
+
+def test_a_busy_port_is_waited_for(monkeypatch) -> None:
+    from serial import SerialException
+
+    from hardware import bus as bus_module
+
+    attempts = []
+
+    def fake_serial(port, **kwargs):
+        attempts.append(kwargs.get("exclusive"))
+        if len(attempts) < 3:
+            raise SerialException("Could not exclusively lock port /dev/ttyACM0: [Errno 11]")
+        return _ScriptedPort([])
+
+    monkeypatch.setattr(bus_module.serial, "Serial", fake_serial)
+    MCUBus("/dev/ttyACM0")
+    assert attempts == [True, True, True]
+
+
+def test_other_open_errors_are_not_retried(monkeypatch) -> None:
+    from serial import SerialException
+
+    from hardware import bus as bus_module
+
+    def fake_serial(port, **kwargs):
+        raise SerialException("could not open port /dev/ttyACM0: No such file or directory")
+
+    monkeypatch.setattr(bus_module.serial, "Serial", fake_serial)
+    started = time.monotonic()
+    with pytest.raises(SerialException):
+        MCUBus("/dev/ttyACM0")
+    assert time.monotonic() - started < 0.5
