@@ -1,6 +1,4 @@
-from subsystems import (
-    SharedVariables,
-)
+from subsystems.shared_variables import SharedVariables
 from irl.config import IRLInterface, IRLConfig
 from global_config import GlobalConfig
 from vision import VisionManager
@@ -38,7 +36,7 @@ class Coordinator:
             ClassificationChannelStateMachine,
         )
         from subsystems.distribution.state_machine import DistributionStateMachine
-        from subsystems.feeder.state_machine import FeederStateMachine
+        from subsystems.feeder.pulse_perception.flow import PulsePerceptionFeeding
 
         self.transport = ClassificationChannelTransport()
         self.shared.transport = self.transport
@@ -63,7 +61,8 @@ class Coordinator:
             event_queue=event_queue,
             transport=self.transport,
         )
-        self.feeder = FeederStateMachine(irl, irl_config, gc, self.shared, vision)
+        self.feeder = PulsePerceptionFeeding(irl, irl_config, gc, self.shared, vision)
+        self.gc.runtime_stats.observeStateTransition("feeder", None, "feeding")
 
     def _sync_set_progress_tracker(self) -> None:
         existing_tracker = getattr(self.gc, "set_progress_tracker", None)

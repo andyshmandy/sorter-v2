@@ -33,7 +33,7 @@ def _patched_subsystems(calls: list[str]) -> ExitStack:
             fake("classification"),
         )
     )
-    stack.enter_context(patch("subsystems.feeder.state_machine.FeederStateMachine", fake("feeder")))
+    stack.enter_context(patch("subsystems.feeder.pulse_perception.flow.PulsePerceptionFeeding", fake("feeder")))
     return stack
 
 

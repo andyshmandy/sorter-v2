@@ -9,7 +9,6 @@ from irl.config import IRLInterface, IRLConfig
 from global_config import GlobalConfig
 from vision import VisionManager
 
-from ..states import FeederState
 from .config import (
     PulsePerceptionConfig,
     channelMaxMoveOutputDeg,
@@ -201,18 +200,18 @@ class PulsePerceptionFeeding(BaseState):
             return replace(state, in_drop=True)
         return state
 
-    def step(self) -> Optional[FeederState]:
+    def step(self) -> None:
         cfg = self._cfg()
 
         can_run = self.gc.rotary_channel_steppers_can_operate_in_parallel or (
             not self.shared.chute_move_in_progress
         )
         if not can_run:
-            return FeederState.FEEDING
+            return
 
         perception_service = getattr(self.gc, "perception_service", None)
         if perception_service is None:
-            return FeederState.FEEDING
+            return
 
         from perception.cascade import Action, feederChannelAction, c1Action
         from perception.state import EMPTY_STATE
@@ -220,7 +219,6 @@ class PulsePerceptionFeeding(BaseState):
         states = perception_service.read_states()
         c2 = states.get(2, EMPTY_STATE)
         c3 = states.get(3, EMPTY_STATE)
-        c4 = states.get(4, EMPTY_STATE)
 
         now_mono = time.monotonic()
         # Hold C2/C3 drop-zone occupancy across brief detector dropouts so the
@@ -308,8 +306,6 @@ class PulsePerceptionFeeding(BaseState):
                     cfg.ch1_pulse_pause_ms,
                     cfg,
                 )
-
-        return FeederState.FEEDING
 
     def _apply_action(
         self,
