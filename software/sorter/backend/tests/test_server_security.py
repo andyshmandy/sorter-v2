@@ -101,6 +101,14 @@ def test_ui_origin_rejects_other_hosts_and_wrong_port(monkeypatch) -> None:
     assert is_ui_origin_allowed(None) is False
 
 
+def test_ui_origin_allows_the_port_the_supervisor_serves_the_ui_on(monkeypatch) -> None:
+    _set_device(monkeypatch, hostname="orangepi5", ips=["192.168.89.96"])
+    monkeypatch.setenv("SORTER_SUPERVISOR_UI_PORT", "8080")
+    assert is_ui_origin_allowed("http://192.168.89.96:8080") is True
+    assert is_ui_origin_allowed("http://192.168.89.96:5173") is True
+    assert is_ui_origin_allowed("http://192.168.89.96:8081") is False
+
+
 def test_ui_origin_honors_explicit_override(monkeypatch) -> None:
     monkeypatch.setenv("SORTER_API_ALLOWED_ORIGINS", "https://sorter.example.com")
     assert is_ui_origin_allowed("https://sorter.example.com") is True
