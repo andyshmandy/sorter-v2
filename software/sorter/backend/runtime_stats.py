@@ -10,7 +10,6 @@ MAX_TIMING_SAMPLES = 5000
 MAX_STATE_TIMELINE_EVENTS = 5000
 MAX_FEEDER_SIGNAL_TIMELINE_EVENTS = 10000
 MAX_FEEDER_COMBO_TIMELINE_EVENTS = 5000
-MAX_CHANNEL_EXIT_EVENTS = 10000
 MAX_KNOWN_OBJECT_LOOKUP_ENTRIES = 1000
 
 FEEDER_BLOCKER_SIGNAL_NAMES = [
@@ -21,13 +20,10 @@ FEEDER_BLOCKER_SIGNAL_NAMES = [
     "wait_stepper_busy",
 ]
 
-CLASSIFICATION_ACTIVE_OCCUPANCY_STATES = {
-    "classification_channel.rotate_pipeline",
-    "classification_channel.hood_dwell",
-    "classification_channel.drop_commit",
-    "classification_channel.exit_release_shimmy",
-    "classification_channel.wait_transport_motion_complete",
-}
+# The classification channel's state while it waits, stopped with its drop zone
+# clear, for the feeder to deliver a piece. Its active time (the denominator of
+# C4's active ppm) is every other state.
+C4_WAITING_FOR_PIECE = "waiting_for_piece"
 
 
 def _appendSample(samples: list[float], value: float) -> None:
@@ -126,7 +122,7 @@ class RuntimeStatsCollector:
         self._feeder_blocker_combo_entered_at_monotonic: float | None = None
         self._feeder_blocker_combo_totals_s: dict[str, float] = {}
         self._feeder_blocker_combo_timeline: list[dict[str, Any]] = []
-        self._channel_exit_events: list[dict[str, Any]] = []
+        self._c4_exit_count: int = 0
         self._recognizer_counts: dict[str, int] = {
             "recognize_fired_total": 0,
             "recognize_skipped_no_crops": 0,
@@ -327,32 +323,10 @@ class RuntimeStatsCollector:
             reaped.append(dict(entry))
         return reaped
 
-    def observeChannelExit(
-        self,
-        channel: str,
-        *,
-        exited_at: float | None = None,
-        piece_uuid: str | None = None,
-        global_id: int | None = None,
-        **meta: Any,
-    ) -> None:
-        if not self._is_running:
-            return
-        event: dict[str, Any] = {
-            "channel": str(channel),
-            "exited_at": float(time.time() if exited_at is None else exited_at),
-        }
-        if piece_uuid:
-            event["piece_uuid"] = str(piece_uuid)
-        if global_id is not None:
-            event["global_id"] = int(global_id)
-        for key, value in meta.items():
-            if value is not None:
-                event[key] = value
-        self._channel_exit_events.append(event)
-        if len(self._channel_exit_events) > MAX_CHANNEL_EXIT_EVENTS:
-            del self._channel_exit_events[0]
-        self._last_updated_at = event["exited_at"]
+    def observeC4Exit(self) -> None:
+        """A piece left the classification channel into the distribution chute."""
+        self._c4_exit_count += 1
+        self._last_updated_at = time.time()
 
     def setActiveIncident(self, incident: dict[str, Any]) -> None:
         """Publish the single operator-facing incident currently blocking flow.
@@ -1225,92 +1199,18 @@ class RuntimeStatsCollector:
                 ),
             }
 
-        channel_exit_counts = {
-            "c_channel_2": 0,
-            "c_channel_3": 0,
-            "classification_channel": 0,
-        }
-        channel_exit_timestamps: dict[str, list[float]] = {
-            channel: [] for channel in channel_exit_counts
-        }
-        for event in self._channel_exit_events:
-            channel = str(event.get("channel") or "")
-            if channel not in channel_exit_counts:
-                continue
-            channel_exit_counts[channel] += 1
-            exited_at = event.get("exited_at")
-            if isinstance(exited_at, (int, float)):
-                channel_exit_timestamps[channel].append(float(exited_at))
-
-        channel_active_time_s = {
-            "c_channel_2": float(feeder_signal_totals_s.get("stepper_busy_ch2", 0.0) or 0.0),
-            "c_channel_3": float(feeder_signal_totals_s.get("stepper_busy_ch3", 0.0) or 0.0),
-            "classification_channel": sum(
-                float(state_totals_snapshot.get("classification.occupancy", {}).get(state_name, 0.0) or 0.0)
-                for state_name in CLASSIFICATION_ACTIVE_OCCUPANCY_STATES
-            ),
-        }
-
-        classification_outcome_timestamps: dict[str, list[float]] = {
-            "classified_success": [],
-            "distributed_success": [],
-            "unknown": [],
-            "multi_drop_fail": [],
-            "not_found": [],
-        }
-        for piece in all_pieces:
-            status = getattr(piece.get("classification_status"), "value", piece.get("classification_status"))
-            classified_at = piece.get("classified_at")
-            distributed_at = piece.get("distributed_at")
-            if status == "classified" and isinstance(classified_at, (int, float)):
-                classification_outcome_timestamps["classified_success"].append(float(classified_at))
-            if (
-                status == "classified"
-                and isinstance(distributed_at, (int, float))
-            ):
-                classification_outcome_timestamps["distributed_success"].append(float(distributed_at))
-            if status == "unknown" and isinstance(classified_at, (int, float)):
-                classification_outcome_timestamps["unknown"].append(float(classified_at))
-            if status == "multi_drop_fail" and isinstance(classified_at, (int, float)):
-                classification_outcome_timestamps["multi_drop_fail"].append(float(classified_at))
-            if status == "not_found" and isinstance(classified_at, (int, float)):
-                classification_outcome_timestamps["not_found"].append(float(classified_at))
-
-        channel_throughput: dict[str, Any] = {}
-        for channel, exit_count in channel_exit_counts.items():
-            active_time_s = float(channel_active_time_s.get(channel, 0.0) or 0.0)
-            inter_exit_ppm_samples: list[float] = []
-            timestamps = sorted(channel_exit_timestamps.get(channel, []))
-            for idx in range(1, len(timestamps)):
-                dt_s = timestamps[idx] - timestamps[idx - 1]
-                if dt_s > 0:
-                    inter_exit_ppm_samples.append(60.0 / dt_s)
-            channel_entry: dict[str, Any] = {
-                "exit_count": exit_count,
-                "running_time_s": running_time_s,
-                "active_time_s": active_time_s,
-                "waiting_time_s": max(0.0, running_time_s - active_time_s),
-                "overall_ppm": _calcPpm(exit_count, running_time_s),
-                "active_ppm": _calcPpm(exit_count, active_time_s),
-                "inter_exit_ppm": _calcValueSummary(inter_exit_ppm_samples),
+        c4_active_time_s = sum(
+            seconds
+            for state, seconds in state_totals_snapshot.get("classification", {}).items()
+            if state != C4_WAITING_FOR_PIECE
+        )
+        channel_throughput = {
+            "classification_channel": {
+                "exit_count": self._c4_exit_count,
+                "active_time_s": c4_active_time_s,
+                "active_ppm": _calcPpm(self._c4_exit_count, c4_active_time_s),
             }
-            if channel == "classification_channel":
-                outcomes: dict[str, Any] = {}
-                for outcome_key, ts_list in classification_outcome_timestamps.items():
-                    count = len(ts_list)
-                    outcomes[outcome_key] = {
-                        "count": count,
-                        "overall_ppm": _calcPpm(count, running_time_s),
-                        "active_ppm": _calcPpm(count, active_time_s),
-                    }
-                channel_entry["outcomes"] = outcomes
-                channel_entry["active_state_time_s"] = {
-                    state_name: float(
-                        state_totals_snapshot.get("classification.occupancy", {}).get(state_name, 0.0) or 0.0
-                    )
-                    for state_name in sorted(CLASSIFICATION_ACTIVE_OCCUPANCY_STATES)
-                }
-            channel_throughput[channel] = channel_entry
+        }
 
         live_part = {
             "counts": counts,
