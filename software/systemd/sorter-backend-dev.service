@@ -20,7 +20,7 @@ Environment=PYTHONPYCACHEPREFIX=/tmp/sorter-pycache
 #   - Same supervisor + main.py as prod so hardware/coordinator behavior matches.
 #   - For fast iteration on a code edit, prefer a soft restart of main.py via the
 #     supervisor control endpoint instead of `systemctl restart`:
-#       curl -sS -X POST http://127.0.0.1:8001/api/supervisor/restart
+#       curl -sS -X POST http://127.0.0.1:8001/api/supervisor/restart -H "Origin: http://localhost"
 #     That skips systemd's RestartSec=5 and the supervisor warmup.
 ExecStart=/bin/bash -c "set -a; source __SOFTWARE_DIR__/.env; exec __UV_BIN__ run python supervisor.py"
 Restart=on-failure
