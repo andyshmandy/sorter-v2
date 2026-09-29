@@ -169,6 +169,9 @@ def mkGlobalConfig() -> GlobalConfig:
     gc.feeder_only = os.getenv("LEGOSORTER_FEEDER_ONLY", "0") == "1"
     if gc.feeder_only:
         gc.disable_chute = True
+        # Servos (PCA9685 or Waveshare bus) live on the distribution board too;
+        # a feeder-only bring-up has no reason to expect that bus wired up.
+        gc.disable_servos = True
 
     log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
     os.makedirs(log_dir, exist_ok=True)
