@@ -9,7 +9,6 @@
 		key: string;
 		label: string;
 		source: number | string | null;
-		previewSrc: string | null;
 	};
 
 	let {
@@ -45,10 +44,6 @@
 			? null
 			: (choices.find((choice) => choice.key === selectedKey)?.source ?? null)
 	);
-
-	function previewForChoice(choice: CameraChoice) {
-		return choice.previewSrc;
-	}
 </script>
 
 <div class="setup-panel overflow-hidden p-4">
@@ -120,13 +115,7 @@
 						>
 							<div class="min-h-0 flex-1">
 								<div class="relative h-full border border-border bg-bg">
-									{#if previewForChoice(choice)}
-										<CameraSourcePreview src={previewForChoice(choice)} label={choice.label} />
-									{:else}
-										<div class="flex h-full items-center justify-center text-sm text-text-muted">
-											No preview
-										</div>
-									{/if}
+									<CameraSourcePreview source={choice.source} label={choice.label} />
 								</div>
 							</div>
 							<div class="border-t border-border px-2 py-1 text-xs text-text">{choice.label}</div>
@@ -182,13 +171,7 @@
 						>
 							<div class="aspect-[4/3] min-h-0 bg-surface">
 								<div class="relative h-full border border-border bg-bg">
-									{#if previewForChoice(choice)}
-										<CameraSourcePreview src={previewForChoice(choice)} label={choice.label} />
-									{:else}
-										<div class="flex h-full items-center justify-center text-sm text-text-muted">
-											No preview
-										</div>
-									{/if}
+									<CameraSourcePreview source={choice.source} label={choice.label} />
 								</div>
 							</div>
 							<div class="border-t border-border px-3 py-2 text-sm font-medium text-text">

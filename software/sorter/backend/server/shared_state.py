@@ -13,10 +13,11 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
-from fastapi import WebSocket
+from fastapi import WebSocket, status
 
 from global_config import GlobalConfig
 from hardware.fault import HardwareFault
+from server.security import describe_origin_decision, websocket_connection_allowed
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -154,6 +155,19 @@ ws_clients: set["WsClient"] = set()
 ws_slow_clients_closed = 0
 
 
+async def acceptWebsocket(websocket: WebSocket) -> bool:
+    """Accept a websocket from the UI; refuse one from any other origin."""
+    host = websocket.client.host if websocket.client is not None else None
+    origin = websocket.headers.get("Origin")
+    if websocket_connection_allowed(origin, host):
+        await websocket.accept()
+        return True
+    if gc_ref is not None:
+        gc_ref.logger.info(f"[WS reject] client_host={host!r} {describe_origin_decision(origin)}")
+    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="WebSocket origin not allowed.")
+    return False
+
+
 class WsClient:
     """One websocket and what waits for it: the latest message of each kind
     (per tag; per piece for known_object). A slow client skips the versions it
@@ -178,12 +192,12 @@ class WsClient:
                     text = self.pending.pop(next(iter(self.pending)))
                     started = time.perf_counter()
                     await asyncio.wait_for(self.websocket.send_text(text), WS_SLOW_CLIENT_LIMIT_S)
-                    _observePerfMs("socket.client_send_ms", (time.perf_counter() - started) * 1000.0)
+                    observePerfMs("socket.client_send_ms", (time.perf_counter() - started) * 1000.0)
                 self.wake.clear()
                 await self.wake.wait()
         except TimeoutError:
             ws_slow_clients_closed += 1
-            _observePerfMs("socket.slow_client_closed_ms", WS_SLOW_CLIENT_LIMIT_S * 1000.0)
+            observePerfMs("socket.slow_client_closed_ms", WS_SLOW_CLIENT_LIMIT_S * 1000.0)
             if gc_ref is not None:
                 host = self.websocket.client.host if self.websocket.client else "?"
                 gc_ref.logger.warning(
@@ -194,7 +208,7 @@ class WsClient:
             pass  # the socket is gone; the endpoint's reader sees the disconnect
 
 
-def _observePerfMs(name: str, value_ms: float) -> None:
+def observePerfMs(name: str, value_ms: float) -> None:
     if gc_ref is not None and getattr(gc_ref, "runtime_stats", None) is not None:
         gc_ref.runtime_stats.observePerfMs(name, value_ms)
 

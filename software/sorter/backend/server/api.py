@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, HTTPException, status
+from fastapi import FastAPI, WebSocket, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -28,10 +28,7 @@ from local_state import (
 from toml_config import getMachineNickname, setMachineNickname
 from server.set_progress_sync import getSetProgressSyncWorker
 from server.waveshare_inventory import get_waveshare_inventory_manager
-from server.security import (
-    is_ui_origin_allowed,
-    websocket_connection_allowed,
-)
+from server.security import is_ui_origin_allowed
 
 import server.shared_state as shared_state
 
@@ -200,7 +197,7 @@ async def _loop_lag_probe() -> None:
     """Measure how late the uvicorn asyncio loop wakes a fixed-interval sleep.
 
     A high socket.loop_lag_ms means the event loop is blocked/starved (a sync
-    call on the loop, GIL contention, MJPEG streaming) and CAN'T promptly run
+    call on the loop, GIL contention, camera video) and CAN'T promptly run
     the websocket broadcast coroutines — which is the real frontend-latency
     lever. Near-zero lag with high client_send_ms instead means a slow client.
     """
@@ -678,24 +675,8 @@ def classify_retry(req: ClassifyRetryRequest) -> Dict[str, Any]:
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    client_host = websocket.client.host if websocket.client is not None else None
-    if not websocket_connection_allowed(
-        websocket.headers.get("Origin"),
-        client_host,
-    ):
-        if shared_state.gc_ref is not None:
-            from server.security import describe_origin_decision
-
-            shared_state.gc_ref.logger.info(
-                f"[WS reject] client_host={client_host!r} {describe_origin_decision(websocket.headers.get('Origin'))}"
-            )
-        await websocket.close(
-            code=status.WS_1008_POLICY_VIOLATION,
-            reason="WebSocket origin not allowed.",
-        )
+    if not await shared_state.acceptWebsocket(websocket):
         return
-
-    await websocket.accept()
     client = shared_state.WsClient(websocket)
     # Registered before the snapshot is read, so no change in between is lost.
     shared_state.ws_clients.add(client)

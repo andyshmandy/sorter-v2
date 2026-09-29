@@ -45,7 +45,6 @@ export class Machine {
 	url = $state<string | null>(null);
 	status = $state<ConnectionStatus>('connected');
 	cameraHealth = $state.raw(new Map<string, string>());
-	cameraFeedEpoch = $state(0);
 	recentObjects = $state.raw<KnownObjectData[]>([]);
 	runtimeStats = $state.raw<Record<string, unknown> | null>(null);
 	systemStatus = $state.raw<SystemStatusData | null>(null);
@@ -262,9 +261,6 @@ export class MachineManager {
 			this.machines = new Map(this.machines).set(identity.machine_id, machine);
 		} else {
 			if (machine.connection !== ws) machine.connection.close();
-			// A reconnect keeps the camera feeds; only a new backend process
-			// (whose old streams are gone) reopens them.
-			if (machine.identity?.run_id !== identity.run_id) machine.cameraFeedEpoch += 1;
 			machine.connection = ws;
 			machine.url = url ?? machine.url;
 			machine.status = 'connected';

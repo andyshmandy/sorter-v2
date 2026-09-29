@@ -2,7 +2,6 @@ export type CameraChoice = {
 	key: string;
 	source: number | string | null;
 	label: string;
-	previewSrc: string | null;
 };
 
 export type UsbCamera = {
@@ -29,23 +28,14 @@ export function parseCameraSource(key: string): number | string | null {
 
 export function buildCameraChoices(
 	usbCameras: UsbCamera[],
-	roleSelections: Record<string, string>,
-	backendBaseUrl: string
+	roleSelections: Record<string, string>
 ): CameraChoice[] {
-	const base: CameraChoice[] = [
-		{
-			key: '__none__',
-			source: null,
-			label: 'Not assigned',
-			previewSrc: null
-		}
-	];
+	const base: CameraChoice[] = [{ key: '__none__', source: null, label: 'Not assigned' }];
 	for (const camera of usbCameras.filter((candidate) => candidate.index >= 0)) {
 		base.push({
 			key: sourceKey(camera.index),
 			source: camera.index,
-			label: `${camera.name} (Camera ${camera.index})`,
-			previewSrc: `${backendBaseUrl}/api/cameras/stream/${camera.index}`
+			label: `${camera.name} (Camera ${camera.index})`
 		});
 	}
 
@@ -60,9 +50,7 @@ export function buildCameraChoices(
 			key,
 			source,
 			label:
-				typeof source === 'number' ? `Configured camera ${source}` : `Configured stream ${source}`,
-			previewSrc:
-				typeof source === 'number' ? `${backendBaseUrl}/api/cameras/stream/${source}` : source
+				typeof source === 'number' ? `Configured camera ${source}` : `Configured stream ${source}`
 		});
 		seen.add(key);
 	}
