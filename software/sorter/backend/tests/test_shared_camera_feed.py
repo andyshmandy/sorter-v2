@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 
-from server.routers import cameras
+from server.routers import camera_feeds
 
 
 def test_viewers_of_one_view_share_each_encoded_frame(monkeypatch) -> None:
-    monkeypatch.setattr(cameras, "PREVIEW_MAX_FPS", 20.0)
-    feed = cameras._SharedFeed("c_channel_2", True, False)
+    monkeypatch.setattr(camera_feeds, "PREVIEW_MAX_FPS", 20.0)
+    feed = camera_feeds._SharedFeed("c_channel_2", True, False)
     renders: list[bytes] = []
 
     def render() -> bytes:
