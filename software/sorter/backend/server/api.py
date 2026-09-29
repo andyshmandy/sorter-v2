@@ -129,6 +129,7 @@ def _load_saved_api_keys_into_environment() -> None:
 
 from server.routers.hardware import router as hardware_router
 from server.routers.steppers import router as steppers_router
+from server.routers.stallguard import router as stallguard_router
 from server.routers.servos import router as servos_router
 from server.routers.chute import router as chute_router
 from server.routers.bins import router as bins_router
@@ -158,6 +159,7 @@ from server.routers.leds import router as leds_router
 
 app.include_router(hardware_router)
 app.include_router(steppers_router)
+app.include_router(stallguard_router)
 app.include_router(servos_router)
 app.include_router(chute_router)
 app.include_router(bins_router)
