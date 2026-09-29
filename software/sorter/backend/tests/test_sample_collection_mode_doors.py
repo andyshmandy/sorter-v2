@@ -43,8 +43,9 @@ class _Servo:
     def isClosed(self) -> bool:
         return True
 
-    def open(self) -> None:
+    def open(self) -> bool:
         self.open_calls += 1
+        return True
 
     @property
     def stopped(self) -> bool:

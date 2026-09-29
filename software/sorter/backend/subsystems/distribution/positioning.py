@@ -351,6 +351,12 @@ class Positioning(BaseState):
                 self.logger.info(f"Positioning: init phase took {init_ms:.0f}ms, now waiting for servo+chute")
             return None
 
+        if self._phase == "start_chute":
+            if self.chute.stepper.stopped:
+                self._startChuteMove()
+                self._moving_started_at = time.monotonic()
+            return None
+
         if self._phase == "moving":
             self._setOccupancyState("positioning.wait_servo_and_chute_motion")
             chute_stopped = self.chute.stepper.stopped
@@ -398,6 +404,13 @@ class Positioning(BaseState):
         if self._piece is not None and self._piece.distribution_motion_started_at is None:
             self._piece.distribution_motion_started_at = time.time()
         estimated_ms = self.chute.moveToBin(self._target_address)
+        if estimated_ms is None:
+            # The board refused the move because the chute was still moving.
+            # Sending it again once the chute stops keeps the piece from
+            # dropping wherever the chute happens to be.
+            self.logger.warning("Positioning: chute refused the move; resending once it stops")
+            self._phase = "start_chute"
+            return
         self._chute_move_estimated_ms = int(estimated_ms)
         self.logger.info(
             f"Positioning: chute move started (est_ms={estimated_ms})"
@@ -491,11 +504,13 @@ class Positioning(BaseState):
         try:
             return self.irl.servos[self._door_servo_index].stopped
         except Exception as exc:
+            # Unknown is not stopped: keep waiting, and let the move budget raise
+            # the jam instead of dropping the piece behind a flap in an unknown place.
             self._markLayerUnavailable(
                 self._door_servo_index,
                 f"servo stop check failed: {exc}",
             )
-            return True
+            return False
 
     def _raiseBinsFullAlert(self, category_id: str) -> None:
         return
@@ -780,7 +795,8 @@ class Positioning(BaseState):
             try:
                 if hasattr(servo, "apply_open_speed"):
                     servo.apply_open_speed()
-                servo.open()
+                if not servo.open():
+                    self._markLayerUnavailable(i, "its servo refused to open for passthrough")
             except Exception as exc:
                 self._markLayerUnavailable(
                     i,
@@ -810,8 +826,10 @@ class Positioning(BaseState):
             try:
                 if hasattr(servo, "apply_open_speed"):
                     servo.apply_open_speed()
-                servo.open()
-                opened_layers.append(i)
+                if servo.open():
+                    opened_layers.append(i)
+                else:
+                    self._markLayerUnavailable(i, "its parked servo refused to open")
             except Exception as exc:
                 self._markLayerUnavailable(
                     i,
@@ -821,7 +839,9 @@ class Positioning(BaseState):
         try:
             if hasattr(target_servo, "apply_close_speed"):
                 target_servo.apply_close_speed()
-            target_servo.close()
+            if not target_servo.close():
+                self._markLayerUnavailable(target_layer_index, "its servo refused to close")
+                return False
         except Exception as exc:
             self._markLayerUnavailable(
                 target_layer_index,

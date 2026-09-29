@@ -103,7 +103,10 @@ class MCUBus:
             timeout: The read timeout in seconds (default 0.01s = 10ms)
         """
 
-        self._serial = serial.Serial(port, baudrate=baudrate, timeout=timeout)
+        # Exclusive: a second opener (a UI probe, the flasher, a scan racing the
+        # runtime's discovery) fails to open instead of interleaving its bytes
+        # with the owner's and re-initializing a board the owner configured.
+        self._serial = serial.Serial(port, baudrate=baudrate, timeout=timeout, exclusive=True)
         self._lock = Lock()
         self._port = port
 
@@ -206,9 +209,12 @@ class MCUBus:
                 with self._lock:
                     # Resync before writing; flush any stale bytes left by a
                     # previous partial response so the next read starts clean.
-                    self._serial.reset_input_buffer()
-                    self._serial.write(encoded_message)
-                    resp_buf = self._read_frame()
+                    try:
+                        self._serial.reset_input_buffer()
+                        self._serial.write(encoded_message)
+                        resp_buf = self._read_frame()
+                    except serial.SerialException as exc:
+                        raise MCUBusError(f"Serial port failed: {exc}") from exc
                 if not resp_buf:
                     raise MCUBusError("Timeout waiting for response terminator (0x00)")
                 if resp_buf[-1] != 0:
@@ -219,12 +225,17 @@ class MCUBus:
                     )
 
                 logging.debug(f"Received: {resp_buf.hex(b' ', 1)}")
-                decoded_resp = cobs.decode(resp_buf[:-1])  # Exclude terminator
-
-                if crc32(decoded_resp[:-4]) != struct.unpack("<I", decoded_resp[-4:])[0]:
+                # Every way a reply can be garbled is an MCUBusError, so it is
+                # retried like one and never escapes the bus as a raw exception.
+                try:
+                    decoded_resp = cobs.decode(resp_buf[:-1])  # Exclude terminator
+                    crc_ok = crc32(decoded_resp[:-4]) == struct.unpack("<I", decoded_resp[-4:])[0]
+                    response_header = MessageHeader(*struct.unpack("<BBBB", decoded_resp[:4]))
+                except (cobs.DecodeError, struct.error, IndexError) as exc:
+                    raise MCUBusError(f"Garbled response: {exc}") from exc
+                if not crc_ok:
                     raise MCUBusError("CRC check failed")
 
-                response_header = MessageHeader(*struct.unpack("<BBBB", decoded_resp[:4]))
                 message = Message(
                     dev_address=response_header.address,
                     command=response_header.command,

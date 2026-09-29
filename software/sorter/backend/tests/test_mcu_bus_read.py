@@ -127,3 +127,28 @@ def test_reply_that_never_finishes_is_reported_as_partial() -> None:
 
     with pytest.raises(MCUBusError, match="Partial response"):
         _mkBus(port).send_command(0, GET_STALL_STATUS, 0, b"", retries=0)
+
+
+def test_a_lone_terminator_is_a_garbled_reply_not_a_crash() -> None:
+    port = _ScriptedPort([(0.002, b"\x00")])
+
+    with pytest.raises(MCUBusError, match="Garbled response"):
+        _mkBus(port).send_command(0, GET_STALL_STATUS, 0, b"", retries=0)
+
+
+def test_a_reply_too_short_for_a_header_is_a_garbled_reply() -> None:
+    port = _ScriptedPort([(0.002, bytes(cobs.encode(b"\x01\x02")) + b"\x00")])
+
+    with pytest.raises(MCUBusError, match="Garbled response"):
+        _mkBus(port).send_command(0, GET_STALL_STATUS, 0, b"", retries=0)
+
+
+def test_a_failing_port_is_an_mcu_bus_error() -> None:
+    class _GonePort(_ScriptedPort):
+        def write(self, data) -> int:
+            from serial import SerialException
+
+            raise SerialException("device disconnected")
+
+    with pytest.raises(MCUBusError, match="Serial port failed"):
+        _mkBus(_GonePort([])).send_command(0, GET_STALL_STATUS, 0, b"", retries=0)

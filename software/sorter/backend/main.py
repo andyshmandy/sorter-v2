@@ -47,6 +47,7 @@ from irl.config import (
 )
 from vision import VisionManager
 from process_guard import acquire_backend_process_guard, ProcessGuardError
+from hardware.bus import MCUBusError
 from hardware.waveshare_bus_service import close_all_waveshare_bus_services
 from server.waveshare_inventory import get_waveshare_inventory_manager
 import uvicorn
@@ -112,6 +113,22 @@ def _checkServoBusHealth(gc: GlobalConfig, irl) -> None:
             shared_state.setHardwareStatus(error=message)
     except Exception:
         pass
+
+
+def _parkAfterLinkFailure(gc: GlobalConfig, controller, exc: MCUBusError) -> None:
+    """A control-board link failure is a hardware fault, not a reason to end the
+    process: pause, and put the machine in error so Safe Home rediscovers the board."""
+    import server.shared_state as shared_state
+
+    gc.logger.error(f"Control board link failed while sorting: {exc}")
+    try:
+        controller.pause()
+    except MCUBusError as pause_exc:
+        gc.logger.error(f"Pausing after the link failure also failed: {pause_exc}")
+    with shared_state.hardware_lifecycle_lock:
+        shared_state.setHardwareStatus(
+            state="error", error=f"Control board link failed: {exc}. Run Safe Home to reconnect."
+        )
 
 
 def _noPowerModeActive(gc: GlobalConfig) -> bool:
@@ -899,7 +916,10 @@ def main() -> None:
             if current_controller is not None:
                 with gc.profiler.timer("main.loop.controller_step_ms"):
                     controller_step_started = time.perf_counter()
-                    current_controller.step()
+                    try:
+                        current_controller.step()
+                    except MCUBusError as exc:
+                        _parkAfterLinkFailure(gc, current_controller, exc)
                     gc.runtime_stats.observePerfMs(
                         "main.loop.controller_step_ms",
                         (time.perf_counter() - controller_step_started) * 1000.0,

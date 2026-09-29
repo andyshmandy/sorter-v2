@@ -188,6 +188,9 @@ class StepperMotor:
         # Last acceleration we sent to the firmware; lets _ensure_move_acceleration
         # skip the UART write when the value is already correct.
         self._applied_acceleration: int | None = None
+        # Moves the firmware refused because the axis was still running. Callers
+        # that wait for `stopped` never see one; a rising count is a caller bug.
+        self.refused_moves = 0
 
     def _logical_to_physical_steps(self, value: int) -> int:
         return -value if self._direction_inverted else value
@@ -228,7 +231,11 @@ class StepperMotor:
         if success:
             self._current_position_steps += steps
         else:
-            self._gc.logger.error(f"Stepper '{self._name}' ch{self._channel}: move_steps({steps}) FAILED")
+            self.refused_moves += 1
+            self._gc.logger.warning(
+                f"Stepper '{self._name}' ch{self._channel}: move_steps({steps}) refused "
+                f"(axis busy; {self.refused_moves} refused so far)"
+            )
         _controlDataRecordCommand(
             {
                 "cmd": "move_steps",
@@ -588,7 +595,8 @@ class StepperMotor:
         """Move the stepper by a given number of microsteps and wait for completion."""
         if steps == 0:
             return True
-        self.move_steps(steps)
+        if not self.move_steps(steps):
+            return False
         start_time = time.time()
         timeout_sec = timeout_ms / 1000.0
         while time.time() - start_time < timeout_sec:
@@ -684,7 +692,8 @@ class ServoMotor:
                 f"Servo '{self._name}' ch{self._channel}: move_to {angle}° REJECTED by firmware "
                 f"(servo busy or disabled) — flap did not move"
             )
-        self._current_angle = angle
+        else:
+            self._current_angle = angle
         return accepted
 
     def move_to_and_release(self, angle: int, max_duration_ms: int = 3500) -> bool:
@@ -724,9 +733,10 @@ class ServoMotor:
                 f"Servo '{self._name}' ch{self._channel}: move_to_and_release {angle}° REJECTED by firmware "
                 f"(servo busy or disabled) — flap did not move"
             )
+            return False
         self._current_angle = angle
         self._enabled = False  # Will be disabled once the move completes (or deadline hits)
-        return accepted
+        return True
 
     @property
     def position(self) -> int:
@@ -754,25 +764,27 @@ class ServoMotor:
     def available(self) -> bool:
         return True
 
-    def open(self, open_angle: int | None = None, max_duration_ms: int = 3500) -> None:
-        """Move servo to open position (with hard release deadline guarantee)."""
+    def open(self, open_angle: int | None = None, max_duration_ms: int = 3500) -> bool:
+        """Move servo to open position (with hard release deadline guarantee).
+        False when it is uncalibrated or the firmware refused the move."""
         target = open_angle if open_angle is not None else self._open_angle
         if target is None:
             self._gc.logger.warning(
                 f"Servo '{self._name}' ch{self._channel}: open() ignored — servo is not calibrated"
             )
-            return
-        self.move_to_and_release(target, max_duration_ms=max_duration_ms)
+            return False
+        return self.move_to_and_release(target, max_duration_ms=max_duration_ms)
 
-    def close(self, closed_angle: int | None = None, max_duration_ms: int = 3500) -> None:
-        """Move servo to closed position (with hard release deadline guarantee)."""
+    def close(self, closed_angle: int | None = None, max_duration_ms: int = 3500) -> bool:
+        """Move servo to closed position (with hard release deadline guarantee).
+        False when it is uncalibrated or the firmware refused the move."""
         target = closed_angle if closed_angle is not None else self._closed_angle
         if target is None:
             self._gc.logger.warning(
                 f"Servo '{self._name}' ch{self._channel}: close() ignored — servo is not calibrated"
             )
-            return
-        self.move_to_and_release(target, max_duration_ms=max_duration_ms)
+            return False
+        return self.move_to_and_release(target, max_duration_ms=max_duration_ms)
 
     def toggle(self) -> None:
         """Toggle between open and closed."""

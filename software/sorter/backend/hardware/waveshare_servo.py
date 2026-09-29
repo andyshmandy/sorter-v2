@@ -538,23 +538,25 @@ class WaveshareServoMotor:
     def available(self) -> bool:
         return True
 
-    def open(self, open_angle: int | None = None) -> None:
+    def open(self, open_angle: int | None = None) -> bool:
         if not self._enabled:
             self.enabled = True
         self._move_duration = 0.3
         self._move_started_at = time.monotonic()
         self._current_position = self._open_position
-        self._bus.move_to(self._servo_id, self._open_position, 300)
+        accepted = bool(self._bus.move_to(self._servo_id, self._open_position, 300))
         self._enabled = False  # release after move
+        return accepted
 
-    def close(self, closed_angle: int | None = None) -> None:
+    def close(self, closed_angle: int | None = None) -> bool:
         if not self._enabled:
             self.enabled = True
         self._move_duration = 0.3
         self._move_started_at = time.monotonic()
         self._current_position = self._closed_position
-        self._bus.move_to(self._servo_id, self._closed_position, 300)
+        accepted = bool(self._bus.move_to(self._servo_id, self._closed_position, 300))
         self._enabled = False  # release after move
+        return accepted
 
     def toggle(self) -> None:
         if self.isOpen():

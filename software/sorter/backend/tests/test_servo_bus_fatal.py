@@ -198,6 +198,29 @@ class ServoBusFatalTests(unittest.TestCase):
         self.assertTrue(self.cmd_queue.empty())
         self.assertIsNone(self.runtime_stats.servo_bus_offline_since_ts)
 
+    def test_a_refused_chute_move_is_resent_and_never_reaches_ready(self) -> None:
+        positioning = self._mk_positioning(servos=[_mk_healthy_servo()])
+        positioning.chute.moveToBin = MagicMock(side_effect=[None, 250])
+        positioning.chute.stepper = SimpleNamespace(stopped=False)
+
+        self.assertIsNone(positioning.step())  # the board refuses: the chute is busy
+        self.assertIsNone(positioning.step())  # still moving: wait, send nothing
+        self.assertEqual(1, positioning.chute.moveToBin.call_count)
+
+        positioning.chute.stepper.stopped = True
+        self.assertIsNone(positioning.step())  # stopped: sent again and accepted
+        self.assertEqual(2, positioning.chute.moveToBin.call_count)
+        self.assertEqual(DistributionState.READY, positioning.step())
+
+    def test_a_refused_door_close_marks_the_layer_unavailable(self) -> None:
+        servo = _mk_healthy_servo()
+        servo.close = MagicMock(return_value=False)
+        positioning = self._mk_positioning(servos=[servo])
+
+        self.assertEqual(DistributionState.IDLE, positioning.step())
+        positioning.chute.moveToBin.assert_not_called()
+        self.assertIn(0, positioning._blocked_layers)
+
     def test_no_bin_available_publishes_distribution_incident_before_passthrough(self) -> None:
         positioning = self._mk_positioning(
             servos=[_mk_healthy_servo()],

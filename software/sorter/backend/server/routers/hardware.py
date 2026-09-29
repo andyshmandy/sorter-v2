@@ -2185,6 +2185,8 @@ def move_chute_to_angle(payload: ChuteMoveToAnglePayload) -> Dict[str, Any]:
         estimated_ms = chute.moveToAngle(angle)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chute move failed: {e}")
+    if estimated_ms is None:
+        raise HTTPException(status_code=409, detail="The chute is still moving; try again when it stops.")
     return {
         "ok": True,
         "target_angle": round(angle, 2),
@@ -2223,6 +2225,8 @@ def move_chute_to_virtual_bin(payload: ChuteVirtualBinPayload) -> Dict[str, Any]
         estimated_ms = chute.moveToAngle(target_angle)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chute move failed: {e}")
+    if estimated_ms is None:
+        raise HTTPException(status_code=409, detail="The chute is still moving; try again when it stops.")
     return {
         "ok": True,
         "target_angle": round(target_angle, 2),
@@ -3045,6 +3049,8 @@ def move_to_bin(payload: MoveToBinPayload) -> Dict[str, Any]:
         estimated_ms = chute.moveToBin(address)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chute move failed: {e}")
+    if estimated_ms is None:
+        raise HTTPException(status_code=409, detail="The chute is still moving; try again when it stops.")
 
     # Open the target layer servo
     target_servo = servos[payload.layer_index]
@@ -3085,6 +3091,8 @@ def move_to_section(payload: MoveToSectionPayload) -> Dict[str, Any]:
         estimated_ms = chute.moveToAngle(target_angle)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chute move failed: {e}")
+    if estimated_ms is None:
+        raise HTTPException(status_code=409, detail="The chute is still moving; try again when it stops.")
 
     return {
         "ok": True,

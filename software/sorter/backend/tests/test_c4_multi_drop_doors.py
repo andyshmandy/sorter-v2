@@ -56,15 +56,17 @@ class _Servo:
     def isClosed(self) -> bool:
         return not self._shadow_open
 
-    def open(self) -> None:
+    def open(self) -> bool:
         self.open_calls += 1
         self._shadow_open = True
         self._log.append(f"open{self._index}")
+        return True
 
-    def close(self) -> None:
+    def close(self) -> bool:
         self.close_calls += 1
         self._shadow_open = False
         self._log.append(f"close{self._index}")
+        return True
 
     def apply_open_speed(self) -> None:
         pass
