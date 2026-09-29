@@ -211,23 +211,6 @@ class SharedVariables:
                 return bool(motion.in_progress)
         return self._chute_move_in_progress
 
-    def set_classification_dropzone_track_ignored(
-        self,
-        global_id: int,
-        ignored: bool,
-    ) -> None:
-        track_id = int(global_id)
-        if ignored:
-            self._ignored_classification_dropzone_track_ids.add(track_id)
-        else:
-            self._ignored_classification_dropzone_track_ids.discard(track_id)
-
-    def ignored_classification_dropzone_track_ids(self) -> set[int]:
-        return set(self._ignored_classification_dropzone_track_ids)
-
-    def is_classification_dropzone_track_ignored(self, global_id: int) -> bool:
-        return int(global_id) in self._ignored_classification_dropzone_track_ids
-
     # DEV-LOG: remove before merge — instruments every gate write (incl. no-ops)
     # with caller frame, used to track down rev01 gate regression. Drop along
     # with the call in set_classification_gate.

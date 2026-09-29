@@ -101,11 +101,6 @@ class CameraDevice:
     def set_picture_settings(self, settings: CameraPictureSettings) -> None:
         self._capture.setPictureSettings(settings)
 
-    def get_picture_settings(self) -> CameraPictureSettings:
-        return self._capture.getPictureSettings()
-
-
-
     def set_device_settings(
         self,
         settings: dict[str, int | float | bool] | None,

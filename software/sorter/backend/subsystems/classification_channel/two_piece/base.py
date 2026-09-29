@@ -2,7 +2,6 @@ import base64
 import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -102,24 +101,6 @@ class Rev01BaseState(BaseState):
         except Exception as exc:
             self.logger.warning(f"{LOG_TAG} stepper stop failed: {exc}")
 
-    def startRotation(self, speed_usteps_per_s: int) -> bool:
-        stepper = getattr(self.irl, "carousel_stepper", None)
-        if stepper is None:
-            self.logger.error(f"{LOG_TAG} carousel_stepper missing — cannot rotate")
-            return False
-        try:
-            stepper.set_speed_limits(16, max(16, speed_usteps_per_s))
-        except Exception as exc:
-            self.logger.warning(f"{LOG_TAG} set_speed_limits failed: {exc}")
-        try:
-            ok = bool(stepper.move_at_speed(int(speed_usteps_per_s)))
-        except Exception as exc:
-            self.logger.error(f"{LOG_TAG} move_at_speed failed: {exc}")
-            return False
-        if not ok:
-            self.logger.error(f"{LOG_TAG} move_at_speed not acknowledged")
-        return ok
-
     def startOutputMove(self, output_degrees: float, speed_usteps_per_s: int) -> bool:
         stepper = getattr(self.irl, "carousel_stepper", None)
         if stepper is None:
@@ -139,9 +120,6 @@ class Rev01BaseState(BaseState):
         if not ok:
             self.logger.error(f"{LOG_TAG} move not acknowledged")
         return ok
-
-    def startCaptureSweepMove(self, output_degrees: float, speed_usteps_per_s: int) -> bool:
-        return self.startOutputMove(output_degrees, speed_usteps_per_s)
 
     def emitKnownObject(self) -> None:
         obj = self.ctx.known_object
@@ -914,36 +892,3 @@ class Rev01BaseState(BaseState):
         except Exception as exc:
             self.gc.logger.warn(f"bsx inventory check failed: {exc}")
 
-    def _knownObjectResultSnapshot(self) -> dict[str, object]:
-        obj = self.ctx.known_object
-        if obj is None:
-            return {}
-        return {
-            "status": str(obj.classification_status.value)
-            if hasattr(obj.classification_status, "value")
-            else str(obj.classification_status),
-            "part_id": obj.part_id,
-            "part_name": obj.part_name,
-            "part_category": obj.part_category,
-            "color_id": obj.color_id,
-            "color_name": obj.color_name,
-            "confidence": obj.confidence,
-            "brickognize_preview_url": obj.brickognize_preview_url,
-            "brickognize_source_view": obj.brickognize_source_view,
-        }
-
-    @staticmethod
-    def _writeJpeg(path: Path, image: np.ndarray) -> bool:
-        if image is None or image.size == 0:
-            return False
-        try:
-            ok = bool(
-                cv2.imwrite(
-                    str(path),
-                    image,
-                    [cv2.IMWRITE_JPEG_QUALITY, 80],
-                )
-            )
-        except Exception:
-            return False
-        return ok

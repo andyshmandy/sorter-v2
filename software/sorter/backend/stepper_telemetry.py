@@ -314,19 +314,3 @@ def deleteRun(run_id: str) -> None:
         conn.commit()
 
 
-def pruneOldRuns(*, keep_runs: int = 500) -> int:
-    # Retention guard so passive logging across many sorting sessions can't grow
-    # the DB without bound. Keeps the newest keep_runs runs; drops the rest and
-    # their samples.
-    with _connection() as conn:
-        stale = conn.execute(
-            "SELECT id FROM stepper_telemetry_runs ORDER BY started_at DESC "
-            "LIMIT -1 OFFSET ?",
-            (max(0, keep_runs),),
-        ).fetchall()
-        ids = [r["id"] for r in stale]
-        for run_id in ids:
-            conn.execute("DELETE FROM stepper_telemetry_samples WHERE run_id = ?", (run_id,))
-            conn.execute("DELETE FROM stepper_telemetry_runs WHERE id = ?", (run_id,))
-        conn.commit()
-    return len(ids)

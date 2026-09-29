@@ -3,8 +3,6 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from defs.known_object import ClassificationStatus
-
 CLASSIFICATION_UNRESOLVED_INCIDENT_KIND = "classification_unresolved"
 CLASSIFICATION_MULTI_DROP_COLLISION_INCIDENT_KIND = "classification_multi_drop_collision"
 CLASSIFICATION_INTAKE_TIMEOUT_INCIDENT_KIND = "classification_intake_request_timeout"
@@ -14,14 +12,6 @@ CLASSIFICATION_TRACK_LOST_INCIDENT_KIND = "classification_track_lost"
 # so its incidents are never confused with the legacy exit-release publishers.
 C4_EXIT_STUCK_INCIDENT_KIND = "exit_stuck"
 C4_STALL_WATCHDOG_SOURCE_KIND = "c4_stall_watchdog"
-
-
-def classification_fallback_incident_kind(
-    status: ClassificationStatus,
-) -> str:
-    if status == ClassificationStatus.multi_drop_fail:
-        return CLASSIFICATION_MULTI_DROP_COLLISION_INCIDENT_KIND
-    return CLASSIFICATION_UNRESOLVED_INCIDENT_KIND
 
 
 def c4_stall_incident_active(gc: Any) -> bool:

@@ -9,7 +9,7 @@ from defs.consts import (
     CH2_PRECISE_SECTIONS, CH2_DROPZONE_SECTIONS,
     CLASSIFICATION_CHANNEL_CLOCKWISE,
 )
-from defs.channel import PolygonChannel, ChannelGeometry
+from defs.channel import PolygonChannel
 
 
 @dataclass(frozen=True)
@@ -421,27 +421,6 @@ def channelArcCropPolygon(
     return np.array(points, dtype=np.int32)
 
 
-def channelArcInnerPolygon(
-    zones: ChannelArcZones,
-    *,
-    segment_count: int = 96,
-    center: Tuple[float, float] | None = None,
-    radius_scale: float = 1.0,
-) -> np.ndarray:
-    cx, cy = zones.center if center is None else center
-    inner_radius = float(zones.inner_radius) * float(radius_scale)
-    return np.array(
-        [
-            [
-                int(round(cx + inner_radius * np.cos((2 * np.pi * i) / segment_count))),
-                int(round(cy + inner_radius * np.sin((2 * np.pi * i) / segment_count))),
-            ]
-            for i in range(segment_count)
-        ],
-        dtype=np.int32,
-    )
-
-
 def zoneSectionsForChannel(
     channel_id: int,
     section_zero_angle: float,
@@ -484,17 +463,6 @@ def _isInChannel(point: Tuple[float, float], ch: PolygonChannel) -> bool:
     if 0 <= y < ch.mask.shape[0] and 0 <= x < ch.mask.shape[1]:
         return ch.mask[y, x] > 0
     return False
-
-
-def determineObjectChannel(
-    obj_center_image: Tuple[float, float],
-    geometry: ChannelGeometry,
-) -> PolygonChannel | None:
-    if geometry.third_channel and _isInChannel(obj_center_image, geometry.third_channel):
-        return geometry.third_channel
-    if geometry.second_channel and _isInChannel(obj_center_image, geometry.second_channel):
-        return geometry.second_channel
-    return None
 
 
 def getBboxSections(bbox: Tuple[int, int, int, int], channel: PolygonChannel) -> set[int]:
@@ -544,21 +512,6 @@ def _orderedCircularSections(sections: set[int]) -> list[int]:
     return sorted(normalized, key=lambda section: (section - start) % section_count)
 
 
-def bboxCenterCrossedSectionMidpoint(
-    bbox: Tuple[int, int, int, int],
-    channel: PolygonChannel,
-    sections: set[int],
-) -> bool:
-    """Return True once a bbox center reaches the latter half of a section arc."""
-    ordered_sections = _orderedCircularSections(sections)
-    if not ordered_sections:
-        return False
-    x1, y1, x2, y2 = bbox
-    center_section = _sectionForPoint((x1 + x2) / 2.0, (y1 + y2) / 2.0, channel)
-    midpoint_index = max(0, len(ordered_sections) // 2)
-    return center_section in set(ordered_sections[midpoint_index:])
-
-
 def bboxSectionOverlapRatio(
     bbox: Tuple[int, int, int, int],
     channel: PolygonChannel,
@@ -589,41 +542,4 @@ def bboxSectionOverlapRatio(
         return 0.0
     return float(inside_sections) / float(total)
 
-
-def _bboxExitOverlapRatio(
-    bbox: Tuple[int, int, int, int],
-    channel: PolygonChannel,
-    *,
-    samples_per_axis: int = 5,
-) -> float:
-    """Approximate how much of a bbox lies inside the channel exit zone."""
-    return bboxSectionOverlapRatio(
-        bbox,
-        channel,
-        channel.exit_sections,
-        samples_per_axis=samples_per_axis,
-    )
-
-
-class FeederAnalysis:
-    def __init__(self) -> None:
-        self.ch2_action = ChannelAction.IDLE
-        self.ch3_action = ChannelAction.IDLE
-        self.ch3_dropzone_occupied = False
-        self.ch2_dropzone_occupied = False
-        # Max sampled bbox area overlap-ratio of any detection in the channel.
-        # Used by the exit-zone incident guard to spot pieces that are parked
-        # inside the exit zone instead of falling through.
-        self.ch2_exit_overlap_max: float = 0.0
-        self.ch3_exit_overlap_max: float = 0.0
-        self.ch2_exit_center_crossed: bool = False
-        self.ch3_exit_center_crossed: bool = False
-        self.ch2_dropzone_overlap_max: float = 0.0
-        self.ch3_dropzone_overlap_max: float = 0.0
-
-
-def _exitOverlapRatio(sections: set[int], exit_sections: set[int]) -> float:
-    if not sections or not exit_sections:
-        return 0.0
-    return float(len(sections & exit_sections)) / float(len(sections))
 

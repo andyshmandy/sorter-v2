@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Optional
 
 from blob_manager import VideoRecorder
 from global_config import GlobalConfig
@@ -66,18 +66,6 @@ class VisionManager:
         persist: bool = False,
     ) -> dict[str, int | float | bool] | None:
         return self._camera_service.set_device_settings_for_role(camera_name, settings, persist=persist)
-
-    def getDeviceSettingsForRole(
-        self,
-        camera_name: str,
-    ) -> dict[str, int | float | bool] | None:
-        return self._camera_service.get_device_settings_for_role(camera_name)
-
-    def describeDeviceControlsForRole(
-        self,
-        camera_name: str,
-    ) -> tuple[list[dict[str, Any]], dict[str, int | float | bool]] | None:
-        return self._camera_service.describe_device_controls_for_role(camera_name)
 
     def getFrame(self, camera_name: str) -> Optional[CameraFrame]:
         feed = self._camera_service.get_feed(camera_name)

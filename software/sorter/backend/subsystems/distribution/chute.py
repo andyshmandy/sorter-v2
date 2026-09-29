@@ -273,13 +273,6 @@ class Chute:
             return None
         return estimated_ms
 
-    def moveToBinBlocking(self, address: BinAddress, timeout_buffer_ms: int = 0) -> int | None:
-        target = self.getAngleForBin(address)
-        if target is None:
-            self.logger.error(f"Chute: bin {address} is unreachable")
-            return None
-        return self.moveToAngleBlocking(target, timeout_buffer_ms=timeout_buffer_ms)
-
     def _backoffToFirstBin(self) -> bool:
         backoff_angle = self.angleForVirtualBin(
             0, 0, self._binsInFirstSection(), unclamped=True

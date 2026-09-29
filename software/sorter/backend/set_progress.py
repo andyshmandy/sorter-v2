@@ -173,14 +173,6 @@ class SetProgressTracker:
             "sets": sets,
         }
 
-    def get_snapshot(self) -> dict[str, Any]:
-        """Serializable snapshot for WebSocket broadcast and Hive reporting."""
-        return {
-            "artifact_hash": self._artifact_hash,
-            "updated_at": time.time(),
-            **self.get_progress(),
-        }
-
     def get_report_items(self) -> list[dict[str, Any]]:
         """Get flat list of items for Hive progress reporting."""
         items = []
