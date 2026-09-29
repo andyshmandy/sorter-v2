@@ -178,11 +178,6 @@ log "Mode: $MODE"
 
 load_env
 
-# ADB port forward for Android camera (IP Webcam) — silently skip if no device
-if command -v adb &>/dev/null && adb devices 2>/dev/null | grep -q "device$"; then
-    adb forward tcp:8080 tcp:8080 2>/dev/null && log "ADB forward: tcp:8080 -> phone:8080"
-fi
-
 case "$MODE" in
     backend)
         kill_port 8000

@@ -59,20 +59,6 @@
 		name?: string;
 		preview_available?: boolean;
 	};
-	type NetworkCameraInfo = {
-		kind: 'network';
-		id: string;
-		name: string;
-		source: string;
-		preview_url: string;
-		health_url: string;
-		host: string;
-		port: number;
-		model?: string | null;
-		lens_facing?: string | null;
-		transport: string;
-		last_seen_ms: number;
-	};
 	type CameraSource = number | string | null;
 	type ArcParams = {
 		center: Point;
@@ -286,13 +272,6 @@
 		classification_channel: 'Classification C-Channel (C4)',
 	};
 
-	const ROLE_SUPPORTS_URL: Record<CameraRole, boolean> = {
-		c_channel_2: false,
-		c_channel_3: false,
-		carousel: true,
-		classification_channel: true,
-	};
-
 	const LEGACY_ZONE_SECTION_RANGES: Record<
 		ArcChannel,
 		{ drop: [number, number]; exit: [number, number] }
@@ -443,7 +422,6 @@
 	let cameraError = $state<string | null>(null);
 	let cameraConfigLoaded = $state(false);
 	let usbCameras = $state<UsbCameraInfo[]>([]);
-	let networkCameras = $state<NetworkCameraInfo[]>([]);
 	let assignments = $state<Record<CameraRole, CameraSource>>({
 		c_channel_2: null,
 		c_channel_3: null,
@@ -1102,22 +1080,11 @@
 			if (camera?.name) return `${camera.name} (Camera ${source})`;
 			return `Camera ${source}`;
 		}
-		const discovered = discoveredCameraBySource(source);
-		if (discovered) return discovered.name;
 		return source;
 	}
 
 	function cameraIndexPreviewUrl(index: number): string {
 		return `${getBackendHttpBase()}/api/cameras/stream/${index}`;
-	}
-
-	function discoveredCameraBySource(source: CameraSource): NetworkCameraInfo | null {
-		if (typeof source !== 'string') return null;
-		return networkCameras.find((camera) => camera.source === source) ?? null;
-	}
-
-	function discoveredPreviewUrl(camera: NetworkCameraInfo): string {
-		return `${camera.preview_url}?t=${camera.last_seen_ms}`;
 	}
 
 	function angleFromCenter(point: Point, center: Point): number {
@@ -2015,15 +1982,9 @@
 			const res = await fetch(`${getBackendHttpBase()}/api/cameras/list`, { signal: abort.signal });
 			if (!res.ok) throw new Error(await res.text());
 			const payload = await res.json();
-			if (Array.isArray(payload)) {
-				usbCameras = payload.filter((camera: UsbCameraInfo) => camera.index >= 0);
-				networkCameras = [];
-				return;
-			}
 			usbCameras = Array.isArray(payload.usb)
 				? payload.usb.filter((camera: UsbCameraInfo) => camera.index >= 0)
 				: [];
-			networkCameras = Array.isArray(payload.network) ? payload.network : [];
 		} catch (e: any) {
 			if (e.name === 'AbortError') return;
 			cameraError = e.message ?? 'Failed to scan cameras';
@@ -4377,10 +4338,7 @@
 						Scanning cameras...
 					</div>
 				{:else}
-					{@const hasAnyCameras =
-						usbCameras.length > 0 ||
-						(ROLE_SUPPORTS_URL[currentRole()] && networkCameras.length > 0)}
-					{#if hasAnyCameras}
+					{#if usbCameras.length > 0}
 						<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
 							{#each usbCameras as cam}
 								{@const role = currentRole()}
@@ -4442,70 +4400,6 @@
 									{/if}
 								</button>
 							{/each}
-
-							{#if ROLE_SUPPORTS_URL[currentRole()]}
-								{#each networkCameras as cam}
-									{@const role = currentRole()}
-									{@const isSelected = assignments[role] === cam.source}
-									{@const usedByOther =
-										!isSelected &&
-										ALL_CAMERA_ROLES.some(
-											(otherRole) => otherRole !== role && assignments[otherRole] === cam.source
-										)}
-									<button
-										onclick={() => {
-											const otherRole = findRoleUsing(cam.source, role);
-											if (otherRole) {
-												reassignConfirm = {
-													source: cam.source,
-													targetRole: role,
-													currentRole: otherRole,
-													cameraLabel: cam.name
-												};
-												reassignModalOpen = true;
-												return;
-											}
-											saveCameraRole(role, cam.source);
-										}}
-										disabled={cameraSaving}
-										class="group relative overflow-hidden text-left transition-all {isSelected
-											? 'ring-2 ring-primary'
-											: usedByOther
-												? 'opacity-60 hover:opacity-100 hover:ring-2 hover:ring-[#FFD500] dark:hover:ring-[#FFD500]'
-												: 'hover:ring-2 hover:ring-primary/50'}"
-									>
-										<CameraSourcePreview
-											src={discoveredPreviewUrl(cam)}
-											label={cam.name}
-											fit="cover"
-											block
-										/>
-										<div
-											class="absolute right-0 bottom-0 left-0 bg-gradient-to-t from-black/80 to-transparent px-2 pt-4 pb-1.5 text-xs text-white"
-										>
-											<div class="font-medium">{cam.name}</div>
-											<div class="text-white/70">
-												{cam.host}:{cam.port}{#if cam.lens_facing}
-													· {cam.lens_facing}{/if}
-											</div>
-										</div>
-										{#if isSelected}
-											<div
-												class="absolute top-1.5 right-1.5 rounded-sm bg-primary px-1.5 py-0.5 text-xs font-medium text-primary-contrast"
-											>
-												Active
-											</div>
-										{:else if usedByOther}
-											{@const otherRole = findRoleUsing(cam.source, role)}
-											<div
-												class="absolute top-1.5 right-1.5 rounded-sm bg-[#FFD500] px-1.5 py-0.5 text-xs font-medium text-[#1A1A1A]"
-											>
-												{otherRole ? ROLE_LABELS[otherRole] : 'In use'}
-											</div>
-										{/if}
-									</button>
-								{/each}
-							{/if}
 						</div>
 					{:else}
 						<div

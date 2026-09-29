@@ -26,7 +26,6 @@ from local_state import (
     set_classification_polygons,
 )
 from toml_config import getMachineNickname, setMachineNickname
-from server.camera_discovery import shutdownCameraDiscovery
 from server.set_progress_sync import getSetProgressSyncWorker
 from server.waveshare_inventory import get_waveshare_inventory_manager
 from server.security import (
@@ -241,7 +240,6 @@ async def onStartup() -> None:
 @app.on_event("shutdown")
 async def onShutdown() -> None:
     getSetProgressSyncWorker().stop()
-    shutdownCameraDiscovery()
     get_waveshare_inventory_manager().stop()
     from status_ping import getStatusPinger
 

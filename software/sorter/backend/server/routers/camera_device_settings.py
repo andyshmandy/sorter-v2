@@ -1,7 +1,7 @@
-"""Router for a camera role's own controls: the UVC controls of a USB camera,
-or the settings of the Android camera app when the role's camera is a phone.
+"""Router for a camera role's own controls: the UVC controls of a USB camera.
 Read them, preview a change live, save them, reset them to automatic, and
-compare what is saved with what the camera reports.
+compare what is saved with what the camera reports. A camera whose source is
+a stream URL has no controls to adjust.
 
 Camera calibration (server/routers/camera_calibration.py) drives a camera
 through the read, preview and save routes here.
@@ -9,12 +9,8 @@ through the read, preview and save routes here.
 
 from __future__ import annotations
 
-import json
 import platform
 from typing import Any, Dict, List
-from urllib import error as urllib_error
-from urllib import parse as urllib_parse
-from urllib import request as urllib_request
 
 from fastapi import APIRouter, HTTPException
 
@@ -37,84 +33,16 @@ def _saved_camera_device_settings(config: Dict[str, Any], role: str) -> Dict[str
     )
 
 
-def _assigned_camera_source(role: str) -> int | str:
+NETWORK_STREAM_MESSAGE = "A network stream camera has no adjustable controls."
+
+
+def _assigned_camera_source(role: str) -> int:
     source = _camera_source_for_role(machine_toml.read(), role)
     if source is None:
         raise HTTPException(status_code=404, detail="No camera is assigned to this role.")
+    if not isinstance(source, int):
+        raise HTTPException(status_code=400, detail=NETWORK_STREAM_MESSAGE)
     return source
-
-
-# ---------------------------------------------------------------------------
-# Android camera app
-# ---------------------------------------------------------------------------
-
-
-def _android_camera_base_url(source: int | str | None) -> str | None:
-    if not isinstance(source, str):
-        return None
-    try:
-        parsed = urllib_parse.urlparse(source)
-    except Exception:
-        return None
-    if not parsed.scheme or not parsed.netloc:
-        return None
-    return f"{parsed.scheme}://{parsed.netloc}"
-
-
-def _android_camera_request(
-    source: int | str | None,
-    path: str,
-    *,
-    method: str = "GET",
-    payload: Dict[str, Any] | None = None,
-) -> Dict[str, Any]:
-    base_url = _android_camera_base_url(source)
-    if base_url is None:
-        raise HTTPException(status_code=400, detail="Camera source is not an Android camera app URL.")
-
-    url = f"{base_url}{path}"
-    data = None
-    headers: Dict[str, str] = {}
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-
-    request = urllib_request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib_request.urlopen(request, timeout=4) as response:
-            body = response.read().decode("utf-8")
-    except urllib_error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise HTTPException(status_code=502, detail=detail or f"Android camera app returned HTTP {exc.code}.")
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to reach Android camera app: {exc}")
-
-    try:
-        parsed = json.loads(body)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Android camera app returned invalid JSON: {exc}")
-
-    if not isinstance(parsed, dict):
-        raise HTTPException(status_code=502, detail="Android camera app returned an unexpected response.")
-
-    return parsed
-
-
-def _android_camera_bytes_request(source: int | str | None, path: str) -> bytes:
-    base_url = _android_camera_base_url(source)
-    if base_url is None:
-        raise HTTPException(status_code=400, detail="Camera source is not an Android camera app URL.")
-
-    url = f"{base_url}{path}"
-    request = urllib_request.Request(url, method="GET")
-    try:
-        with urllib_request.urlopen(request, timeout=4) as response:
-            return response.read()
-    except urllib_error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise HTTPException(status_code=502, detail=detail or f"Android camera app returned HTTP {exc.code}.")
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to reach Android camera app: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -197,29 +125,15 @@ def get_camera_device_settings(role: str) -> Dict[str, Any]:
         }
 
     if isinstance(source, str):
-        try:
-            android_data = _android_camera_request(source, "/camera-settings")
-        except HTTPException as exc:
-            return {
-                "ok": True,
-                "role": role,
-                "source": source,
-                "provider": "network-stream",
-                "settings": {},
-                "controls": [],
-                "supported": False,
-                "message": str(exc.detail),
-            }
-
         return {
             "ok": True,
             "role": role,
             "source": source,
-            "provider": android_data.get("provider", "android-camera-app"),
-            "settings": android_data.get("settings", {}),
-            "capabilities": android_data.get("capabilities", {}),
+            "provider": "network-stream",
+            "settings": {},
             "controls": [],
-            "supported": True,
+            "supported": False,
+            "message": NETWORK_STREAM_MESSAGE,
         }
 
     saved_settings = _saved_camera_device_settings(config, role)
@@ -248,24 +162,6 @@ def get_camera_device_settings(role: str) -> Dict[str, Any]:
 @router.post("/api/cameras/device-settings/{role}/preview")
 def preview_camera_device_settings(role: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     source = _assigned_camera_source(role)
-
-    if isinstance(source, str):
-        proxied = _android_camera_request(
-            source,
-            "/camera-settings/preview",
-            method="POST",
-            payload=payload,
-        )
-        return {
-            "ok": True,
-            "role": role,
-            "source": source,
-            "provider": proxied.get("provider", "android-camera-app"),
-            "settings": proxied.get("settings", payload),
-            "persisted": False,
-            "applied_live": True,
-        }
-
     parsed = cameraDeviceSettingsToDict(parseCameraDeviceSettings(payload))
     applied_settings, applied_live = _apply_live_usb_device_settings(role, parsed, persist=False)
 
@@ -283,24 +179,6 @@ def preview_camera_device_settings(role: str, payload: Dict[str, Any]) -> Dict[s
 @router.post("/api/cameras/device-settings/{role}")
 def save_camera_device_settings(role: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     source = _assigned_camera_source(role)
-
-    if isinstance(source, str):
-        proxied = _android_camera_request(
-            source,
-            "/camera-settings",
-            method="POST",
-            payload=payload,
-        )
-        return {
-            "ok": True,
-            "role": role,
-            "source": source,
-            "provider": proxied.get("provider", "android-camera-app"),
-            "settings": proxied.get("settings", payload),
-            "persisted": True,
-            "applied_live": True,
-        }
-
     parsed = cameraDeviceSettingsToDict(parseCameraDeviceSettings(payload))
     settings_role = _settings_role(role)
     with machine_toml.edit() as config:
@@ -330,32 +208,6 @@ def save_camera_device_settings(role: str, payload: Dict[str, Any]) -> Dict[str,
 @router.post("/api/cameras/device-settings/{role}/reset-defaults")
 def reset_camera_device_settings_to_defaults(role: str) -> Dict[str, Any]:
     source = _assigned_camera_source(role)
-
-    if isinstance(source, str):
-        payload = {
-            "exposure_compensation": 0,
-            "ae_lock": False,
-            "awb_lock": False,
-            "white_balance_mode": "auto",
-            "processing_mode": "standard",
-        }
-        proxied = _android_camera_request(
-            source,
-            "/camera-settings",
-            method="POST",
-            payload=payload,
-        )
-        return {
-            "ok": True,
-            "role": role,
-            "source": source,
-            "provider": proxied.get("provider", "android-camera-app"),
-            "settings": proxied.get("settings", payload),
-            "persisted": True,
-            "applied_live": True,
-            "message": "Camera reset to automatic settings.",
-        }
-
     controls, _ = _camera_service_usb_device_controls(role, source, {})
     auto_settings = _auto_camera_device_settings_from_controls(controls)
     if not auto_settings:
@@ -457,24 +309,6 @@ def get_camera_device_settings_diff(role: str) -> Dict[str, Any]:
     live_settings: Dict[str, Any] = {}
     if isinstance(source, int):
         controls, live_settings = _camera_service_usb_device_controls(role, source, saved_settings)
-    else:
-        # Network-stream (Android) — proxied read
-        try:
-            android_data = _android_camera_request(source, "/camera-settings")
-            raw_settings = android_data.get("settings") or {}
-            if isinstance(raw_settings, dict):
-                live_settings = {k: v for k, v in raw_settings.items() if isinstance(v, (int, float, bool))}
-        except HTTPException as exc:
-            return {
-                "ok": True,
-                "role": role,
-                "source": source,
-                "supported": False,
-                "saved": saved_settings,
-                "live": {},
-                "diffs": [],
-                "message": str(exc.detail),
-            }
 
     controls_by_key: Dict[str, Dict[str, Any]] = {}
     for control in controls:

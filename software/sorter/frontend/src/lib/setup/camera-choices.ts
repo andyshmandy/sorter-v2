@@ -3,20 +3,11 @@ export type CameraChoice = {
 	source: number | string | null;
 	label: string;
 	previewSrc: string | null;
-	previewKind: 'mjpeg' | 'image';
 };
 
 export type UsbCamera = {
 	index: number;
 	name: string;
-};
-
-export type NetworkCamera = {
-	id: string;
-	name: string;
-	source: string;
-	preview_url?: string | null;
-	transport: string;
 };
 
 export function sourceKey(source: number | string | null | undefined): string {
@@ -38,7 +29,6 @@ export function parseCameraSource(key: string): number | string | null {
 
 export function buildCameraChoices(
 	usbCameras: UsbCamera[],
-	networkCameras: NetworkCamera[],
 	roleSelections: Record<string, string>,
 	backendBaseUrl: string
 ): CameraChoice[] {
@@ -47,8 +37,7 @@ export function buildCameraChoices(
 			key: '__none__',
 			source: null,
 			label: 'Not assigned',
-			previewSrc: null,
-			previewKind: 'image'
+			previewSrc: null
 		}
 	];
 	for (const camera of usbCameras.filter((candidate) => candidate.index >= 0)) {
@@ -56,17 +45,7 @@ export function buildCameraChoices(
 			key: sourceKey(camera.index),
 			source: camera.index,
 			label: `${camera.name} (Camera ${camera.index})`,
-			previewSrc: `${backendBaseUrl}/api/cameras/stream/${camera.index}`,
-			previewKind: 'mjpeg'
-		});
-	}
-	for (const camera of networkCameras) {
-		base.push({
-			key: sourceKey(camera.source),
-			source: camera.source,
-			label: `${camera.name} (${camera.transport})`,
-			previewSrc: camera.preview_url ?? camera.source,
-			previewKind: camera.preview_url ? 'image' : 'mjpeg'
+			previewSrc: `${backendBaseUrl}/api/cameras/stream/${camera.index}`
 		});
 	}
 
@@ -83,8 +62,7 @@ export function buildCameraChoices(
 			label:
 				typeof source === 'number' ? `Configured camera ${source}` : `Configured stream ${source}`,
 			previewSrc:
-				typeof source === 'number' ? `${backendBaseUrl}/api/cameras/stream/${source}` : source,
-			previewKind: 'mjpeg'
+				typeof source === 'number' ? `${backendBaseUrl}/api/cameras/stream/${source}` : source
 		});
 		seen.add(key);
 	}

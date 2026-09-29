@@ -10,7 +10,6 @@
 		label: string;
 		source: number | string | null;
 		previewSrc: string | null;
-		previewKind: 'mjpeg' | 'image';
 	};
 
 	let {

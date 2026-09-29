@@ -1,5 +1,5 @@
-"""Router for which camera films which role: the saved assignment, the cameras
-this machine can see (USB and network) to choose from, and assigning them.
+"""Router for which camera films which role: the saved assignment, the USB
+cameras this machine can see to choose from, and assigning them.
 
 The other camera routers (camera_feeds, camera_picture_settings,
 camera_device_settings, camera_capture_modes and camera_calibration) share the
@@ -19,7 +19,6 @@ import machine_toml
 from hardware.macos_camera_registry import refresh_macos_cameras
 from irl.config import cameraSourceForRole
 from server import shared_state
-from server.camera_discovery import getDiscoveredCameraStreams
 from vision.camera_modes import default_capture_mode, list_v4l2_modes
 
 router = APIRouter()
@@ -231,16 +230,8 @@ def get_camera_config() -> Dict[str, Any]:
 
 @router.get("/api/cameras/list")
 def list_cameras() -> Dict[str, Any]:
-    """List local USB cameras plus discovered network camera streams."""
-    from concurrent.futures import ThreadPoolExecutor
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        usb_fut = pool.submit(_list_usb_cameras)
-        net_fut = pool.submit(getDiscoveredCameraStreams)
-        return {
-            "usb": usb_fut.result(),
-            "network": net_fut.result(),
-        }
+    """List the USB cameras this machine can see."""
+    return {"usb": _list_usb_cameras()}
 
 
 @router.post("/api/cameras/assign")

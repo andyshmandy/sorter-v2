@@ -2,17 +2,6 @@
 	import { getBackendHttpBase } from '$lib/backend';
 	import { onDestroy } from 'svelte';
 	import {
-		androidCameraSettingsEqual,
-		cloneAndroidCameraSettings,
-		DEFAULT_ANDROID_CAMERA_CAPABILITIES,
-		DEFAULT_ANDROID_CAMERA_SETTINGS,
-		normalizeAndroidCameraCapabilities,
-		normalizeAndroidCameraSettings,
-		type AndroidCameraCapabilities,
-		type AndroidCameraSettings,
-		type AndroidProcessingMode
-	} from '$lib/settings/android-camera-settings';
-	import {
 		type CameraCalibrationAnalysis,
 		type CameraCalibrationGalleryEntry,
 		type CameraCalibrationGalleryResponse,
@@ -102,12 +91,6 @@
 	let usbControls = $state<UsbCameraControl[]>([]);
 	let savedUsbSettings = $state<UsbCameraSettings>({});
 	let draftUsbSettings = $state<UsbCameraSettings>({});
-
-	let savedAndroidSettings = $state<AndroidCameraSettings>({ ...DEFAULT_ANDROID_CAMERA_SETTINGS });
-	let draftAndroidSettings = $state<AndroidCameraSettings>({ ...DEFAULT_ANDROID_CAMERA_SETTINGS });
-	let androidCapabilities = $state<AndroidCameraCapabilities>({
-		...DEFAULT_ANDROID_CAMERA_CAPABILITIES
-	});
 
 	let devicePreviewRequest = 0;
 	let calibrating = $state(false);
@@ -249,46 +232,6 @@
 		emitPreview(role, savedSettings, nextDraftSettings);
 	}
 
-	function updateAndroidExposure(value: number) {
-		draftAndroidSettings = normalizeAndroidCameraSettings(
-			{ ...draftAndroidSettings, exposure_compensation: Math.round(value) },
-			androidCapabilities
-		);
-		status = '';
-		error = null;
-		queueDevicePreview();
-	}
-
-	function updateAndroidBoolean(key: 'ae_lock' | 'awb_lock', value: boolean) {
-		draftAndroidSettings = normalizeAndroidCameraSettings(
-			{ ...draftAndroidSettings, [key]: value },
-			androidCapabilities
-		);
-		status = '';
-		error = null;
-		queueDevicePreview();
-	}
-
-	function updateAndroidProcessingMode(value: string) {
-		draftAndroidSettings = normalizeAndroidCameraSettings(
-			{ ...draftAndroidSettings, processing_mode: value as AndroidProcessingMode },
-			androidCapabilities
-		);
-		status = '';
-		error = null;
-		queueDevicePreview();
-	}
-
-	function updateAndroidWhiteBalance(value: string) {
-		draftAndroidSettings = normalizeAndroidCameraSettings(
-			{ ...draftAndroidSettings, white_balance_mode: value },
-			androidCapabilities
-		);
-		status = '';
-		error = null;
-		queueDevicePreview();
-	}
-
 	function updateUsbNumeric(control: UsbCameraControl, value: number) {
 		const min = typeof control.min === 'number' ? control.min : value;
 		const max = typeof control.max === 'number' ? control.max : value;
@@ -312,48 +255,21 @@
 		queueDevicePreview();
 	}
 
-	function currentDevicePayload(): AndroidCameraSettings | Record<string, number | boolean> | null {
-		if (!deviceSupported) return null;
-		if (deviceProvider === 'android-camera-app') {
-			return normalizeAndroidCameraSettings(draftAndroidSettings, androidCapabilities);
-		}
-		if (deviceProvider === 'usb-opencv') {
-			return cloneUsbCameraSettings(draftUsbSettings);
-		}
-		return null;
+	function currentDevicePayload(): UsbCameraSettings | null {
+		if (!deviceSupported || deviceProvider !== 'usb-opencv') return null;
+		return cloneUsbCameraSettings(draftUsbSettings);
 	}
 
-	function savedDevicePayload(): AndroidCameraSettings | Record<string, number | boolean> | null {
-		if (!deviceSupported) return null;
-		if (deviceProvider === 'android-camera-app') {
-			return normalizeAndroidCameraSettings(savedAndroidSettings, androidCapabilities);
-		}
-		if (deviceProvider === 'usb-opencv') {
-			return cloneUsbCameraSettings(savedUsbSettings);
-		}
-		return null;
+	function savedDevicePayload(): UsbCameraSettings | null {
+		if (!deviceSupported || deviceProvider !== 'usb-opencv') return null;
+		return cloneUsbCameraSettings(savedUsbSettings);
 	}
 
 	function applyDeviceResponse(data: CameraDeviceSettingsResponse) {
 		deviceProvider =
-			data.provider === 'android-camera-app' || data.provider === 'usb-opencv'
-				? data.provider
-				: data.provider === 'none'
-					? 'none'
-					: 'network-stream';
+			data.provider === 'usb-opencv' || data.provider === 'none' ? data.provider : 'network-stream';
 		deviceSupported = Boolean(data.supported);
 		deviceMessage = data.message ?? '';
-
-		if (deviceProvider === 'android-camera-app') {
-			androidCapabilities = normalizeAndroidCameraCapabilities(data.capabilities);
-			const normalized = normalizeAndroidCameraSettings(data.settings, androidCapabilities);
-			savedAndroidSettings = normalized;
-			draftAndroidSettings = cloneAndroidCameraSettings(normalized);
-			usbControls = [];
-			savedUsbSettings = {};
-			draftUsbSettings = {};
-			return;
-		}
 
 		if (deviceProvider === 'usb-opencv') {
 			const controls = normalizeUsbCameraControls(data.controls);
@@ -361,18 +277,12 @@
 			const normalized = normalizeUsbCameraSettings(data.settings, controls);
 			savedUsbSettings = normalized;
 			draftUsbSettings = cloneUsbCameraSettings(normalized);
-			savedAndroidSettings = { ...DEFAULT_ANDROID_CAMERA_SETTINGS };
-			draftAndroidSettings = { ...DEFAULT_ANDROID_CAMERA_SETTINGS };
-			androidCapabilities = { ...DEFAULT_ANDROID_CAMERA_CAPABILITIES };
 			return;
 		}
 
 		usbControls = [];
 		savedUsbSettings = {};
 		draftUsbSettings = {};
-		savedAndroidSettings = { ...DEFAULT_ANDROID_CAMERA_SETTINGS };
-		draftAndroidSettings = { ...DEFAULT_ANDROID_CAMERA_SETTINGS };
-		androidCapabilities = { ...DEFAULT_ANDROID_CAMERA_CAPABILITIES };
 	}
 
 	async function loadLocalSettings() {
@@ -520,9 +430,7 @@
 			const data = (await res.json()) as CameraDeviceSettingsResponse;
 			if (requestId !== devicePreviewRequest) return;
 
-			if (deviceProvider === 'android-camera-app') {
-				draftAndroidSettings = normalizeAndroidCameraSettings(data.settings, androidCapabilities);
-			} else if (deviceProvider === 'usb-opencv') {
+			if (deviceProvider === 'usb-opencv') {
 				draftUsbSettings = normalizeUsbCameraSettings(data.settings, usbControls);
 			}
 		} catch (e: any) {
@@ -558,13 +466,6 @@
 		});
 		if (!res.ok) throw new Error(await res.text());
 		const data = (await res.json()) as CameraDeviceSettingsResponse;
-
-		if (deviceProvider === 'android-camera-app') {
-			const normalized = normalizeAndroidCameraSettings(data.settings, androidCapabilities);
-			savedAndroidSettings = normalized;
-			draftAndroidSettings = cloneAndroidCameraSettings(normalized);
-			return;
-		}
 
 		if (deviceProvider === 'usb-opencv') {
 			const normalized = normalizeUsbCameraSettings(data.settings, usbControls);
@@ -747,9 +648,7 @@
 	function revertChanges() {
 		draftSettings = clonePictureSettings(savedSettings);
 		const devicePayload = savedDevicePayload();
-		if (deviceProvider === 'android-camera-app') {
-			draftAndroidSettings = cloneAndroidCameraSettings(savedAndroidSettings);
-		} else if (deviceProvider === 'usb-opencv') {
+		if (deviceProvider === 'usb-opencv') {
 			draftUsbSettings = cloneUsbCameraSettings(savedUsbSettings);
 		}
 		if (devicePayload) {
@@ -764,14 +663,7 @@
 		draftSettings = clonePictureSettings(DEFAULT_PICTURE_SETTINGS);
 		emitPreview(role, savedSettings, draftSettings);
 
-		if (deviceProvider === 'android-camera-app') {
-			draftAndroidSettings = normalizeAndroidCameraSettings(
-				DEFAULT_ANDROID_CAMERA_SETTINGS,
-				androidCapabilities
-			);
-			queueDevicePreview({ immediate: true });
-			status = 'Reset Android camera controls and feed transforms to defaults. Save to apply.';
-		} else if (deviceProvider === 'usb-opencv') {
+		if (deviceProvider === 'usb-opencv') {
 			draftUsbSettings = usbCameraSaneDefaults(usbControls);
 			queueDevicePreview({ immediate: true });
 			status = 'Reset USB camera controls and feed transforms to sane defaults. Save to apply.';
@@ -783,10 +675,7 @@
 
 	function closeSidebar() {
 		draftSettings = clonePictureSettings(savedSettings);
-		if (deviceProvider === 'android-camera-app') {
-			draftAndroidSettings = cloneAndroidCameraSettings(savedAndroidSettings);
-			queueDevicePreview({ immediate: true });
-		} else if (deviceProvider === 'usb-opencv') {
+		if (deviceProvider === 'usb-opencv') {
 			draftUsbSettings = cloneUsbCameraSettings(savedUsbSettings);
 			queueDevicePreview({ immediate: true });
 		}
@@ -804,11 +693,6 @@
 	function hasUnsavedChanges(): boolean {
 		const localChanged = !pictureSettingsEqual(draftSettings, savedSettings);
 		if (!deviceSupported) return localChanged;
-		if (deviceProvider === 'android-camera-app') {
-			return (
-				localChanged || !androidCameraSettingsEqual(draftAndroidSettings, savedAndroidSettings)
-			);
-		}
 		if (deviceProvider === 'usb-opencv') {
 			return (
 				localChanged || !usbCameraSettingsEqual(draftUsbSettings, savedUsbSettings, usbControls)
@@ -935,14 +819,8 @@
 						{deviceProvider}
 						{deviceSupported}
 						{deviceMessage}
-						{draftAndroidSettings}
-						{androidCapabilities}
 						{usbControls}
 						{draftUsbSettings}
-						onUpdateAndroidExposure={updateAndroidExposure}
-						onUpdateAndroidBoolean={updateAndroidBoolean}
-						onUpdateAndroidProcessingMode={updateAndroidProcessingMode}
-						onUpdateAndroidWhiteBalance={updateAndroidWhiteBalance}
 						onUpdateUsbNumeric={updateUsbNumeric}
 						onUpdateUsbBoolean={updateUsbBoolean}
 					/>
