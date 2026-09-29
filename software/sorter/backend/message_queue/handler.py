@@ -37,7 +37,5 @@ def handleServerToMainEvent(
             return
         gc.logger.info("received resume command")
         controller.resume()
-    elif event.tag == "heartbeat":
-        gc.logger.info(f"received heartbeat from server at {event.data.timestamp}")
     else:
         gc.logger.warn(f"unknown event tag: {event.tag}")

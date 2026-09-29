@@ -286,16 +286,4 @@ SocketEvent = Union[
     SortingProfileStatusEvent,
     RuntimeStatsEvent,
 ]
-MainThreadToServerCommand = Union[
-    HeartbeatEvent,
-    KnownObjectEvent,
-    CameraHealthEvent,
-    SystemStatusEvent,
-    SorterStateEvent,
-    CamerasConfigEvent,
-    SortingProfileStatusEvent,
-    RuntimeStatsEvent,
-]
-ServerToMainThreadEvent = Union[
-    HeartbeatEvent, PauseCommandEvent, ResumeCommandEvent
-]
+ServerToMainThreadEvent = Union[PauseCommandEvent, ResumeCommandEvent]
