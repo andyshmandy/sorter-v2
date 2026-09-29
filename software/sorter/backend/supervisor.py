@@ -284,6 +284,12 @@ def _ui_handler(supervisor: BackendSupervisor, build_dir: Path) -> type[BaseHTTP
     return UIHandler
 
 
+class _UIServer(ThreadingHTTPServer):
+    # A page load opens dozens of connections at once. The default backlog of
+    # 5 drops some, and a dropped connection waits a second to try again.
+    request_queue_size = 128
+
+
 def _bind_ui(port: int, handler: type[BaseHTTPRequestHandler]) -> ThreadingHTTPServer:
     """The UI's server on every interface, once it has the port, however long
     that takes: on SorterOS's first boot the progress page keeps port 80
@@ -291,7 +297,7 @@ def _bind_ui(port: int, handler: type[BaseHTTPRequestHandler]) -> ThreadingHTTPS
     waiting = False
     while True:
         try:
-            return ThreadingHTTPServer(("0.0.0.0", port), handler)
+            return _UIServer(("0.0.0.0", port), handler)
         except OSError as exc:
             if not waiting:
                 print(f"[supervisor] cannot serve the UI on port {port} yet ({exc}); trying every second", flush=True)
