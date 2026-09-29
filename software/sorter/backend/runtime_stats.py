@@ -5,6 +5,8 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
+import db
+
 MAX_TIMING_SAMPLES = 5000
 MAX_STATE_TIMELINE_EVENTS = 5000
 MAX_FEEDER_SIGNAL_TIMELINE_EVENTS = 10000
@@ -274,8 +276,8 @@ class RuntimeStatsCollector:
                 from local_state import record_piece_distribution
 
                 record_piece_distribution(current)
-            except Exception:
-                pass
+            except Exception as exc:
+                db.report_failure("record_piece_distribution", exc)
 
     def lookupKnownObject(self, obj_uuid: str) -> dict[str, Any] | None:
         """Return the last observed KnownObject payload for ``obj_uuid``.
@@ -403,8 +405,8 @@ class RuntimeStatsCollector:
                         self._active_incident_row_id, resolved_by="superseded"
                     )
                 self._active_incident_row_id = incident_records.openIncident(payload)
-        except Exception:
-            pass
+        except Exception as exc:
+            db.report_failure("incident persist", exc)
 
     @staticmethod
     def _incidentIdentity(payload: dict[str, Any] | None) -> tuple[Any, Any, Any, Any]:
@@ -457,8 +459,8 @@ class RuntimeStatsCollector:
                 import incident_records
 
                 incident_records.resolveIncident(row_id, resolved_by=resolved_by)
-            except Exception:
-                pass
+            except Exception as exc:
+                db.report_failure("incident resolve", exc)
 
     def recordAutoResolvedIncident(
         self,
@@ -495,8 +497,8 @@ class RuntimeStatsCollector:
             incident_records.resolveIncident(
                 row_id, resolved_by=resolved_by, resolved_at=resolved_at
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            db.report_failure("incident persist", exc)
 
     def observeHandoffGhostReject(self, **_meta: Any) -> None:
         """Increment the cumulative cross-camera ghost-reject counter.
@@ -586,24 +588,6 @@ class RuntimeStatsCollector:
         _appendSample(bucket, max(0.0, float(value_ms)))
         self._perf_total_counts[name] = self._perf_total_counts.get(name, 0) + 1
         self._last_updated_at = time.time()
-
-    def perfSnapshotRows(self) -> list[dict[str, float | int | str | None]]:
-        rows: list[dict[str, float | int | str | None]] = []
-        for metric_name, samples in sorted(self._perf_ms_samples.items()):
-            summary = _calcMsSummary(samples)
-            rows.append(
-                {
-                    "metric_name": metric_name,
-                    "sample_count": int(summary.get("n", 0)),
-                    "avg_ms": summary.get("avg_ms"),
-                    "med_ms": summary.get("med_ms"),
-                    "p90_ms": summary.get("p90_ms"),
-                    "min_ms": summary.get("min_ms"),
-                    "max_ms": summary.get("max_ms"),
-                    "last_ms": summary.get("last_ms"),
-                }
-            )
-        return rows
 
     def clearBinContents(
         self,

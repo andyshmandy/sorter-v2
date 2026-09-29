@@ -1,49 +1,12 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
-import os
 import sqlite3
-import threading
 import time
 import uuid
-from pathlib import Path
 from typing import Any
 
-import machine_toml
-
-SOFTWARE_DIR = Path(__file__).resolve().parent
-
-_STATE_INIT_LOCK = threading.Lock()
-_SCHEMA_VERSION = 5
-
-# This module opens a fresh connection per operation (thread-safe, simple). The
-# catch: SQLite runs a WAL checkpoint whenever the LAST connection to a WAL DB
-# closes. With connection-per-op every close IS the last connection, so a
-# write-per-second workload checkpoints (and fsyncs the multi-GB DB) on every
-# op — on the eMMC each fsync stalls the whole process via iowait, which froze
-# the API event loop and made the frontend lag seconds behind. Holding one idle
-# "keeper" connection open for the process lifetime keeps the connection count
-# above zero, so per-op closes no longer checkpoint. WAL truncation then happens
-# via the normal wal_autocheckpoint threshold instead of once per close.
-_KEEPER_LOCK = threading.Lock()
-_keeper_conn: "sqlite3.Connection | None" = None
-
-
-def _ensure_keeper_connection() -> None:
-    global _keeper_conn
-    with _KEEPER_LOCK:
-        if _keeper_conn is not None:
-            return
-        try:
-            # Held open and idle (never runs queries); check_same_thread=False
-            # only because it's created on whichever thread inits state first.
-            _keeper_conn = sqlite3.connect(
-                local_state_db_path(), timeout=5.0, check_same_thread=False
-            )
-            _keeper_conn.execute("PRAGMA journal_mode = WAL")
-        except Exception:
-            _keeper_conn = None
+import db
 
 _STATE_KEY_MACHINE_ID = "machine_id"
 _STATE_KEY_STEPPER_POSITIONS = "stepper_positions"
@@ -73,73 +36,8 @@ _META_KEY_ACTIVE_SORTING_SESSION_ID = "active_sorting_session_id"
 _META_KEY_OPEN_BIN_SNAPSHOT_ID = "open_bin_snapshot_id"
 
 
-def local_state_db_path() -> Path:
-    env_path = os.getenv("LOCAL_STATE_DB_PATH")
-    if isinstance(env_path, str) and env_path.strip():
-        return Path(env_path).expanduser()
-
-    return SOFTWARE_DIR / "local_state.sqlite"
-
-
-def _legacy_state_dir() -> Path:
-    return machine_toml.machine_toml_path().parent
-
-
-def _legacy_data_path() -> Path:
-    return _legacy_state_dir() / "data.json"
-
-
-def _legacy_polygons_path() -> Path:
-    return _legacy_state_dir() / "polygons.json"
-
-
-def _legacy_servo_states_path() -> Path:
-    return _legacy_state_dir() / "servo_states.json"
-
-
-def _legacy_set_progress_path() -> Path:
-    return _legacy_state_dir() / "blob" / "set_progress.json"
-
-
-def _connect() -> sqlite3.Connection:
-    db_path = local_state_db_path()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=5.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
-    # synchronous=NORMAL is the recommended setting for WAL: commits no longer
-    # fsync individually (only checkpoints sync), which is safe against crashes
-    # for everything except a power loss mid-checkpoint. On the eMMC this is the
-    # difference between an fsync per commit and a handful per minute.
-    conn.execute("PRAGMA synchronous = NORMAL")
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 5000")
-    try:
-        os.chmod(db_path, 0o600)
-    except OSError:
-        pass
-    return conn
-
-
-@contextmanager
-def _connection() -> sqlite3.Connection:
-    conn = _connect()
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-
-def _read_json_file(path: Path) -> Any | None:
-    if not path.exists():
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            return json.load(handle)
-    except Exception:
-        return None
-
-
+def _connection(op: str | None = None):
+    return db.connect(_create_tables, op=op)
 
 
 def _get_meta(conn: sqlite3.Connection, key: str) -> str | None:
@@ -151,12 +49,6 @@ def _get_meta(conn: sqlite3.Connection, key: str) -> str | None:
         return None
     value = row["value"]
     return str(value) if value is not None else None
-
-
-def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
-    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-    if column not in existing:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
 def _set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
@@ -262,85 +154,14 @@ def _normalize_hive_config(raw: Any) -> dict[str, Any]:
     return {"targets": normalized_targets, "primary_target_id": primary_target_id}
 
 
-def _migrate_state_key(conn: sqlite3.Connection, key: str, value: Any) -> None:
-    if value is None or _get_json(conn, key) is not None:
-        return
-    _set_json(conn, key, value)
-
-
-def _migrate_from_machine_params(conn: sqlite3.Connection) -> None:
-    config = machine_toml.read()
-    _migrate_state_key(conn, _STATE_KEY_CLASSIFICATION_TRAINING, config.get("classification_training"))
-    _migrate_state_key(conn, _STATE_KEY_API_KEYS, _normalize_string_dict(config.get("api_keys")))
-    _migrate_state_key(conn, _STATE_KEY_HIVE, _normalize_hive_config(config.get("hive") or config.get("sorthive")))
-    _migrate_state_key(conn, _STATE_KEY_SORTING_PROFILE_SYNC, config.get("sorting_profile_sync"))
-
-
-def _migrate_from_polygons_json(conn: sqlite3.Connection) -> None:
-    polygons = _read_json_file(_legacy_polygons_path())
-    if not isinstance(polygons, dict):
-        return
-    _migrate_state_key(conn, _STATE_KEY_CHANNEL_POLYGONS, polygons.get("channel_polygons"))
-    _migrate_state_key(conn, _STATE_KEY_CLASSIFICATION_POLYGONS, polygons.get("classification_polygons"))
-
-
-def _migrate_from_data_json(conn: sqlite3.Connection) -> None:
-    data = _read_json_file(_legacy_data_path())
-    if not isinstance(data, dict):
-        return
-
-    _migrate_state_key(conn, _STATE_KEY_MACHINE_ID, data.get("machine_id"))
-    _migrate_state_key(conn, _STATE_KEY_STEPPER_POSITIONS, data.get("stepper_positions"))
-    _migrate_state_key(conn, _STATE_KEY_SERVO_POSITIONS, data.get("servo_positions"))
-    _migrate_state_key(conn, _STATE_KEY_BIN_CATEGORIES, data.get("bin_categories"))
-    _migrate_state_key(conn, _STATE_KEY_CHANNEL_POLYGONS, data.get("channel_polygons"))
-    _migrate_state_key(conn, _STATE_KEY_CLASSIFICATION_POLYGONS, data.get("classification_polygons"))
-    _migrate_state_key(conn, _STATE_KEY_CLASSIFICATION_TRAINING, data.get("classification_training"))
-    _migrate_state_key(conn, _STATE_KEY_API_KEYS, _normalize_string_dict(data.get("api_keys")))
-
-
-def _migrate_misc_state_files(conn: sqlite3.Connection) -> None:
-    servo_states = _read_json_file(_legacy_servo_states_path())
-    if isinstance(servo_states, dict):
-        _migrate_state_key(conn, _STATE_KEY_SERVO_STATES, servo_states)
-
-    set_progress = _read_json_file(_legacy_set_progress_path())
-    if isinstance(set_progress, dict):
-        _migrate_state_key(conn, _STATE_KEY_SET_PROGRESS, set_progress)
-
-
-def _cleanup_machine_params_runtime_sections() -> None:
-    """Drop the runtime sections older versions kept in machine.toml; they live here now."""
-    with machine_toml.edit() as config:
-        for root in (
-            _STATE_KEY_CLASSIFICATION_TRAINING,
-            _STATE_KEY_API_KEYS,
-            _STATE_KEY_HIVE,
-            "sorthive",
-            _STATE_KEY_SORTING_PROFILE_SYNC,
-        ):
-            config.pop(root, None)
-
-
-def _migrate_renamed_state_keys(conn: sqlite3.Connection) -> None:
-    """Rename legacy state keys from the SortHive→Hive rename (2026-04-09)."""
-    old_key = "sorthive"
-    new_key = _STATE_KEY_HIVE
-    if old_key == new_key:
-        return
-    old_value = _get_json(conn, old_key)
-    if old_value is not None and _get_json(conn, new_key) is None:
-        _set_json(conn, new_key, old_value)
-        conn.execute("DELETE FROM state_entries WHERE key = ?", (old_key,))
-
-
 def _migrate_servo_channels_and_bin_layouts(conn: sqlite3.Connection) -> None:
-    """ONE-TIME migration (2026-06-27): decouple servo calibration from the bin
-    layout. Moves the per-layer servo angles into a per-channel calibration store,
-    stamps each layer with a servo_channel_id (defaults to the layer index — the
-    historical 1:1 mapping), and snapshots the current layout into the bin_layouts
-    presets table as the active record. Idempotent (runs every boot via the
-    migration chain). SAFE TO DELETE once every machine has booted past this."""
+    """Decouple servo calibration from the bin layout (2026-06-27). Moves the
+    per-layer servo angles into a per-channel calibration store, stamps each
+    layer with a servo_channel_id (defaults to the layer index — the historical
+    1:1 mapping), and snapshots the current layout into the bin_layouts presets
+    table as the active record. Idempotent. Runs once per start and after every
+    bin layout write: layers the layout editor adds carry no servo_channel_id,
+    and this is what stamps one on them."""
     import uuid
 
     bin_layout = _get_json(conn, _STATE_KEY_BIN_LAYOUT)
@@ -411,385 +232,313 @@ def _migrate_servo_channels_and_bin_layouts(conn: sqlite3.Connection) -> None:
         )
 
 
-def initialize_local_state() -> None:
-    with _STATE_INIT_LOCK:
-        with _connection() as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS metadata ("
-                "key TEXT PRIMARY KEY, "
-                "value TEXT NOT NULL"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS state_entries ("
-                "key TEXT PRIMARY KEY, "
-                "json_value TEXT NOT NULL, "
-                "updated_at REAL NOT NULL"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS sorting_sessions ("
-                "id TEXT PRIMARY KEY, "
-                "machine_id TEXT NOT NULL, "
-                "profile_id TEXT, "
-                "profile_name TEXT, "
-                "version_id TEXT, "
-                "version_number INTEGER, "
-                "version_label TEXT, "
-                "artifact_hash TEXT, "
-                "started_at REAL NOT NULL, "
-                "ended_at REAL, "
-                "status TEXT NOT NULL, "
-                "reason TEXT"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS bin_state_current ("
-                "session_id TEXT NOT NULL, "
-                "layer_index INTEGER NOT NULL, "
-                "section_index INTEGER NOT NULL, "
-                "bin_index INTEGER NOT NULL, "
-                "bin_epoch INTEGER NOT NULL DEFAULT 0, "
-                "piece_count INTEGER NOT NULL DEFAULT 0, "
-                "unique_item_count INTEGER NOT NULL DEFAULT 0, "
-                "last_distributed_at REAL, "
-                "updated_at REAL NOT NULL, "
-                "PRIMARY KEY(session_id, layer_index, section_index, bin_index), "
-                "FOREIGN KEY(session_id) REFERENCES sorting_sessions(id) ON DELETE CASCADE"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS bin_item_aggregates ("
-                "session_id TEXT NOT NULL, "
-                "layer_index INTEGER NOT NULL, "
-                "section_index INTEGER NOT NULL, "
-                "bin_index INTEGER NOT NULL, "
-                "item_key TEXT NOT NULL, "
-                "part_id TEXT, "
-                "color_id TEXT, "
-                "color_name TEXT, "
-                "category_id TEXT, "
-                "classification_status TEXT, "
-                "count INTEGER NOT NULL DEFAULT 0, "
-                "last_distributed_at REAL, "
-                "thumbnail TEXT, "
-                "top_image TEXT, "
-                "bottom_image TEXT, "
-                "brickognize_preview_url TEXT, "
-                "PRIMARY KEY(session_id, layer_index, section_index, bin_index, item_key), "
-                "FOREIGN KEY(session_id) REFERENCES sorting_sessions(id) ON DELETE CASCADE"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS piece_events ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                "session_id TEXT NOT NULL, "
-                "piece_uuid TEXT NOT NULL, "
-                "layer_index INTEGER NOT NULL, "
-                "section_index INTEGER NOT NULL, "
-                "bin_index INTEGER NOT NULL, "
-                "bin_epoch INTEGER NOT NULL, "
-                "distributed_at REAL NOT NULL, "
-                "created_at REAL, "
-                "classified_at REAL, "
-                "part_id TEXT, "
-                "color_id TEXT, "
-                "color_name TEXT, "
-                "category_id TEXT, "
-                "classification_status TEXT, "
-                "thumbnail TEXT, "
-                "top_image TEXT, "
-                "bottom_image TEXT, "
-                "brickognize_preview_url TEXT, "
-                "UNIQUE(session_id, piece_uuid), "
-                "FOREIGN KEY(session_id) REFERENCES sorting_sessions(id) ON DELETE CASCADE"
-                ")"
-            )
-            _ensure_column(conn, "piece_events", "created_at", "REAL")
-            _ensure_column(conn, "piece_events", "classified_at", "REAL")
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_piece_events_bin_epoch "
-                "ON piece_events(session_id, layer_index, section_index, bin_index, bin_epoch)"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS bin_events ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                "session_id TEXT NOT NULL, "
-                "event_type TEXT NOT NULL, "
-                "created_at REAL NOT NULL, "
-                "layer_index INTEGER, "
-                "section_index INTEGER, "
-                "bin_index INTEGER, "
-                "bin_epoch INTEGER, "
-                "details_json TEXT, "
-                "FOREIGN KEY(session_id) REFERENCES sorting_sessions(id) ON DELETE CASCADE"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS bin_snapshots ("
-                "id TEXT PRIMARY KEY, "
-                "status TEXT NOT NULL, "
-                "label TEXT, "
-                "created_at REAL NOT NULL, "
-                "closed_at REAL, "
-                "closed_reason TEXT"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS bin_snapshot_layers ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                "snapshot_id TEXT NOT NULL, "
-                "session_id TEXT NOT NULL, "
-                "layer_index INTEGER NOT NULL, "
-                "section_index INTEGER NOT NULL, "
-                "bin_index INTEGER NOT NULL, "
-                "bin_epoch INTEGER NOT NULL, "
-                "piece_count INTEGER NOT NULL DEFAULT 0, "
-                "unique_item_count INTEGER NOT NULL DEFAULT 0, "
-                "category_ids_json TEXT, "
-                "flush_scope TEXT, "
-                "flushed_at REAL NOT NULL, "
-                "FOREIGN KEY(snapshot_id) REFERENCES bin_snapshots(id) ON DELETE CASCADE"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS bin_snapshot_items ("
-                "snapshot_layer_id INTEGER NOT NULL, "
-                "item_key TEXT NOT NULL, "
-                "part_id TEXT, "
-                "color_id TEXT, "
-                "color_name TEXT, "
-                "category_id TEXT, "
-                "classification_status TEXT, "
-                "count INTEGER NOT NULL DEFAULT 0, "
-                "last_distributed_at REAL, "
-                "thumbnail TEXT, "
-                "top_image TEXT, "
-                "bottom_image TEXT, "
-                "brickognize_preview_url TEXT, "
-                "PRIMARY KEY(snapshot_layer_id, item_key), "
-                "FOREIGN KEY(snapshot_layer_id) REFERENCES bin_snapshot_layers(id) ON DELETE CASCADE"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS checklist_part_state ("
-                "set_num TEXT NOT NULL, "
-                "part_num TEXT NOT NULL, "
-                "color_id TEXT NOT NULL, "
-                "manual_override_count INTEGER, "
-                "user_state TEXT NOT NULL DEFAULT 'auto', "
-                "updated_at REAL NOT NULL, "
-                "PRIMARY KEY(set_num, part_num, color_id)"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS chute_stress_runs ("
-                "id TEXT PRIMARY KEY, "
-                "started_at REAL NOT NULL, "
-                "ended_at REAL, "
-                "mode TEXT NOT NULL, "
-                "target_max_deg REAL NOT NULL, "
-                "duration_target_s REAL NOT NULL, "
-                "speed_microsteps_per_sec INTEGER NOT NULL, "
-                "status TEXT NOT NULL, "
-                "total_distance_deg REAL NOT NULL DEFAULT 0, "
-                "total_time_s REAL NOT NULL DEFAULT 0, "
-                "error TEXT"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS power_stress_runs ("
-                "id TEXT PRIMARY KEY, "
-                "started_at REAL NOT NULL, "
-                "ended_at REAL, "
-                "duration_target_s REAL NOT NULL, "
-                "stepper_speed_microsteps_per_sec INTEGER NOT NULL, "
-                "chute_speed_microsteps_per_sec INTEGER NOT NULL, "
-                "chute_max_deg REAL NOT NULL, "
-                "status TEXT NOT NULL, "
-                "current_phase TEXT, "
-                "total_time_s REAL NOT NULL DEFAULT 0, "
-                "config_json TEXT NOT NULL, "
-                "error TEXT"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS power_stress_events ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                "run_id TEXT NOT NULL, "
-                "created_at REAL NOT NULL, "
-                "event_type TEXT NOT NULL, "
-                "phase TEXT, "
-                "details_json TEXT NOT NULL, "
-                "FOREIGN KEY(run_id) REFERENCES power_stress_runs(id) ON DELETE CASCADE"
-                ")"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_power_stress_events_run "
-                "ON power_stress_events(run_id, created_at)"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS chute_calibrations ("
-                "id TEXT PRIMARY KEY, "
-                "created_at REAL NOT NULL, "
-                "label TEXT, "
-                "num_sections INTEGER NOT NULL, "
-                "section_width_deg REAL NOT NULL, "
-                "first_section_offset_deg REAL NOT NULL, "
-                "measurements TEXT, "
-                "is_active INTEGER NOT NULL DEFAULT 0, "
-                "updated_at REAL NOT NULL"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS bin_layouts ("
-                "id TEXT PRIMARY KEY, "
-                "name TEXT NOT NULL, "
-                "profile_id TEXT, "
-                "profile_source TEXT, "
-                "layout_json TEXT NOT NULL, "
-                "created_at REAL NOT NULL, "
-                "updated_at REAL NOT NULL, "
-                "is_active INTEGER NOT NULL DEFAULT 0"
-                ")"
-            )
-            # Write-through cache of per-piece metadata + pricing fetched from
-            # Hive (hive_metadata.py). Keyed by (part_num, color_id); payload_json
-            # is the full flattened metadata dict (NULL for price-only rows filled
-            # by the batch price path). cached_at lets us serve offline and
-            # optionally refresh stale entries. Disposable — safe to wipe.
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS hive_part_metadata_cache ("
-                "part_num TEXT NOT NULL, "
-                "color_id TEXT NOT NULL, "
-                "payload_json TEXT, "
-                "moving_avg_price REAL, "
-                "cached_at REAL NOT NULL, "
-                "PRIMARY KEY(part_num, color_id)"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS feeder_autotune_runs ("
-                "id TEXT PRIMARY KEY, "
-                "started_at REAL NOT NULL, "
-                "ended_at REAL, "
-                "status TEXT NOT NULL, "
-                "baseline_config TEXT NOT NULL, "
-                "settings_json TEXT NOT NULL, "
-                "best_trial_id INTEGER, "
-                "notes TEXT"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS feeder_autotune_trials ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                "run_id TEXT NOT NULL, "
-                "trial_index INTEGER NOT NULL, "
-                "kind TEXT NOT NULL, "
-                "params_json TEXT NOT NULL, "
-                "started_at REAL NOT NULL, "
-                "ended_at REAL, "
-                "status TEXT NOT NULL, "
-                "measured_s REAL NOT NULL DEFAULT 0, "
-                "pieces_delivered INTEGER NOT NULL DEFAULT 0, "
-                "incidents INTEGER NOT NULL DEFAULT 0, "
-                "double_drops INTEGER NOT NULL DEFAULT 0, "
-                "pieces_per_min REAL, "
-                "double_drop_rate REAL, "
-                "feasible INTEGER, "
-                "score REAL, "
-                "FOREIGN KEY(run_id) REFERENCES feeder_autotune_runs(id) ON DELETE CASCADE"
-                ")"
-            )
-            _ensure_column(conn, "feeder_autotune_trials", "double_drop_rate", "REAL")
-            _ensure_column(conn, "feeder_autotune_trials", "feasible", "INTEGER")
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_feeder_autotune_trials_run "
-                "ON feeder_autotune_trials(run_id, trial_index)"
-            )
-            schema_version = _get_meta(conn, "schema_version")
-            if schema_version != str(_SCHEMA_VERSION):
-                _set_meta(conn, "schema_version", str(_SCHEMA_VERSION))
-
-            _migrate_from_machine_params(conn)
-            _migrate_from_polygons_json(conn)
-            _migrate_from_data_json(conn)
-            _migrate_misc_state_files(conn)
-            _cleanup_machine_params_runtime_sections()
-            _migrate_renamed_state_keys(conn)
-            _migrate_servo_channels_and_bin_layouts(conn)
-            conn.commit()
-
-        # Keep one connection open so subsequent per-op closes don't checkpoint
-        # the (large) WAL DB and stall the process on fsync.
-        _ensure_keeper_connection()
+def _create_tables(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS metadata ("
+        "key TEXT PRIMARY KEY, "
+        "value TEXT NOT NULL"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS state_entries ("
+        "key TEXT PRIMARY KEY, "
+        "json_value TEXT NOT NULL, "
+        "updated_at REAL NOT NULL"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS sorting_sessions ("
+        "id TEXT PRIMARY KEY, "
+        "machine_id TEXT NOT NULL, "
+        "profile_id TEXT, "
+        "profile_name TEXT, "
+        "version_id TEXT, "
+        "version_number INTEGER, "
+        "version_label TEXT, "
+        "artifact_hash TEXT, "
+        "started_at REAL NOT NULL, "
+        "ended_at REAL, "
+        "status TEXT NOT NULL, "
+        "reason TEXT"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS bin_state_current ("
+        "session_id TEXT NOT NULL, "
+        "layer_index INTEGER NOT NULL, "
+        "section_index INTEGER NOT NULL, "
+        "bin_index INTEGER NOT NULL, "
+        "bin_epoch INTEGER NOT NULL DEFAULT 0, "
+        "piece_count INTEGER NOT NULL DEFAULT 0, "
+        "unique_item_count INTEGER NOT NULL DEFAULT 0, "
+        "last_distributed_at REAL, "
+        "updated_at REAL NOT NULL, "
+        "PRIMARY KEY(session_id, layer_index, section_index, bin_index), "
+        "FOREIGN KEY(session_id) REFERENCES sorting_sessions(id) ON DELETE CASCADE"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS bin_item_aggregates ("
+        "session_id TEXT NOT NULL, "
+        "layer_index INTEGER NOT NULL, "
+        "section_index INTEGER NOT NULL, "
+        "bin_index INTEGER NOT NULL, "
+        "item_key TEXT NOT NULL, "
+        "part_id TEXT, "
+        "color_id TEXT, "
+        "color_name TEXT, "
+        "category_id TEXT, "
+        "classification_status TEXT, "
+        "count INTEGER NOT NULL DEFAULT 0, "
+        "last_distributed_at REAL, "
+        "thumbnail TEXT, "
+        "top_image TEXT, "
+        "bottom_image TEXT, "
+        "brickognize_preview_url TEXT, "
+        "PRIMARY KEY(session_id, layer_index, section_index, bin_index, item_key), "
+        "FOREIGN KEY(session_id) REFERENCES sorting_sessions(id) ON DELETE CASCADE"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS piece_events ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "session_id TEXT NOT NULL, "
+        "piece_uuid TEXT NOT NULL, "
+        "layer_index INTEGER NOT NULL, "
+        "section_index INTEGER NOT NULL, "
+        "bin_index INTEGER NOT NULL, "
+        "bin_epoch INTEGER NOT NULL, "
+        "distributed_at REAL NOT NULL, "
+        "created_at REAL, "
+        "classified_at REAL, "
+        "part_id TEXT, "
+        "color_id TEXT, "
+        "color_name TEXT, "
+        "category_id TEXT, "
+        "classification_status TEXT, "
+        "thumbnail TEXT, "
+        "top_image TEXT, "
+        "bottom_image TEXT, "
+        "brickognize_preview_url TEXT, "
+        "UNIQUE(session_id, piece_uuid), "
+        "FOREIGN KEY(session_id) REFERENCES sorting_sessions(id) ON DELETE CASCADE"
+        ")"
+    )
+    db.add_columns(conn, "piece_events", {"created_at": "REAL", "classified_at": "REAL"})
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_piece_events_bin_epoch "
+        "ON piece_events(session_id, layer_index, section_index, bin_index, bin_epoch)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS bin_events ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "session_id TEXT NOT NULL, "
+        "event_type TEXT NOT NULL, "
+        "created_at REAL NOT NULL, "
+        "layer_index INTEGER, "
+        "section_index INTEGER, "
+        "bin_index INTEGER, "
+        "bin_epoch INTEGER, "
+        "details_json TEXT, "
+        "FOREIGN KEY(session_id) REFERENCES sorting_sessions(id) ON DELETE CASCADE"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS bin_snapshots ("
+        "id TEXT PRIMARY KEY, "
+        "status TEXT NOT NULL, "
+        "label TEXT, "
+        "created_at REAL NOT NULL, "
+        "closed_at REAL, "
+        "closed_reason TEXT"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS bin_snapshot_layers ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "snapshot_id TEXT NOT NULL, "
+        "session_id TEXT NOT NULL, "
+        "layer_index INTEGER NOT NULL, "
+        "section_index INTEGER NOT NULL, "
+        "bin_index INTEGER NOT NULL, "
+        "bin_epoch INTEGER NOT NULL, "
+        "piece_count INTEGER NOT NULL DEFAULT 0, "
+        "unique_item_count INTEGER NOT NULL DEFAULT 0, "
+        "category_ids_json TEXT, "
+        "flush_scope TEXT, "
+        "flushed_at REAL NOT NULL, "
+        "FOREIGN KEY(snapshot_id) REFERENCES bin_snapshots(id) ON DELETE CASCADE"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS bin_snapshot_items ("
+        "snapshot_layer_id INTEGER NOT NULL, "
+        "item_key TEXT NOT NULL, "
+        "part_id TEXT, "
+        "color_id TEXT, "
+        "color_name TEXT, "
+        "category_id TEXT, "
+        "classification_status TEXT, "
+        "count INTEGER NOT NULL DEFAULT 0, "
+        "last_distributed_at REAL, "
+        "thumbnail TEXT, "
+        "top_image TEXT, "
+        "bottom_image TEXT, "
+        "brickognize_preview_url TEXT, "
+        "PRIMARY KEY(snapshot_layer_id, item_key), "
+        "FOREIGN KEY(snapshot_layer_id) REFERENCES bin_snapshot_layers(id) ON DELETE CASCADE"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS checklist_part_state ("
+        "set_num TEXT NOT NULL, "
+        "part_num TEXT NOT NULL, "
+        "color_id TEXT NOT NULL, "
+        "manual_override_count INTEGER, "
+        "user_state TEXT NOT NULL DEFAULT 'auto', "
+        "updated_at REAL NOT NULL, "
+        "PRIMARY KEY(set_num, part_num, color_id)"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS chute_stress_runs ("
+        "id TEXT PRIMARY KEY, "
+        "started_at REAL NOT NULL, "
+        "ended_at REAL, "
+        "mode TEXT NOT NULL, "
+        "target_max_deg REAL NOT NULL, "
+        "duration_target_s REAL NOT NULL, "
+        "speed_microsteps_per_sec INTEGER NOT NULL, "
+        "status TEXT NOT NULL, "
+        "total_distance_deg REAL NOT NULL DEFAULT 0, "
+        "total_time_s REAL NOT NULL DEFAULT 0, "
+        "error TEXT"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS power_stress_runs ("
+        "id TEXT PRIMARY KEY, "
+        "started_at REAL NOT NULL, "
+        "ended_at REAL, "
+        "duration_target_s REAL NOT NULL, "
+        "stepper_speed_microsteps_per_sec INTEGER NOT NULL, "
+        "chute_speed_microsteps_per_sec INTEGER NOT NULL, "
+        "chute_max_deg REAL NOT NULL, "
+        "status TEXT NOT NULL, "
+        "current_phase TEXT, "
+        "total_time_s REAL NOT NULL DEFAULT 0, "
+        "config_json TEXT NOT NULL, "
+        "error TEXT"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS power_stress_events ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "run_id TEXT NOT NULL, "
+        "created_at REAL NOT NULL, "
+        "event_type TEXT NOT NULL, "
+        "phase TEXT, "
+        "details_json TEXT NOT NULL, "
+        "FOREIGN KEY(run_id) REFERENCES power_stress_runs(id) ON DELETE CASCADE"
+        ")"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_power_stress_events_run "
+        "ON power_stress_events(run_id, created_at)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS chute_calibrations ("
+        "id TEXT PRIMARY KEY, "
+        "created_at REAL NOT NULL, "
+        "label TEXT, "
+        "num_sections INTEGER NOT NULL, "
+        "section_width_deg REAL NOT NULL, "
+        "first_section_offset_deg REAL NOT NULL, "
+        "measurements TEXT, "
+        "is_active INTEGER NOT NULL DEFAULT 0, "
+        "updated_at REAL NOT NULL"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS bin_layouts ("
+        "id TEXT PRIMARY KEY, "
+        "name TEXT NOT NULL, "
+        "profile_id TEXT, "
+        "profile_source TEXT, "
+        "layout_json TEXT NOT NULL, "
+        "created_at REAL NOT NULL, "
+        "updated_at REAL NOT NULL, "
+        "is_active INTEGER NOT NULL DEFAULT 0"
+        ")"
+    )
+    # Write-through cache of per-piece metadata + pricing fetched from
+    # Hive (hive_metadata.py). Keyed by (part_num, color_id); payload_json
+    # is the full flattened metadata dict (NULL for price-only rows filled
+    # by the batch price path). cached_at lets us serve offline and
+    # optionally refresh stale entries. Disposable — safe to wipe.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS hive_part_metadata_cache ("
+        "part_num TEXT NOT NULL, "
+        "color_id TEXT NOT NULL, "
+        "payload_json TEXT, "
+        "moving_avg_price REAL, "
+        "cached_at REAL NOT NULL, "
+        "PRIMARY KEY(part_num, color_id)"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS feeder_autotune_runs ("
+        "id TEXT PRIMARY KEY, "
+        "started_at REAL NOT NULL, "
+        "ended_at REAL, "
+        "status TEXT NOT NULL, "
+        "baseline_config TEXT NOT NULL, "
+        "settings_json TEXT NOT NULL, "
+        "best_trial_id INTEGER, "
+        "notes TEXT"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS feeder_autotune_trials ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "run_id TEXT NOT NULL, "
+        "trial_index INTEGER NOT NULL, "
+        "kind TEXT NOT NULL, "
+        "params_json TEXT NOT NULL, "
+        "started_at REAL NOT NULL, "
+        "ended_at REAL, "
+        "status TEXT NOT NULL, "
+        "measured_s REAL NOT NULL DEFAULT 0, "
+        "pieces_delivered INTEGER NOT NULL DEFAULT 0, "
+        "incidents INTEGER NOT NULL DEFAULT 0, "
+        "double_drops INTEGER NOT NULL DEFAULT 0, "
+        "pieces_per_min REAL, "
+        "double_drop_rate REAL, "
+        "feasible INTEGER, "
+        "score REAL, "
+        "FOREIGN KEY(run_id) REFERENCES feeder_autotune_runs(id) ON DELETE CASCADE"
+        ")"
+    )
+    db.add_columns(conn, "feeder_autotune_trials", {"double_drop_rate": "REAL", "feasible": "INTEGER"})
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_feeder_autotune_trials_run "
+        "ON feeder_autotune_trials(run_id, trial_index)"
+    )
+    _migrate_servo_channels_and_bin_layouts(conn)
 
 
 def _read_state(key: str) -> Any | None:
-    initialize_local_state()
-    with _connection() as conn:
+    with _connection(f"local_state._read_state({key})") as conn:
         return _get_json(conn, key)
 
 
 def _write_state(key: str, value: Any | None) -> None:
-    initialize_local_state()
-    with _connection() as conn:
+    with _connection(f"local_state._write_state({key})") as conn:
         if value is None:
             _delete_key(conn, key)
         else:
             _set_json(conn, key, value)
         conn.commit()
-
-
-# Legacy per-second metric snapshot tables — writes moved to local_metrics.py
-# (its own sqlite file). These drained the live DB to 1.9GB on GBL; the pruner
-# thread empties them in small paced batches (never a blocking multi-GB DROP
-# that would stall the recordPiece hot path) and then drops them. Idempotent
-# across restarts; tolerates the tables already being gone.
-_LEGACY_METRIC_SNAPSHOT_TABLES = ("runtime_perf_metric_snapshots", "profiler_metric_snapshots")
-
-
-def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-        (table,),
-    ).fetchone()
-    return row is not None
-
-
-def drain_legacy_metric_snapshot_tables(
-    batch_size: int = 5000,
-    pacing_s: float = 0.05,
-) -> dict[str, int]:
-    initialize_local_state()
-    deleted: dict[str, int] = {}
-    for table in _LEGACY_METRIC_SNAPSHOT_TABLES:
-        removed = 0
-        while True:
-            with _connection() as conn:
-                if not _table_exists(conn, table):
-                    n = None
-                    break_now = True
-                else:
-                    cur = conn.execute(
-                        f"DELETE FROM {table} WHERE rowid IN ("
-                        f"SELECT rowid FROM {table} LIMIT ?)",
-                        (int(batch_size),),
-                    )
-                    n = cur.rowcount
-                    conn.commit()
-                    break_now = not n or n < batch_size
-                    if break_now:
-                        conn.execute(f"DROP TABLE IF EXISTS {table}")
-                        conn.commit()
-            if n and n > 0:
-                removed += n
-            if break_now:
-                break
-            if pacing_s and pacing_s > 0:
-                time.sleep(pacing_s)
-        deleted[table] = removed
-    return deleted
 
 
 def get_machine_id() -> str | None:
@@ -900,7 +649,6 @@ def set_not_in_inventory_bins(flags: list[list[list[bool]]]) -> None:
 
 
 def get_distributed_part_keys_since(since_ts: float) -> list[tuple[str | None, str | None]]:
-    initialize_local_state()
     with _connection() as conn:
         rows = conn.execute(
             "SELECT part_id, color_id FROM piece_events "
@@ -1117,7 +865,6 @@ def get_checklist_state_for_set(set_num: str) -> dict[tuple[str, str], dict[str,
     """
     if not isinstance(set_num, str) or not set_num.strip():
         return {}
-    initialize_local_state()
     out: dict[tuple[str, str], dict[str, Any]] = {}
     with _connection() as conn:
         cursor = conn.execute(
@@ -1164,7 +911,6 @@ def set_checklist_part_state(
             raise ValueError("manual_override_count must be a non-negative int or None")
 
     now = time.time()
-    initialize_local_state()
     with _connection() as conn:
         if manual_override_count is None and user_state == "auto":
             conn.execute(
@@ -1213,7 +959,6 @@ def get_cached_part_metadata(
     a full miss); cached_at is None only on a full miss."""
     if not part_num:
         return None, None, None
-    initialize_local_state()
     with _connection() as conn:
         row = conn.execute(
             "SELECT payload_json, moving_avg_price, cached_at "
@@ -1237,7 +982,6 @@ def put_cached_part_metadata(
 ) -> None:
     if not part_num:
         return
-    initialize_local_state()
     with _connection() as conn:
         conn.execute(
             "INSERT INTO hive_part_metadata_cache"
@@ -1264,7 +1008,6 @@ def get_cached_part_prices(
     """Bulk-read moving-average prices for many (part_num, color_id) pairs.
     Returns {(part_num, normalized_color_id): (moving_avg_price, cached_at)} for
     the pairs present in the cache."""
-    initialize_local_state()
     out: dict[tuple[str, str], tuple[float | None, float]] = {}
     with _connection() as conn:
         for part_num, color_id in pairs:
@@ -1293,7 +1036,6 @@ def put_cached_part_prices(rows: list[tuple[str | None, Any, float | None]]) -> 
     if not valid:
         return
     now = time.time()
-    initialize_local_state()
     with _connection() as conn:
         for part_num, color_id, moving_avg_price in valid:
             conn.execute(
@@ -1439,7 +1181,6 @@ def _ensure_active_sorting_session_conn(
 
 
 def start_new_sorting_session(*, reason: str = "profile_activated") -> dict[str, Any]:
-    initialize_local_state()
     with _connection() as conn:
         session = _ensure_active_sorting_session_conn(conn, force_new=True, reason=reason)
         conn.commit()
@@ -1447,7 +1188,6 @@ def start_new_sorting_session(*, reason: str = "profile_activated") -> dict[str,
 
 
 def get_active_sorting_session() -> dict[str, Any] | None:
-    initialize_local_state()
     with _connection() as conn:
         active_session_id = _get_meta(conn, _META_KEY_ACTIVE_SORTING_SESSION_ID)
         if not active_session_id:
@@ -1501,7 +1241,6 @@ def record_piece_distribution(piece: dict[str, Any]) -> None:
     except (TypeError, ValueError):
         return
 
-    initialize_local_state()
     with _connection() as conn:
         session = _ensure_active_sorting_session_conn(conn, force_new=False)
         session_id = str(session["id"])
@@ -1670,7 +1409,6 @@ def clear_current_session_bins(
     bin_index: int | None = None,
     bin_categories: Any | None = None,
 ) -> dict[str, Any]:
-    initialize_local_state()
     with _connection() as conn:
         active_session_id = _get_meta(conn, _META_KEY_ACTIVE_SORTING_SESSION_ID)
         if not active_session_id:
@@ -1782,7 +1520,6 @@ def clear_current_session_bins(
 
 
 def get_current_bin_piece_counts() -> dict[tuple[int, int, int], int]:
-    initialize_local_state()
     with _connection() as conn:
         active_session_id = _get_meta(conn, _META_KEY_ACTIVE_SORTING_SESSION_ID)
         if not active_session_id:
@@ -1798,7 +1535,6 @@ def get_current_bin_piece_counts() -> dict[tuple[int, int, int], int]:
 
 
 def get_current_bin_contents_snapshot() -> dict[str, Any]:
-    initialize_local_state()
     with _connection() as conn:
         active_session_id = _get_meta(conn, _META_KEY_ACTIVE_SORTING_SESSION_ID)
         if not active_session_id:
@@ -1865,7 +1601,6 @@ def get_current_bin_contents_snapshot() -> dict[str, Any]:
 
 
 def get_current_bin_contents_version() -> str:
-    initialize_local_state()
     with _connection() as conn:
         active_session_id = _get_meta(conn, _META_KEY_ACTIVE_SORTING_SESSION_ID)
         if not active_session_id:
@@ -1883,7 +1618,6 @@ def get_current_bin_contents_version() -> str:
 
 
 def list_bin_snapshots() -> list[dict[str, Any]]:
-    initialize_local_state()
     with _connection() as conn:
         rows = conn.execute(
             "SELECT s.id, s.status, s.label, s.created_at, s.closed_at, s.closed_reason, "
@@ -1897,7 +1631,6 @@ def list_bin_snapshots() -> list[dict[str, Any]]:
 
 
 def get_bin_snapshot(snapshot_id: str) -> dict[str, Any] | None:
-    initialize_local_state()
     with _connection() as conn:
         snapshot_row = conn.execute(
             "SELECT * FROM bin_snapshots WHERE id = ?",
@@ -1935,7 +1668,6 @@ def get_bin_snapshot(snapshot_id: str) -> dict[str, Any] | None:
 
 
 def get_bin_snapshot_pieces(snapshot_id: str) -> list[dict[str, Any]] | None:
-    initialize_local_state()
     with _connection() as conn:
         snapshot_row = conn.execute(
             "SELECT id FROM bin_snapshots WHERE id = ?",
@@ -1969,7 +1701,6 @@ def get_bin_snapshot_pieces(snapshot_id: str) -> list[dict[str, Any]] | None:
 
 
 def get_current_bin_pieces() -> list[dict[str, Any]]:
-    initialize_local_state()
     with _connection() as conn:
         active_session_id = _get_meta(conn, _META_KEY_ACTIVE_SORTING_SESSION_ID)
         if not active_session_id:
@@ -2000,7 +1731,6 @@ def import_bin_contents_snapshot(snapshot: dict[str, Any], *, reason: str = "sna
     if not isinstance(bins, list):
         return {"imported_bins": 0}
 
-    initialize_local_state()
     with _connection() as conn:
         session = _ensure_active_sorting_session_conn(conn, force_new=False, reason=reason)
         session_id = str(session["id"])
@@ -2122,7 +1852,13 @@ def get_bin_layout() -> dict[str, Any] | None:
 
 
 def set_bin_layout(layout: dict[str, Any] | None) -> None:
-    _write_state(_STATE_KEY_BIN_LAYOUT, dict(layout) if layout is not None else None)
+    with _connection("local_state.set_bin_layout") as conn:
+        if layout is None:
+            _delete_key(conn, _STATE_KEY_BIN_LAYOUT)
+        else:
+            _set_json(conn, _STATE_KEY_BIN_LAYOUT, dict(layout))
+        _migrate_servo_channels_and_bin_layouts(conn)
+        conn.commit()
 
 
 # ---- per-channel servo calibration (machine-level, decoupled from bin layout) ----
@@ -2171,13 +1907,11 @@ def _bin_layout_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def count_bin_layouts() -> int:
-    initialize_local_state()
     with _connection() as conn:
         return int(conn.execute("SELECT COUNT(*) AS n FROM bin_layouts").fetchone()["n"])
 
 
 def list_bin_layouts(profile_id: str | None = None) -> list[dict[str, Any]]:
-    initialize_local_state()
     with _connection() as conn:
         if profile_id is not None:
             rows = conn.execute(
@@ -2193,7 +1927,6 @@ def list_bin_layouts(profile_id: str | None = None) -> list[dict[str, Any]]:
 
 
 def get_bin_layout_record(layout_id: str) -> dict[str, Any] | None:
-    initialize_local_state()
     with _connection() as conn:
         row = conn.execute(
             f"SELECT {_BIN_LAYOUT_COLUMNS} FROM bin_layouts WHERE id = ?",
@@ -2203,7 +1936,6 @@ def get_bin_layout_record(layout_id: str) -> dict[str, Any] | None:
 
 
 def get_active_bin_layout_record() -> dict[str, Any] | None:
-    initialize_local_state()
     with _connection() as conn:
         row = conn.execute(
             f"SELECT {_BIN_LAYOUT_COLUMNS} FROM bin_layouts WHERE is_active = 1 "
@@ -2225,7 +1957,6 @@ def create_bin_layout(
 
     lid = layout_id or str(uuid.uuid4())
     now = time.time()
-    initialize_local_state()
     with _connection() as conn:
         if make_active:
             conn.execute("UPDATE bin_layouts SET is_active = 0")
@@ -2244,7 +1975,6 @@ def create_bin_layout(
 def update_bin_layout(
     layout_id: str, *, name: str | None = None, layout: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
-    initialize_local_state()
     sets: list[str] = []
     params: list[Any] = []
     if name is not None:
@@ -2265,7 +1995,6 @@ def update_bin_layout(
 
 
 def set_active_bin_layout(layout_id: str) -> None:
-    initialize_local_state()
     with _connection() as conn:
         conn.execute("UPDATE bin_layouts SET is_active = 0")
         conn.execute("UPDATE bin_layouts SET is_active = 1 WHERE id = ?", (layout_id,))
@@ -2273,7 +2002,6 @@ def set_active_bin_layout(layout_id: str) -> None:
 
 
 def delete_bin_layout(layout_id: str) -> None:
-    initialize_local_state()
     with _connection() as conn:
         conn.execute("DELETE FROM bin_layouts WHERE id = ?", (layout_id,))
         conn.commit()
@@ -2320,7 +2048,6 @@ def recordChuteStressRunStart(
     duration_target_s: float,
     speed_microsteps_per_sec: int,
 ) -> None:
-    initialize_local_state()
     with _connection() as conn:
         conn.execute(
             "INSERT INTO chute_stress_runs("
@@ -2345,7 +2072,6 @@ def updateChuteStressRunProgress(
     total_distance_deg: float,
     total_time_s: float,
 ) -> None:
-    initialize_local_state()
     with _connection() as conn:
         conn.execute(
             "UPDATE chute_stress_runs SET total_distance_deg = ?, total_time_s = ? "
@@ -2364,7 +2090,6 @@ def finalizeChuteStressRun(
     total_time_s: float,
     error: str | None,
 ) -> None:
-    initialize_local_state()
     with _connection() as conn:
         conn.execute(
             "UPDATE chute_stress_runs SET ended_at = ?, status = ?, "
@@ -2382,7 +2107,6 @@ def finalizeChuteStressRun(
 
 
 def listChuteStressRuns(limit: int = 100) -> list[dict[str, Any]]:
-    initialize_local_state()
     with _connection() as conn:
         rows = conn.execute(
             "SELECT id, started_at, ended_at, mode, target_max_deg, duration_target_s, "
@@ -2394,7 +2118,6 @@ def listChuteStressRuns(limit: int = 100) -> list[dict[str, Any]]:
 
 
 def getChuteStressRun(run_id: str) -> dict[str, Any] | None:
-    initialize_local_state()
     with _connection() as conn:
         row = conn.execute(
             "SELECT id, started_at, ended_at, mode, target_max_deg, duration_target_s, "
@@ -2438,7 +2161,6 @@ def recordPowerStressRunStart(
     chute_max_deg: float,
     config: dict[str, Any],
 ) -> None:
-    initialize_local_state()
     with _connection() as conn:
         conn.execute(
             "INSERT INTO power_stress_runs("
@@ -2461,7 +2183,6 @@ def recordPowerStressRunStart(
 def updatePowerStressRunProgress(
     *, run_id: str, current_phase: str | None, total_time_s: float
 ) -> None:
-    initialize_local_state()
     with _connection() as conn:
         conn.execute(
             "UPDATE power_stress_runs SET current_phase = ?, total_time_s = ? WHERE id = ?",
@@ -2478,7 +2199,6 @@ def finalizePowerStressRun(
     total_time_s: float,
     error: str | None,
 ) -> None:
-    initialize_local_state()
     with _connection() as conn:
         conn.execute(
             "UPDATE power_stress_runs SET ended_at = ?, status = ?, "
@@ -2496,7 +2216,6 @@ def recordPowerStressEvent(
     phase: str | None,
     details: dict[str, Any],
 ) -> dict[str, Any]:
-    initialize_local_state()
     with _connection() as conn:
         cursor = conn.execute(
             "INSERT INTO power_stress_events("
@@ -2523,7 +2242,6 @@ def recordPowerStressEvent(
 
 
 def listPowerStressEvents(run_id: str) -> list[dict[str, Any]]:
-    initialize_local_state()
     with _connection() as conn:
         rows = conn.execute(
             "SELECT id, run_id, created_at, event_type, phase, details_json "
@@ -2550,7 +2268,6 @@ def listPowerStressEvents(run_id: str) -> list[dict[str, Any]]:
 
 
 def listPowerStressRuns(limit: int = 100) -> list[dict[str, Any]]:
-    initialize_local_state()
     with _connection() as conn:
         rows = conn.execute(
             "SELECT id, started_at, ended_at, duration_target_s, "
@@ -2563,7 +2280,6 @@ def listPowerStressRuns(limit: int = 100) -> list[dict[str, Any]]:
 
 
 def getPowerStressRun(run_id: str) -> dict[str, Any] | None:
-    initialize_local_state()
     with _connection() as conn:
         row = conn.execute(
             "SELECT id, started_at, ended_at, duration_target_s, "
@@ -2623,7 +2339,6 @@ def recordChuteCalibrationInstance(
     calibration_id = str(uuid.uuid4())
     now = time.time()
     measurements_json = json.dumps(measurements) if measurements is not None else None
-    initialize_local_state()
     with _connection() as conn:
         conn.execute("UPDATE chute_calibrations SET is_active = 0 WHERE is_active = 1")
         conn.execute(
@@ -2645,7 +2360,6 @@ def recordChuteCalibrationInstance(
 
 
 def listChuteCalibrationInstances(limit: int = 100) -> list[dict[str, Any]]:
-    initialize_local_state()
     with _connection() as conn:
         rows = conn.execute(
             f"SELECT {_CHUTE_CALIBRATION_COLUMNS} FROM chute_calibrations "
@@ -2656,7 +2370,6 @@ def listChuteCalibrationInstances(limit: int = 100) -> list[dict[str, Any]]:
 
 
 def getChuteCalibrationInstance(calibration_id: str) -> dict[str, Any] | None:
-    initialize_local_state()
     with _connection() as conn:
         row = conn.execute(
             f"SELECT {_CHUTE_CALIBRATION_COLUMNS} FROM chute_calibrations WHERE id = ?",
@@ -2667,7 +2380,6 @@ def getChuteCalibrationInstance(calibration_id: str) -> dict[str, Any] | None:
 
 def activateChuteCalibrationInstance(calibration_id: str) -> dict[str, Any] | None:
     now = time.time()
-    initialize_local_state()
     with _connection() as conn:
         existing = conn.execute(
             "SELECT id FROM chute_calibrations WHERE id = ?", (calibration_id,)
@@ -2684,7 +2396,6 @@ def activateChuteCalibrationInstance(calibration_id: str) -> dict[str, Any] | No
 
 
 def deleteChuteCalibrationInstance(calibration_id: str) -> bool:
-    initialize_local_state()
     with _connection() as conn:
         cur = conn.execute(
             "DELETE FROM chute_calibrations WHERE id = ?", (calibration_id,)
@@ -2755,7 +2466,6 @@ def createFeederAutotuneRun(
     baseline_config: dict[str, Any], settings: dict[str, Any]
 ) -> dict[str, Any] | None:
     run_id = str(uuid.uuid4())
-    initialize_local_state()
     with _connection() as conn:
         conn.execute(
             f"INSERT INTO feeder_autotune_runs({_FEEDER_AUTOTUNE_RUN_COLUMNS}) "
@@ -2772,7 +2482,6 @@ def createFeederAutotuneRun(
 
 
 def getFeederAutotuneRun(run_id: str) -> dict[str, Any] | None:
-    initialize_local_state()
     with _connection() as conn:
         row = conn.execute(
             f"SELECT {_FEEDER_AUTOTUNE_RUN_COLUMNS} FROM feeder_autotune_runs "
@@ -2783,7 +2492,6 @@ def getFeederAutotuneRun(run_id: str) -> dict[str, Any] | None:
 
 
 def listFeederAutotuneRuns(limit: int = 50) -> list[dict[str, Any]]:
-    initialize_local_state()
     with _connection() as conn:
         rows = conn.execute(
             f"SELECT {_FEEDER_AUTOTUNE_RUN_COLUMNS} FROM feeder_autotune_runs "
@@ -2794,7 +2502,6 @@ def listFeederAutotuneRuns(limit: int = 50) -> list[dict[str, Any]]:
 
 
 def finishFeederAutotuneRun(run_id: str, status: str) -> None:
-    initialize_local_state()
     with _connection() as conn:
         conn.execute(
             "UPDATE feeder_autotune_runs SET status = ?, ended_at = ? "
@@ -2805,7 +2512,6 @@ def finishFeederAutotuneRun(run_id: str, status: str) -> None:
 
 
 def setFeederAutotuneBestTrial(run_id: str, trial_id: int) -> None:
-    initialize_local_state()
     with _connection() as conn:
         conn.execute(
             "UPDATE feeder_autotune_runs SET best_trial_id = ? WHERE id = ?",
@@ -2815,7 +2521,6 @@ def setFeederAutotuneBestTrial(run_id: str, trial_id: int) -> None:
 
 
 def interruptActiveFeederAutotuneRuns() -> list[dict[str, Any]]:
-    initialize_local_state()
     with _connection() as conn:
         rows = conn.execute(
             f"SELECT {_FEEDER_AUTOTUNE_RUN_COLUMNS} FROM feeder_autotune_runs "
@@ -2843,7 +2548,6 @@ def interruptActiveFeederAutotuneRuns() -> list[dict[str, Any]]:
 def insertFeederAutotuneTrial(
     run_id: str, trial_index: int, kind: str, params: dict[str, Any]
 ) -> int:
-    initialize_local_state()
     with _connection() as conn:
         cur = conn.execute(
             "INSERT INTO feeder_autotune_trials"
@@ -2868,7 +2572,6 @@ def finalizeFeederAutotuneTrial(
     feasible: bool | None = None,
     score: float | None,
 ) -> None:
-    initialize_local_state()
     with _connection() as conn:
         conn.execute(
             "UPDATE feeder_autotune_trials SET status = ?, ended_at = ?, "
@@ -2893,7 +2596,6 @@ def finalizeFeederAutotuneTrial(
 
 
 def getFeederAutotuneTrial(trial_id: int) -> dict[str, Any] | None:
-    initialize_local_state()
     with _connection() as conn:
         row = conn.execute(
             f"SELECT {_FEEDER_AUTOTUNE_TRIAL_COLUMNS} FROM feeder_autotune_trials "
@@ -2904,7 +2606,6 @@ def getFeederAutotuneTrial(trial_id: int) -> dict[str, Any] | None:
 
 
 def listFeederAutotuneTrials(run_id: str, limit: int = 500) -> list[dict[str, Any]]:
-    initialize_local_state()
     with _connection() as conn:
         rows = conn.execute(
             f"SELECT {_FEEDER_AUTOTUNE_TRIAL_COLUMNS} FROM feeder_autotune_trials "
@@ -2918,7 +2619,6 @@ def listFeederAutotuneTrials(run_id: str, limit: int = 500) -> list[dict[str, An
 
 def listFeederAutotuneDataset(limit: int = 5000) -> list[dict[str, Any]]:
     """All completed trials across every run — the accumulated tuning dataset."""
-    initialize_local_state()
     with _connection() as conn:
         rows = conn.execute(
             f"SELECT {_FEEDER_AUTOTUNE_TRIAL_COLUMNS} FROM feeder_autotune_trials "

@@ -1,7 +1,7 @@
 import time
 import queue
 import random
-from typing import Any, Optional
+from typing import Optional
 import server.shared_state as shared_state
 from states.base_state import BaseState
 from subsystems.shared_variables import SharedVariables
@@ -12,6 +12,7 @@ from irl.config import IRLInterface
 from global_config import GlobalConfig
 from sorting_profile import SortingProfile, MISC_CATEGORY
 from blob_manager import setBinCategories
+import db
 from defs.events import PauseCommandData, PauseCommandEvent
 from defs.known_object import PieceStage
 from utils.event import knownObjectToEvent
@@ -52,20 +53,12 @@ def _allowMultiCategoryBins() -> bool:
 
 
 
-def _persistBinCategories(logger: Any, layout: DistributionLayout) -> None:
-    # Runs inside the control loop. If another writer holds the SQLite write
-    # lock (a media retention sweep, say) this write times out after
-    # busy_timeout and raises - and an exception here unwinds main() and takes
-    # the whole backend down to standby mid-sort. The in-memory layout already
-    # carries the assignment, and every call writes the full layout, so a
-    # missed write is repaired by the next successful one. Warn and carry on.
-    try:
-        setBinCategories(extractCategories(layout))
-    except Exception as exc:
-        logger.warning(
-            f"Positioning: failed to persist bin categories ({type(exc).__name__}: {exc}); "
-            "keeping the in-memory layout, will retry on the next assignment"
-        )
+def _persistBinCategories(layout: DistributionLayout) -> None:
+    # Runs on the control loop, so the write runs on the database writer
+    # thread. The in-memory layout already carries the assignment, and every
+    # call writes the full layout, so a failed write is repaired by the next.
+    categories = extractCategories(layout)
+    db.defer("set_bin_categories", lambda: setBinCategories(categories))
 
 
 class Positioning(BaseState):
@@ -951,7 +944,7 @@ class Positioning(BaseState):
         if first_unassigned is not None and category_id != MISC_CATEGORY:
             address, b = first_unassigned
             b.category_ids = [category_id]
-            _persistBinCategories(self.logger, self.layout)
+            _persistBinCategories(self.layout)
             self.logger.info(
                 f"Positioning: assigned category {category_id} to bin at layer={address.layer_index}, section={address.section_index}, bin={address.bin_index}"
             )
@@ -969,7 +962,7 @@ class Positioning(BaseState):
         ):
             _, _, address, b = best_combine
             b.category_ids.append(category_id)
-            _persistBinCategories(self.logger, self.layout)
+            _persistBinCategories(self.layout)
             self.logger.info(
                 f"Positioning: combined category {category_id} into shared bin at "
                 f"layer={address.layer_index}, section={address.section_index}, "
