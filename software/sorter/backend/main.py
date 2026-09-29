@@ -1,3 +1,6 @@
+from environment_sync import syncEnvironment
+syncEnvironment()
+
 from dotenv import load_dotenv
 import os
 from pathlib import Path
