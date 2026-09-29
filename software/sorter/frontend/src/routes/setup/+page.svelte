@@ -36,7 +36,6 @@
 		parseCameraSource,
 		sourceKey,
 		type CameraChoice,
-		type NetworkCamera,
 		type UsbCamera
 	} from '$lib/setup/camera-choices';
 	import type {
@@ -180,7 +179,6 @@
 	let nameStatus = $state('');
 
 	let usbCameras = $state<UsbCamera[]>([]);
-	let networkCameras = $state<NetworkCamera[]>([]);
 	let loadingCameras = $state(false);
 	let cameraError = $state<string | null>(null);
 	let cameraStatus = $state('');
@@ -344,7 +342,7 @@
 	}
 
 	function cameraChoices(): CameraChoice[] {
-		return buildCameraChoices(usbCameras, networkCameras, roleSelections, currentBackendBaseUrl());
+		return buildCameraChoices(usbCameras, roleSelections, currentBackendBaseUrl());
 	}
 
 	function selectedCameraLabel(key: string | undefined): string {
@@ -695,7 +693,6 @@
 			usbCameras = Array.isArray(payload?.usb)
 				? payload.usb.filter((camera: UsbCamera) => camera.index >= 0)
 				: [];
-			networkCameras = Array.isArray(payload?.network) ? payload.network : [];
 		} catch (e: any) {
 			if (seq === cameraLoadSeq) cameraError = e.message ?? 'Failed to load camera inventory';
 		} finally {
