@@ -5,8 +5,7 @@ from unittest.mock import patch
 import numpy as np
 
 from irl.config import mkCameraConfig
-from server import shared_state
-from server.routers import cameras
+from server.routers import camera_calibration, camera_device_settings
 from vision.camera import (
     CaptureThread,
     _bool_from_capture_value,
@@ -19,9 +18,6 @@ from vision.camera import (
 
 
 class CameraDeviceControlsTests(unittest.TestCase):
-    def setUp(self) -> None:
-        shared_state.camera_device_preview_overrides.clear()
-
     def test_macos_probe_reports_live_settings_without_applying_saved_values(self) -> None:
         controls = [{"key": "brightness", "kind": "number"}]
         live_settings = {"brightness": 12.0}
@@ -74,9 +70,9 @@ class CameraDeviceControlsTests(unittest.TestCase):
             },
         }
 
-        with patch.object(cameras.shared_state, "camera_service", service):
-            with patch.object(cameras.machine_toml, "read", return_value=raw_config):
-                response = cameras.get_camera_device_settings("c_channel_2")
+        with patch.object(camera_device_settings.shared_state, "camera_service", service):
+            with patch.object(camera_device_settings.machine_toml, "read", return_value=raw_config):
+                response = camera_device_settings.get_camera_device_settings("c_channel_2")
 
         self.assertTrue(response["ok"])
         self.assertEqual("usb-opencv", response["provider"])
@@ -94,9 +90,9 @@ class CameraDeviceControlsTests(unittest.TestCase):
             },
         }
 
-        with patch.object(cameras.shared_state, "camera_service", None):
-            with patch.object(cameras.machine_toml, "read", return_value=raw_config):
-                response = cameras.get_camera_device_settings("c_channel_2")
+        with patch.object(camera_device_settings.shared_state, "camera_service", None):
+            with patch.object(camera_device_settings.machine_toml, "read", return_value=raw_config):
+                response = camera_device_settings.get_camera_device_settings("c_channel_2")
 
         self.assertTrue(response["ok"])
         self.assertFalse(response["supported"])
@@ -112,9 +108,9 @@ class CameraDeviceControlsTests(unittest.TestCase):
             },
         }
 
-        with patch.object(cameras.shared_state, "camera_service", service):
-            with patch.object(cameras.machine_toml, "read", return_value=raw_config):
-                response = cameras.preview_camera_device_settings("c_channel_2", {"brightness": 30})
+        with patch.object(camera_device_settings.shared_state, "camera_service", service):
+            with patch.object(camera_device_settings.machine_toml, "read", return_value=raw_config):
+                response = camera_device_settings.preview_camera_device_settings("c_channel_2", {"brightness": 30})
 
         self.assertTrue(response["ok"])
         self.assertTrue(response["applied_live"])
@@ -149,10 +145,10 @@ class CameraDeviceControlsTests(unittest.TestCase):
             clear_persisted_device_settings_for_role=lambda role: cleared_roles.append(role),
         )
 
-        with patch.object(cameras.shared_state, "camera_service", service):
-            with patch.object(cameras.machine_toml, "read", return_value=raw_config):
-                with patch.object(cameras.machine_toml, "_write") as write_config:
-                    response = cameras.reset_camera_device_settings_to_defaults("c_channel_2")
+        with patch.object(camera_device_settings.shared_state, "camera_service", service):
+            with patch.object(camera_device_settings.machine_toml, "read", return_value=raw_config):
+                with patch.object(camera_device_settings.machine_toml, "_write") as write_config:
+                    response = camera_device_settings.reset_camera_device_settings_to_defaults("c_channel_2")
 
         self.assertTrue(response["ok"])
         self.assertEqual({"auto_exposure": True, "auto_white_balance": True}, response["settings"])
@@ -177,40 +173,31 @@ class CameraDeviceControlsTests(unittest.TestCase):
             clear_persisted_device_settings_for_role=lambda role: None,
         )
         with (
-            patch.object(cameras.shared_state, "camera_service", service),
-            patch.object(cameras.machine_toml, "read", return_value=raw_config),
-            patch.object(cameras.machine_toml, "_write"),
+            patch.object(camera_device_settings.shared_state, "camera_service", service),
+            patch.object(camera_device_settings.machine_toml, "read", return_value=raw_config),
+            patch.object(camera_device_settings.machine_toml, "_write"),
         ):
-            cameras.preview_camera_device_settings("classification_channel", {"brightness": 3})
-            cameras.preview_camera_device_settings("carousel", {"brightness": 4})
-            self.assertEqual(
-                {"classification_channel": {"brightness": 4.0}},
-                shared_state.camera_device_preview_overrides,
-            )
-            cameras.save_camera_device_settings("carousel", {"brightness": 5})
+            camera_device_settings.preview_camera_device_settings("classification_channel", {"brightness": 3})
+            camera_device_settings.preview_camera_device_settings("carousel", {"brightness": 4})
+            camera_device_settings.save_camera_device_settings("carousel", {"brightness": 5})
             self.assertEqual(
                 {"classification_channel": {"brightness": 5.0}},
                 raw_config["camera_device_settings"],
             )
-            self.assertEqual(
-                {"classification_channel": {"brightness": 5.0}},
-                shared_state.camera_device_preview_overrides,
-            )
-            cameras.reset_camera_device_settings_to_defaults("carousel")
+            camera_device_settings.reset_camera_device_settings_to_defaults("carousel")
             self.assertEqual({}, raw_config["camera_device_settings"])
-            self.assertEqual({}, shared_state.camera_device_preview_overrides)
 
     def test_calibration_start_route_defaults_to_target_plate(self) -> None:
         fake_thread = SimpleNamespace(start=lambda: None)
 
         with patch.dict("os.environ", {}, clear=False):
-            with patch("server.routers.cameras.get_camera_device_settings", return_value={
+            with patch("server.routers.camera_calibration.get_camera_device_settings", return_value={
                 "source": 1,
                 "provider": "usb-opencv",
                 "supported": True,
             }):
-                with patch("server.routers.cameras._create_camera_calibration_task", return_value="task-1") as create_task:
-                    with patch("server.routers.cameras._get_camera_calibration_task", return_value={
+                with patch("server.routers.camera_calibration._create_camera_calibration_task", return_value="task-1") as create_task:
+                    with patch("server.routers.camera_calibration._get_camera_calibration_task", return_value={
                         "status": "queued",
                         "stage": "queued",
                         "progress": 0.0,
@@ -218,8 +205,8 @@ class CameraDeviceControlsTests(unittest.TestCase):
                         "method": "target_plate",
                         "openrouter_model": None,
                     }):
-                        with patch("server.routers.cameras.threading.Thread", return_value=fake_thread) as thread_cls:
-                            response = cameras.start_camera_device_settings_calibration_from_target(
+                        with patch("server.routers.camera_calibration.threading.Thread", return_value=fake_thread) as thread_cls:
+                            response = camera_calibration.start_camera_device_settings_calibration_from_target(
                                 "c_channel_2"
                             )
 
@@ -235,20 +222,20 @@ class CameraDeviceControlsTests(unittest.TestCase):
 
     def test_calibration_start_route_accepts_llm_guided_method(self) -> None:
         fake_thread = SimpleNamespace(start=lambda: None)
-        payload = cameras.CameraCalibrationStartPayload(
+        payload = camera_calibration.CameraCalibrationStartPayload(
             method="llm_guided",
             openrouter_model="google/gemini-3.1-pro-preview",
             max_iterations=5,
         )
 
         with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}, clear=False):
-            with patch("server.routers.cameras.get_camera_device_settings", return_value={
+            with patch("server.routers.camera_calibration.get_camera_device_settings", return_value={
                 "source": 1,
                 "provider": "usb-opencv",
                 "supported": True,
             }):
-                with patch("server.routers.cameras._create_camera_calibration_task", return_value="task-2") as create_task:
-                    with patch("server.routers.cameras._get_camera_calibration_task", return_value={
+                with patch("server.routers.camera_calibration._create_camera_calibration_task", return_value="task-2") as create_task:
+                    with patch("server.routers.camera_calibration._get_camera_calibration_task", return_value={
                         "status": "queued",
                         "stage": "queued",
                         "progress": 0.0,
@@ -256,8 +243,8 @@ class CameraDeviceControlsTests(unittest.TestCase):
                         "method": "llm_guided",
                         "openrouter_model": "google/gemini-3.1-pro-preview",
                     }):
-                        with patch("server.routers.cameras.threading.Thread", return_value=fake_thread) as thread_cls:
-                            response = cameras.start_camera_device_settings_calibration_from_target(
+                        with patch("server.routers.camera_calibration.threading.Thread", return_value=fake_thread) as thread_cls:
+                            response = camera_calibration.start_camera_device_settings_calibration_from_target(
                                 "c_channel_2",
                                 payload,
                             )
@@ -285,20 +272,20 @@ class CameraDeviceControlsTests(unittest.TestCase):
         for method in ("target_plate", "llm_guided", "exposure_histogram"):
             with (
                 self.subTest(method=method),
-                patch.object(cameras, "get_camera_device_settings", return_value=current),
-                patch.object(cameras.machine_toml, "read", return_value={}),
-                patch.object(cameras, "_cleanup_old_gallery_dirs"),
-                patch.object(cameras, "Path"),
-                patch.object(cameras.time, "sleep"),
-                patch.object(cameras, "_calibrate_usb_camera_device_settings", return_value=(tuned_settings, analysis)),
-                patch.object(cameras, "_calibrate_camera_device_settings_with_llm", return_value=(tuned_settings, analysis, {})),
-                patch.object(cameras, "_calibrate_exposure_via_histogram", return_value=(tuned_settings, analysis)),
-                patch.object(cameras, "save_camera_device_settings", return_value=saved) as save,
-                patch.object(cameras, "_capture_frame_for_calibration", return_value=frame),
-                patch.object(cameras, "analyze_color_plate_target", return_value=SimpleNamespace(to_dict=lambda: analysis)),
-                patch.object(cameras, "_run_llm_final_review", return_value={"status": "approved"}),
+                patch.object(camera_calibration, "get_camera_device_settings", return_value=current),
+                patch.object(camera_calibration.machine_toml, "read", return_value={}),
+                patch.object(camera_calibration, "_cleanup_old_gallery_dirs"),
+                patch.object(camera_calibration, "Path"),
+                patch.object(camera_calibration.time, "sleep"),
+                patch.object(camera_calibration, "_calibrate_usb_camera_device_settings", return_value=(tuned_settings, analysis)),
+                patch.object(camera_calibration, "_calibrate_camera_device_settings_with_llm", return_value=(tuned_settings, analysis, {})),
+                patch.object(camera_calibration, "_calibrate_exposure_via_histogram", return_value=(tuned_settings, analysis)),
+                patch.object(camera_calibration, "save_camera_device_settings", return_value=saved) as save,
+                patch.object(camera_calibration, "_capture_frame_for_calibration", return_value=frame),
+                patch.object(camera_calibration, "analyze_color_plate_target", return_value=SimpleNamespace(to_dict=lambda: analysis)),
+                patch.object(camera_calibration, "_run_llm_final_review", return_value={"status": "approved"}),
             ):
-                result = cameras._run_camera_calibration_sync("c_channel_2", method=method)
+                result = camera_calibration._run_camera_calibration_sync("c_channel_2", method=method)
             save.assert_called_once_with("c_channel_2", tuned_settings)
             self.assertTrue(result["ok"])
             self.assertEqual(method, result["method"])

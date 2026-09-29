@@ -10,7 +10,7 @@ import numpy as np
 import tomllib
 
 from irl.config import IRLConfig, mkCameraConfig
-from server.routers import cameras
+from server.routers import camera_capture_modes, camera_feeds, cameras
 from vision import camera_service
 from vision.camera_modes import default_capture_mode
 
@@ -108,11 +108,11 @@ class CaptureModeRouterTests(unittest.TestCase):
 
     def test_saving_a_resolution_picks_mjpeg_not_yuyv(self) -> None:
         self.path.write_text('[cameras]\nlayout = "split_feeder"\ncarousel = 2\n', encoding="utf-8")
-        with patch.object(cameras, "_capture_modes_for_source", return_value=(list(reversed(FOUR_K_CAMERA)), "v4l2")), patch.object(
-            cameras.shared_state, "camera_service", None
+        with patch.object(camera_capture_modes, "capture_modes_for_source", return_value=(list(reversed(FOUR_K_CAMERA)), "v4l2")), patch.object(
+            camera_capture_modes.shared_state, "camera_service", None
         ):
-            response = cameras.save_camera_capture_mode(
-                "carousel", cameras.CaptureModePayload(width=1920, height=1080)
+            response = camera_capture_modes.save_camera_capture_mode(
+                "carousel", camera_capture_modes.CaptureModePayload(width=1920, height=1080)
             )
         self.assertEqual({"width": 1920, "height": 1080, "fps": 60, "fourcc": "MJPG"}, response["mode"])
 
@@ -148,10 +148,10 @@ class PreviewStreamTests(unittest.TestCase):
                 FakeCap.released = True
 
         claims = iter([None, None, None, object()])
-        with patch.object(cameras, "_device_capturing_index", side_effect=lambda i: next(claims)), patch.object(
-            cameras, "_open_camera_for_preview", return_value=FakeCap()
+        with patch.object(camera_feeds, "_device_capturing_index", side_effect=lambda i: next(claims)), patch.object(
+            camera_feeds, "_open_camera_for_preview", return_value=FakeCap()
         ):
-            response = cameras.camera_stream(2)
+            response = camera_feeds.camera_stream(2)
 
             async def drain() -> int:
                 return len([chunk async for chunk in response.body_iterator])
