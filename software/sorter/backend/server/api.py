@@ -16,13 +16,16 @@ from defs.events import (
     IdentityEvent,
     MachineIdentityData,
 )
-from blob_manager import (
-    getApiKeys,
-    getMachineId,
-    getMachineNickname,
-    getSortingProfileSyncState,
-    setMachineNickname,
+from local_state import (
+    get_api_keys,
+    get_channel_polygons,
+    get_classification_polygons,
+    get_or_create_machine_id,
+    get_sorting_profile_sync_state,
+    set_channel_polygons,
+    set_classification_polygons,
 )
+from toml_config import getMachineNickname, setMachineNickname
 from server.camera_discovery import shutdownCameraDiscovery
 from server.set_progress_sync import getSetProgressSyncWorker
 from server.waveshare_inventory import get_waveshare_inventory_manager
@@ -111,7 +114,7 @@ async def _machine_toml_error(_request: Request, exc: machine_toml.MachineTomlEr
 
 
 def _load_saved_api_keys_into_environment() -> None:
-    saved_api_keys = getApiKeys()
+    saved_api_keys = get_api_keys()
     if saved_api_keys.get("openrouter"):
         os.environ["OPENROUTER_API_KEY"] = saved_api_keys["openrouter"]
 
@@ -271,7 +274,7 @@ class MachineIdentityUpdateRequest(BaseModel):
 def _getMachineIdentityData() -> MachineIdentityData:
     gc = shared_state.gc_ref
     return MachineIdentityData(
-        machine_id=gc.machine_id if gc is not None else getMachineId(),
+        machine_id=gc.machine_id if gc is not None else get_or_create_machine_id(),
         nickname=getMachineNickname(),
         run_id=gc.run_id if gc is not None else None,
     )
@@ -431,7 +434,7 @@ def getSortingProfileMetadata() -> SortingProfileMetadataResponse:
                 {"rebrickable_categories": False, "bricklink_categories": False, "by_color": False},
             )
         ),
-        sync_state=getSortingProfileSyncState(),
+        sync_state=get_sorting_profile_sync_state(),
     )
 
 
@@ -848,12 +851,11 @@ def getSetProgress() -> SetProgressResponse:
 @app.get("/api/polygons")
 def get_polygons() -> Dict[str, Any]:
     """Load saved channel and classification polygons."""
-    from blob_manager import getChannelPolygons, getClassificationPolygons
     result: Dict[str, Any] = {}
-    channel = getChannelPolygons()
+    channel = get_channel_polygons()
     if channel:
         result["channel"] = channel
-    classification = getClassificationPolygons()
+    classification = get_classification_polygons()
     if classification:
         result["classification"] = classification
     return result
@@ -862,11 +864,10 @@ def get_polygons() -> Dict[str, Any]:
 @app.post("/api/polygons")
 def save_polygons(body: Dict[str, Any]) -> Dict[str, Any]:
     """Save channel and classification polygons."""
-    from blob_manager import setChannelPolygons, setClassificationPolygons
     if "channel" in body:
-        setChannelPolygons(body["channel"])
+        set_channel_polygons(body["channel"])
     if "classification" in body:
-        setClassificationPolygons(body["classification"])
+        set_classification_polygons(body["classification"])
     if "channel" in body and shared_state.vision_manager is not None:
         shared_state.vision_manager.reloadPolygons()
     # Perception (rev04 mode pair) is driven by these same zones but owns its

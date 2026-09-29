@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from bin_contents import start_new_sorting_session
-from blob_manager import getHiveConfig, getSortingProfileSyncState, setSortingProfileSyncState
+from local_state import get_hive_config, get_sorting_profile_sync_state, set_sorting_profile_sync_state
 from server import shared_state
 from sorting_profile import profileSummary
 from server.routers.bins import (
@@ -45,7 +45,7 @@ class ApplySortingProfilePayload(BaseModel):
 
 
 def _load_targets() -> list[dict[str, Any]]:
-    config = getHiveConfig() or {}
+    config = get_hive_config() or {}
     targets = config.get("targets")
     if not isinstance(targets, list):
         return []
@@ -311,7 +311,7 @@ def _local_profile_entry(
 
 
 def _list_local_profiles() -> list[dict[str, Any]]:
-    sync_state = getSortingProfileSyncState() or {}
+    sync_state = get_sorting_profile_sync_state() or {}
     active_filename = (
         sync_state.get("local_filename") if sync_state.get("source") == "local" else None
     )
@@ -327,7 +327,7 @@ def _active_profile_path() -> str | None:
 
 
 def _current_local_profile_status() -> dict[str, Any]:
-    sync_state = getSortingProfileSyncState() or {}
+    sync_state = get_sorting_profile_sync_state() or {}
     path = _active_profile_path()
     metadata: dict[str, Any] = {}
     if path and os.path.exists(path):
@@ -354,7 +354,7 @@ def _current_local_profile_status() -> dict[str, Any]:
 def _current_local_profile_status_light() -> dict[str, Any]:
     # No parse: name comes from sync_state; counts are omitted (the /profiles
     # page only needs the active name here, and even that is a rare fallback).
-    sync_state = getSortingProfileSyncState() or {}
+    sync_state = get_sorting_profile_sync_state() or {}
     path = _active_profile_path()
     metadata: dict[str, Any] = {}
     if path and os.path.exists(path):
@@ -371,7 +371,7 @@ def _current_local_profile_status_light() -> dict[str, Any]:
 
 
 def _list_local_profiles_light() -> list[dict[str, Any]]:
-    sync_state = getSortingProfileSyncState() or {}
+    sync_state = get_sorting_profile_sync_state() or {}
     active_filename = (
         sync_state.get("local_filename") if sync_state.get("source") == "local" else None
     )
@@ -574,7 +574,7 @@ def apply_sorting_profile(payload: ApplySortingProfilePayload) -> dict[str, Any]
     if activation_error:
         sync_state["last_error"] = activation_error
 
-    setSortingProfileSyncState(sync_state)
+    set_sorting_profile_sync_state(sync_state)
     start_new_sorting_session(reason="profile_activated")
     try:
         from server.set_progress_sync import getSetProgressSyncWorker
@@ -663,7 +663,7 @@ def apply_local_sorting_profile(payload: ApplyLocalSortingProfilePayload) -> dic
         "activated_at": now,
         "last_error": None,
     }
-    setSortingProfileSyncState(sync_state)
+    set_sorting_profile_sync_state(sync_state)
     start_new_sorting_session(reason="profile_activated")
     try:
         from server.set_progress_sync import getSetProgressSyncWorker

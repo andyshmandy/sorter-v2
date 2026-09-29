@@ -18,7 +18,7 @@ def test_dashboard_crop_uses_c2_channel_resolution_metadata() -> None:
         },
     }
 
-    with patch("vision.dashboard_crop.getChannelPolygons", return_value=saved):
+    with patch("vision.dashboard_crop.get_channel_polygons", return_value=saved):
         spec = dashboard_crop.dashboard_crop_spec("c_channel_2", 800, 800)
 
     assert spec is not None
@@ -40,7 +40,7 @@ def test_dashboard_crop_uses_c3_channel_resolution_metadata() -> None:
         },
     }
 
-    with patch("vision.dashboard_crop.getChannelPolygons", return_value=saved):
+    with patch("vision.dashboard_crop.get_channel_polygons", return_value=saved):
         spec = dashboard_crop.dashboard_crop_spec("c_channel_3", 800, 800)
 
     assert spec is not None
@@ -61,7 +61,7 @@ def test_dashboard_crop_uses_c4_classification_channel_resolution_metadata() -> 
             "classification_channel": {"resolution": [400, 400]},
         },
     }
-    with patch("vision.dashboard_crop.getChannelPolygons", return_value=saved):
+    with patch("vision.dashboard_crop.get_channel_polygons", return_value=saved):
         spec = dashboard_crop.dashboard_crop_spec("carousel", 800, 800)
         alias_spec = dashboard_crop.dashboard_crop_spec("classification_channel", 800, 800)
 

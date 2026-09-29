@@ -13,7 +13,7 @@ from typing import Any, Dict
 import cv2
 import numpy as np
 
-from blob_manager import getChannelPolygons
+from local_state import get_channel_polygons
 from vision.channel_alignment import (
     alignmentRotationDeg,
     angleKeyForPolygonKey,
@@ -181,7 +181,7 @@ def dashboard_crop_spec(role: str, frame_w: int, frame_h: int) -> Dict[str, Any]
     polygon_key = polygonKeyForRole(role)
     if polygon_key is None:
         return None
-    saved = getChannelPolygons() or {}
+    saved = get_channel_polygons() or {}
     polygons_table = saved.get("polygons") if isinstance(saved.get("polygons"), dict) else {}
     scaled_polygon = _dashboard_channel_crop_polygon(saved, polygon_key, polygons_table, frame_w, frame_h)
     if scaled_polygon is None:

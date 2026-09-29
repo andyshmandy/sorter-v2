@@ -429,7 +429,7 @@ def loadChannelDefs(
     """Build a ChannelDef per registered perception channel.
 
     Inputs are the same three blobs the legacy code reads from
-    ``local_state`` / ``blob_manager``:
+    ``local_state``:
     - ``saved_polygons``  → keys like ``"second_channel"`` / ``"third_channel"``
                              / ``"classification_channel"``
     - ``channel_angles``  → keys ``"second"`` / ``"third"`` / ``"classification_channel"``

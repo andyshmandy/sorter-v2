@@ -1,17 +1,11 @@
 import functools
 import time
 from typing import Optional
-from blob_manager import BLOB_DIR
 from defs.known_object import KnownObject
 from global_config import GlobalConfig
 import db
 import piece_records
 import runtime_stat_records
-
-# Legacy location of the old per-run JSON dumps. Nothing writes here anymore —
-# both piece history and runtime-stats history now live in the local_state
-# SQLite DB. Kept only so the one-off migration script can still find old files.
-RECORDS_DIR = BLOB_DIR / "records"
 
 
 def _serializePiece(p: KnownObject) -> dict:

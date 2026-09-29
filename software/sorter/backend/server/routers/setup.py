@@ -8,7 +8,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import serial.tools.list_ports
 
-from blob_manager import getMachineId, getMachineNickname
 from hardware.bus import MCUBus
 from hardware.firmware_flash import bootloaderPresent
 from irl.config import _requiredCanonicalStepperNames
@@ -16,11 +15,13 @@ from irl.parse_user_toml import (
     LOGICAL_STEPPER_BINDING_BASES,
     loadStepperBindingOverrides,
 )
+from local_state import get_or_create_machine_id
 from machine_platform.control_board import discover_control_boards
 from server import shared_state
 import machine_toml
 from server.routers.cameras import CAMERA_SETUP_ROLES, _camera_source_for_role
 from server.routers.servos import _servo_settings_from_config
+from toml_config import getMachineNickname
 
 router = APIRouter()
 
@@ -521,7 +522,7 @@ def get_setup_wizard_summary() -> Dict[str, Any]:
 
     return {
         "machine": {
-            "machine_id": shared_state.gc_ref.machine_id if shared_state.gc_ref is not None else getMachineId(),
+            "machine_id": shared_state.gc_ref.machine_id if shared_state.gc_ref is not None else get_or_create_machine_id(),
             "nickname": getMachineNickname(),
         },
         "hardware": {

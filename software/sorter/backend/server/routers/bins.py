@@ -26,11 +26,11 @@ from bin_contents import (
     get_distributed_part_keys_since,
     list_bin_snapshots,
 )
-from blob_manager import (
-    getBinCategories,
-    setBinCategories,
-    getNotInInventoryBins,
-    setNotInInventoryBins,
+from bin_layout_store import (
+    get_bin_categories,
+    get_not_in_inventory_bins,
+    set_bin_categories,
+    set_not_in_inventory_bins,
 )
 from irl.bin_layout import (
     getBinLayout,
@@ -167,7 +167,7 @@ def _current_bin_categories() -> list[list[list[list[str]]]]:
     if runtime_layout is not None:
         return extractCategories(runtime_layout)
 
-    saved = getBinCategories()
+    saved = get_bin_categories()
     if saved is not None:
         layout_config = getBinLayout()
         reference_layout = mkLayoutFromConfig(layout_config)
@@ -181,10 +181,10 @@ def _apply_and_persist_bin_categories(categories: list[list[list[list[str]]]]) -
     runtime_layout = _runtime_distribution_layout()
     if runtime_layout is not None and layoutMatchesCategories(runtime_layout, categories):
         applyCategories(runtime_layout, categories)
-        setBinCategories(extractCategories(runtime_layout))
+        set_bin_categories(extractCategories(runtime_layout))
         return
 
-    setBinCategories(categories)
+    set_bin_categories(categories)
 
 
 def _empty_not_in_inventory_from_config() -> list[list[list[bool]]]:
@@ -200,7 +200,7 @@ def _current_not_in_inventory() -> list[list[list[bool]]]:
     if runtime_layout is not None:
         return extractNotInInventory(runtime_layout)
 
-    saved = getNotInInventoryBins()
+    saved = get_not_in_inventory_bins()
     if saved is not None:
         reference_layout = mkLayoutFromConfig(getBinLayout())
         if notInInventoryMatchesLayout(reference_layout, saved):
@@ -213,10 +213,10 @@ def _apply_and_persist_not_in_inventory(flags: list[list[list[bool]]]) -> None:
     runtime_layout = _runtime_distribution_layout()
     if runtime_layout is not None and notInInventoryMatchesLayout(runtime_layout, flags):
         applyNotInInventory(runtime_layout, flags)
-        setNotInInventoryBins(extractNotInInventory(runtime_layout))
+        set_not_in_inventory_bins(extractNotInInventory(runtime_layout))
         return
 
-    setNotInInventoryBins(flags)
+    set_not_in_inventory_bins(flags)
 
 
 def set_not_in_inventory_mode(
@@ -643,7 +643,7 @@ def get_bins_layout() -> Dict[str, Any]:
                             bin_out["category_ids"] = list(rt_sections[si].bins[bi].category_ids)
 
     if not runtime_overlay_applied:
-        saved_categories = getBinCategories()
+        saved_categories = get_bin_categories()
         reference_layout = mkLayoutFromConfig(layout_config)
         if saved_categories is not None and layoutMatchesCategories(reference_layout, saved_categories):
             for layer_out in layers_out:

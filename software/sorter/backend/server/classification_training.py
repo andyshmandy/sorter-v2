@@ -12,12 +12,12 @@ from uuid import uuid4
 import cv2
 import numpy as np
 
-from blob_manager import BLOB_DIR, getClassificationTrainingConfig, setClassificationTrainingConfig
+from local_state import get_classification_training_state, set_classification_training_state
 from server.hive_uploader import HiveUploader
 from server.sample_payloads import build_sample_payload
 
 
-TRAINING_ROOT = BLOB_DIR / "classification_training"
+TRAINING_ROOT = Path(__file__).parent.parent / "blob" / "classification_training"
 DEFAULT_PROCESSOR = "local_archive"
 LEGACY_PROCESSORS = {"gemini_sam"}
 SUPPORTED_PROCESSORS = {DEFAULT_PROCESSOR, *LEGACY_PROCESSORS}
@@ -74,7 +74,7 @@ class ClassificationTrainingManager:
         self._loadPersistedConfig()
 
     def _loadPersistedConfig(self) -> None:
-        saved = getClassificationTrainingConfig()
+        saved = get_classification_training_state()
         if not isinstance(saved, dict):
             return
 
@@ -110,7 +110,7 @@ class ClassificationTrainingManager:
         self._writeSessionManifest(path)
 
     def _persistConfig(self) -> None:
-        setClassificationTrainingConfig(
+        set_classification_training_state(
             {
                 "processor": self._processor,
                 "session_id": self._session_id,
