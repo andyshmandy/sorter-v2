@@ -39,5 +39,6 @@ reportMissingModuleSource = "none"
 [dependency-groups]
 dev = [
     "pydantic-to-typescript==2.0.0",
+    "pyright>=1.1.408",
     "pytest>=9.0.3",
 ]

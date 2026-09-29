@@ -19,14 +19,6 @@ export function getBackendWsBase(): string {
 	return getBackendHttpBase().replace(/^http/, 'ws');
 }
 
-export function getBackendSupervisorBase(): string {
-	return originForPort(SUPERVISOR_PORT);
-}
-
-export function resolveBackendHttpBase(machineUrl: string | null | undefined): string {
-	return machineHttpBaseUrlFromWsUrl(machineUrl) ?? getBackendHttpBase();
-}
-
 export function machineHttpBaseUrlFromWsUrl(wsUrl: string | null | undefined): string | null {
 	if (!wsUrl) return null;
 	try {

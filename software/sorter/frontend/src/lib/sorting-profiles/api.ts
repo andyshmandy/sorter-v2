@@ -16,11 +16,6 @@ async function unwrap<T>(res: Response): Promise<T> {
 	return (await res.json()) as T;
 }
 
-export async function fetchLibrary(baseUrl: string): Promise<SortingProfileLibraryResponse> {
-	const res = await fetch(`${baseUrl}/api/sorting-profiles/library`);
-	return unwrap<SortingProfileLibraryResponse>(res);
-}
-
 // Fast tier: local profiles + active sync state + target metadata (no Hive
 // network). Targets come back with empty `profiles` — fill them via
 // fetchTargetLibrary per target.

@@ -147,16 +147,6 @@ export function androidCameraSettingsEqual(
 	);
 }
 
-export function androidCameraBaseUrl(source: string | number | null | undefined): string | null {
-	if (typeof source !== 'string' || source.length === 0) return null;
-	try {
-		const parsed = new URL(source);
-		return `${parsed.protocol}//${parsed.host}`;
-	} catch {
-		return null;
-	}
-}
-
 export function whiteBalanceModeLabel(mode: string): string {
 	switch (mode) {
 		case 'cloudy-daylight':
