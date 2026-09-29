@@ -1,191 +1,55 @@
-import json
 import os
-from pathlib import Path
 import tempfile
-import tomllib
 import unittest
+from unittest.mock import patch
 
+import db
 from local_state import (
     clear_current_session_bins,
-    drain_legacy_metric_snapshot_tables,
-    get_api_keys,
-    get_bin_categories,
-    get_current_bin_contents_snapshot,
-    get_channel_polygons,
-    get_classification_polygons,
-    get_classification_training_state,
-    get_machine_id,
+    count_bin_layouts,
     get_active_sorting_session,
-    get_set_progress_state,
-    get_servo_states,
-    get_sorting_profile_sync_state,
+    get_bin_layout,
     get_bin_snapshot,
     get_bin_snapshot_pieces,
+    get_current_bin_contents_snapshot,
     get_current_bin_pieces,
-    get_hive_config,
-    initialize_local_state,
+    get_machine_id,
     list_bin_snapshots,
     record_piece_distribution,
+    set_bin_layout,
+    set_machine_id,
     start_new_sorting_session,
 )
 
 
-class LocalStateMigrationTests(unittest.TestCase):
+class LocalStateTests(unittest.TestCase):
     def setUp(self) -> None:
-        self._old_machine_params = os.environ.get("MACHINE_SPECIFIC_PARAMS_PATH")
-        self._old_local_state_db = os.environ.get("LOCAL_STATE_DB_PATH")
-        self._tmpdir = tempfile.TemporaryDirectory()
-        self.client_dir = Path(self._tmpdir.name)
-        self.machine_params_path = self.client_dir / "machine_params.toml"
-        self.local_state_db_path = self.client_dir / "local_state.sqlite"
-        self.blob_dir = self.client_dir / "blob"
-        self.blob_dir.mkdir(parents=True, exist_ok=True)
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        env = patch.dict(os.environ, {"LOCAL_STATE_DB_PATH": os.path.join(tmpdir.name, "local_state.sqlite")})
+        env.start()
+        self.addCleanup(env.stop)
 
-        self.machine_params_path.write_text(
-            "\n".join(
-                [
-                    "[machine]",
-                    'nickname = "Bench"',
-                    "",
-                    "[classification_training]",
-                    'processor = "local_archive"',
-                    'session_id = "session-123"',
-                    'session_dir = "/tmp/session-123"',
-                    "",
-                    "[api_keys]",
-                    'openrouter = "from-toml"',
-                    "",
-                    "[[hive.targets]]",
-                    'id = "target-1"',
-                    'name = "Primary"',
-                    'url = "https://example.test"',
-                    'api_token = "secret-token"',
-                    "enabled = true",
-                    'machine_id = "remote-machine"',
-                    "",
-                    "[sorting_profile_sync]",
-                    'target_id = "target-1"',
-                    'version_id = "version-1"',
-                ]
-            )
-            + "\n",
-            encoding="utf-8",
-        )
+    def test_a_state_read_runs_one_statement_once_the_schema_exists(self) -> None:
+        set_machine_id("machine-1")
+        statements: list[str] = []
+        open_connection = db._open
 
-        (self.client_dir / "data.json").write_text(
-            json.dumps(
-                {
-                    "machine_id": "machine-from-data-json",
-                    "stepper_positions": {"carousel": 12},
-                    "servo_positions": {"layer_0": 90},
-                    "bin_categories": [[[ ["misc"] ]]],
-                    "channel_polygons": {"source": "data-json"},
-                    "classification_polygons": {"source": "data-json"},
-                    "classification_training": {"processor": "legacy"},
-                    "api_keys": {"openrouter": "from-data-json"},
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        (self.client_dir / "polygons.json").write_text(
-            json.dumps(
-                {
-                    "channel_polygons": {"source": "polygons-json", "polygons": {"second_channel": [[1, 2], [3, 4], [5, 6]]}},
-                    "classification_polygons": {"source": "polygons-json", "polygons": {"top": [[10, 20], [30, 40], [50, 60]]}},
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        (self.client_dir / "servo_states.json").write_text(
-            json.dumps({"0": {"is_open": True}}),
-            encoding="utf-8",
-        )
-        (self.blob_dir / "set_progress.json").write_text(
-            json.dumps(
-                {
-                    "artifact_hash": "artifact-1",
-                    "updated_at": 123.0,
-                    "progress": {"set_1": {"1-3001": 2}},
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+        def traced_open(path):
+            conn = open_connection(path)
+            conn.set_trace_callback(statements.append)
+            return conn
 
-        os.environ["MACHINE_SPECIFIC_PARAMS_PATH"] = str(self.machine_params_path)
-        os.environ["LOCAL_STATE_DB_PATH"] = str(self.local_state_db_path)
+        with patch.object(db, "_open", traced_open):
+            self.assertEqual("machine-1", get_machine_id())
+        self.assertEqual(1, len(statements), statements)
 
-    def tearDown(self) -> None:
-        if self._old_machine_params is None:
-            os.environ.pop("MACHINE_SPECIFIC_PARAMS_PATH", None)
-        else:
-            os.environ["MACHINE_SPECIFIC_PARAMS_PATH"] = self._old_machine_params
-
-        if self._old_local_state_db is None:
-            os.environ.pop("LOCAL_STATE_DB_PATH", None)
-        else:
-            os.environ["LOCAL_STATE_DB_PATH"] = self._old_local_state_db
-
-        self._tmpdir.cleanup()
-
-    def test_initialize_local_state_migrates_legacy_sources_and_cleans_machine_params(self) -> None:
-        initialize_local_state()
-
-        self.assertEqual("machine-from-data-json", get_machine_id())
-        self.assertEqual([[[["misc"]]]], get_bin_categories())
-        self.assertEqual("polygons-json", get_channel_polygons()["source"])
-        self.assertEqual("polygons-json", get_classification_polygons()["source"])
-        self.assertEqual("local_archive", get_classification_training_state()["processor"])
-        self.assertEqual({"openrouter": "from-toml"}, get_api_keys())
-        self.assertEqual("target-1", get_hive_config()["targets"][0]["id"])
-        self.assertEqual("version-1", get_sorting_profile_sync_state()["version_id"])
-        self.assertEqual({"0": {"is_open": True}}, get_servo_states())
-        self.assertEqual("artifact-1", get_set_progress_state()["artifact_hash"])
-
-        with open(self.machine_params_path, "rb") as handle:
-            cleaned = tomllib.load(handle)
-
-        self.assertIn("machine", cleaned)
-        self.assertNotIn("classification_training", cleaned)
-        self.assertNotIn("api_keys", cleaned)
-        self.assertNotIn("hive", cleaned)
-        self.assertNotIn("sorting_profile_sync", cleaned)
-
-    def test_drain_legacy_metric_snapshot_tables_empties_and_drops(self) -> None:
-        initialize_local_state()
-
-        import sqlite3
-
-        with sqlite3.connect(self.local_state_db_path) as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS runtime_perf_metric_snapshots ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, recorded_at REAL)"
-            )
-            conn.executemany(
-                "INSERT INTO runtime_perf_metric_snapshots(run_id, recorded_at) VALUES(?, ?)",
-                [("run-1", float(i)) for i in range(7)],
-            )
-            conn.commit()
-
-        deleted = drain_legacy_metric_snapshot_tables(batch_size=3, pacing_s=0.0)
-        self.assertEqual(7, deleted["runtime_perf_metric_snapshots"])
-        self.assertEqual(0, deleted["profiler_metric_snapshots"])
-
-        with sqlite3.connect(self.local_state_db_path) as conn:
-            remaining = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' "
-                "AND name IN ('runtime_perf_metric_snapshots', 'profiler_metric_snapshots')"
-            ).fetchall()
-        self.assertEqual([], remaining)
-
-        deleted_again = drain_legacy_metric_snapshot_tables(batch_size=3, pacing_s=0.0)
-        self.assertEqual(0, sum(deleted_again.values()))
+    def test_writing_a_bin_layout_stamps_servo_channels_and_keeps_a_preset(self) -> None:
+        set_bin_layout({"layers": [{"sections": [["small"]], "servo_channel_id": 3}, {"sections": [["small"]]}]})
+        self.assertEqual([3, 1], [layer["servo_channel_id"] for layer in get_bin_layout()["layers"]])
+        self.assertEqual(1, count_bin_layouts())
 
     def test_sorting_sessions_persist_current_bin_state_and_recent_pieces(self) -> None:
-        initialize_local_state()
-
         session = start_new_sorting_session(reason="test")
         self.assertEqual(session["id"], get_active_sorting_session()["id"])
 
@@ -230,7 +94,6 @@ class LocalStateMigrationTests(unittest.TestCase):
         self.assertEqual([], cleared["bins"])
 
     def test_bin_snapshots_accumulate_layers_and_close_on_all_clear(self) -> None:
-        initialize_local_state()
         start_new_sorting_session(reason="test")
 
         def _distribute(uuid: str, destination_bin: list[int], distributed_at: float, part_id: str) -> None:

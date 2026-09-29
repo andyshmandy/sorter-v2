@@ -7,9 +7,6 @@ from pathlib import Path
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
-from local_state import initialize_local_state
-initialize_local_state()
-
 from local_state import get_api_keys
 from local_metrics import (
     recordProfilerMetricSnapshot,

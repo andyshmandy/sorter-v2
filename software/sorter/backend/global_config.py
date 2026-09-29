@@ -182,9 +182,9 @@ def mkGlobalConfig() -> GlobalConfig:
     log_file = os.path.join(log_dir, datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".log")
     gc.dump_logs_to_file = os.getenv("DUMP_BACKEND_LOGS", "0") == "1"
     gc.logger = Logger(gc.debug_level, log_file=log_file if gc.dump_logs_to_file else None)
-    # Single background pruning system (logs + DB metric snapshots). Prune logs
-    # regardless of the dump flag so previously-accumulated logs still get
-    # cleaned; only protect the live file when we are actually writing one.
+    # Background log pruning, regardless of the dump flag so previously
+    # accumulated logs still get cleaned; only protect the live file when we
+    # are actually writing one.
     from pruner import runPruningAsync
     runPruningAsync(gc, log_dir, log_file if gc.dump_logs_to_file else None)
     # Profiler enable lives in machine_params.toml ([profiler] enabled), toggled

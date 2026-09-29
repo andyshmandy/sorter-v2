@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import functools
 import secrets
 import sqlite3
 import time
@@ -79,6 +80,13 @@ def _load_or_create_seed() -> bytes:
 
 
 def _fernet() -> Fernet:
+    return _fernet_for(str(db.local_state_db_path()))
+
+
+# The seed never changes while the backend runs (recovering from a bad seed
+# takes a restart), so one key per database file is derived once.
+@functools.cache
+def _fernet_for(_db_path: str) -> Fernet:
     seed = _load_or_create_seed()
     hkdf = HKDF(
         algorithm=hashes.SHA256(),

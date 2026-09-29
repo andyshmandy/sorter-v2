@@ -53,9 +53,8 @@ class SecretsCryptoTests(unittest.TestCase):
         self.assertEqual({"openrouter": "secret-key-abc"}, get_api_keys())
 
     def test_legacy_plaintext_api_keys_are_migrated_on_read(self) -> None:
-        from local_state import get_api_keys, initialize_local_state, _connection, _set_json
+        from local_state import get_api_keys, _connection, _set_json
 
-        initialize_local_state()
         # Simulate legacy plaintext entry written by an older build.
         with _connection() as conn:
             _set_json(conn, "api_keys", {"gemini": "legacy-plaintext-token"})
