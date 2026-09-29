@@ -132,8 +132,8 @@ def _addPiece(
 
 def test_positioning_records_the_piece_it_aims_for() -> None:
     piece = KnownObject(part_id="3001", color_id="1")
+    piece.too_big = True  # the oversize passthrough reaches READY without a profile or layout
     shared = SharedVariables()
-    shared.sample_collection_mode = True
     shared.transport = SimpleNamespace(getPieceForDistributionPositioning=lambda: piece)
     layout = SimpleNamespace(layers=[])
     positioning = Positioning(

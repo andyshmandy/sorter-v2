@@ -11,7 +11,6 @@ from defs.known_object import PieceStage
 
 
 CHUTE_SETTLE_MS = 1500
-SAMPLE_COLLECTION_CHUTE_SETTLE_MS = 400
 MISSING_DROP_PIECE_GRACE_MS = 1500
 
 
@@ -73,7 +72,7 @@ class Sending(BaseState):
                 return None
 
         elapsed_ms = (now - self.start_time) * 1000
-        settle_ms = self._settleMs()
+        settle_ms = CHUTE_SETTLE_MS
         self._setOccupancyState("sending.wait_chute_settle")
         if elapsed_ms < settle_ms:
             return None
@@ -124,19 +123,11 @@ class Sending(BaseState):
         return piece.stage == PieceStage.distributed or piece.distributed_at is not None
 
     def _shouldReopenGate(self) -> bool:
-        if bool(getattr(self.shared, "sample_collection_mode", False)):
-            return True
-
         elapsed_since_drop = time.time() - self.start_time
-        required_s = (self._settleMs() / 1000.0) + self._cooldown_s
+        required_s = (CHUTE_SETTLE_MS / 1000.0) + self._cooldown_s
         if elapsed_since_drop < required_s:
             return False
         return True
-
-    def _settleMs(self) -> int:
-        if bool(getattr(self.shared, "sample_collection_mode", False)):
-            return SAMPLE_COLLECTION_CHUTE_SETTLE_MS
-        return CHUTE_SETTLE_MS
 
     def cleanup(self) -> None:
         super().cleanup()

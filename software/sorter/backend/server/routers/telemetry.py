@@ -43,14 +43,6 @@ def stepperTelemetrySummary() -> StepperSummaryResponse:
     return StepperSummaryResponse(steppers=stepper_telemetry.getStepperSummary())
 
 
-@router.get("/api/stepper-telemetry/runs/{run_id}")
-def getTelemetryRun(run_id: str) -> dict[str, Any]:
-    run = stepper_telemetry.getRun(run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
-    return run
-
-
 @router.get("/api/stepper-telemetry/runs/{run_id}/samples")
 def getTelemetryRunSamples(run_id: str, max_points: int = 5000) -> dict[str, Any]:
     run = stepper_telemetry.getRun(run_id)

@@ -78,34 +78,6 @@ class StepperStopResponse(BaseModel):
     stepper: str
 
 
-class StepperStopAllResponse(BaseModel):
-    success: bool
-    steppers: List[str]
-
-
-class C4SectorMoveResponse(BaseModel):
-    success: bool
-    executed: bool
-    stepper: str
-    from_sector: int
-    to_sector: int
-    sector_delta: int
-    output_delta_deg: float
-    motor_delta_deg: float
-    motor_microsteps: int
-    direction: str
-    gear_ratio: float
-    microsteps: int
-    motor_steps_per_revolution: int
-    min_speed_microsteps_per_second: int
-    max_speed_microsteps_per_second: int
-    acceleration_microsteps_per_second_sq: int | None = None
-    requested_max_speed_microsteps_per_second: int | None = None
-    requested_acceleration_microsteps_per_second_sq: int | None = None
-    configured_stepper_default_speed_microsteps_per_second: int | None = None
-    warnings: List[str] = Field(default_factory=list)
-
-
 class TmcSettingsRequest(BaseModel):
     irun: Optional[int] = None
     ihold: Optional[int] = None
@@ -428,14 +400,6 @@ def _desired_stepper_current_payload(name: str, stepper: Any) -> Dict[str, int]:
     persisted = _current_payload_from_persisted_config(name)
     _stepper_current_cache[name] = dict(persisted)
     return persisted
-
-
-def _parse_ihold_irun(raw: int) -> Dict[str, int]:
-    return {
-        "ihold": raw & 0x1F,
-        "irun": (raw >> 8) & 0x1F,
-        "ihold_delay": (raw >> 16) & 0x0F,
-    }
 
 
 def _parse_chopconf_mres(raw: int) -> int:
@@ -807,97 +771,6 @@ def move_stepper_degrees(
     )
 
 
-@router.post(
-    "/api/classification-channel/sector-move",
-    response_model=C4SectorMoveResponse,
-)
-def classification_channel_sector_move(
-    from_sector: int,
-    to_sector: int,
-    direction: str = "shortest",
-    execute: bool = False,
-) -> C4SectorMoveResponse:
-    """Plan or execute one discrete C4 sector move on the C-channel axis."""
-    if execute:
-        _ensure_manual_motion_allowed("move the classification channel")
-    if direction not in ("shortest", "cw", "ccw"):
-        raise HTTPException(status_code=400, detail="direction must be one of: shortest, cw, ccw")
-
-    from subsystems.classification_channel.five_sector_platter import C4FiveSectorPlatter
-
-    platter = C4FiveSectorPlatter.from_irl_config(_active_irl_config())
-    try:
-        plan = platter.sector_move_plan(
-            from_sector,
-            to_sector,
-            direction=direction,  # type: ignore[arg-type]
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    if execute:
-        target = _resolve_stepper("c_channel_4")
-        lock = shared_state.pulse_locks.setdefault("c_channel_4", threading.Lock())
-        if not lock.acquire(blocking=False):
-            raise HTTPException(status_code=409, detail="Stepper 'c_channel_4' is already moving")
-        try:
-            target.enabled = True
-            accepted = plan.apply_to_stepper(target)
-            if not accepted:
-                raise HTTPException(status_code=500, detail="C4 sector move was rejected by the stepper")
-        except HTTPException:
-            lock.release()
-            raise
-        except Exception as exc:
-            lock.release()
-            raise HTTPException(status_code=500, detail=f"C4 sector move failed: {exc}") from exc
-
-        def _release_after_move() -> None:
-            try:
-                start = time.monotonic()
-                while not target.stopped and (time.monotonic() - start) < 30:
-                    time.sleep(0.02)
-            finally:
-                lock.release()
-
-        threading.Thread(target=_release_after_move, daemon=True).start()
-
-    return C4SectorMoveResponse(
-        success=True,
-        executed=bool(execute),
-        stepper="c_channel_4",
-        from_sector=plan.from_sector,
-        to_sector=plan.to_sector,
-        sector_delta=plan.sector_delta,
-        output_delta_deg=plan.output_delta_deg,
-        motor_delta_deg=plan.motor_delta_deg,
-        motor_microsteps=plan.motor_microsteps,
-        direction=plan.direction,
-        gear_ratio=platter.gear_ratio,
-        microsteps=platter.microsteps,
-        motor_steps_per_revolution=platter.motor_steps_per_revolution,
-        min_speed_microsteps_per_second=(
-            plan.motion_profile.min_speed_microsteps_per_second
-        ),
-        max_speed_microsteps_per_second=(
-            plan.motion_profile.max_speed_microsteps_per_second
-        ),
-        acceleration_microsteps_per_second_sq=(
-            plan.motion_profile.acceleration_microsteps_per_second_sq
-        ),
-        requested_max_speed_microsteps_per_second=(
-            plan.motion_profile.requested_max_speed_microsteps_per_second
-        ),
-        requested_acceleration_microsteps_per_second_sq=(
-            plan.motion_profile.requested_acceleration_microsteps_per_second_sq
-        ),
-        configured_stepper_default_speed_microsteps_per_second=(
-            plan.motion_profile.configured_stepper_default_speed_microsteps_per_second
-        ),
-        warnings=list(plan.motion_profile.warnings),
-    )
-
-
 @router.post("/stepper/stop", response_model=StepperStopResponse)
 def stop_stepper(stepper: str) -> StepperStopResponse:
     target = _resolve_stepper(stepper)
@@ -908,33 +781,6 @@ def stop_stepper(stepper: str) -> StepperStopResponse:
         raise HTTPException(status_code=500, detail=f"Stop failed: {e}")
 
     return StepperStopResponse(success=True, stepper=stepper)
-
-
-@router.post("/stepper/stop-all", response_model=StepperStopAllResponse)
-def stop_all_steppers() -> StepperStopAllResponse:
-    halted: list[str] = []
-    errors: Dict[str, str] = {}
-
-    for name, stepper in _stepper_mapping().items():
-        if stepper is None:
-            continue
-        try:
-            _halt_stepper(stepper, force=True)
-            halted.append(name)
-        except Exception as e:
-            errors[name] = str(e)
-
-    if errors:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "message": "One or more steppers failed to stop.",
-                "errors": errors,
-                "stopped": halted,
-            },
-        )
-
-    return StepperStopAllResponse(success=True, steppers=halted)
 
 
 @router.get("/api/stepper/{name}/tmc")

@@ -906,22 +906,6 @@ def distribution_incident_clear() -> Dict[str, Any]:
     return {"ok": True, "cleared": True, "kind": kind, "channel": "distribution"}
 
 
-@router.post("/api/classification-channel/wall-phase")
-def classification_channel_wall_phase(
-    include_lines: bool = False,
-) -> Dict[str, Any]:
-    frame = _classification_channel_live_frame()
-
-    from vision.c4_wall_phase import detect_c4_wall_phase
-
-    result = detect_c4_wall_phase(frame.raw)
-    return {
-        "ok": True,
-        "frame_luma": _frame_luma_payload(frame.raw),
-        **result.as_dict(include_lines=include_lines),
-    }
-
-
 def _frame_luma_payload(frame_bgr: Any) -> Dict[str, Any]:
     if frame_bgr is None or not hasattr(frame_bgr, "shape"):
         return {}
@@ -940,22 +924,6 @@ def _frame_luma_payload(frame_bgr: Any) -> Dict[str, Any]:
         }
     except Exception:
         return {}
-
-
-def _classification_channel_live_frame() -> Any:
-    vm = shared_state.vision_manager
-    if vm is None or not hasattr(vm, "getCaptureThreadForRole"):
-        raise HTTPException(status_code=503, detail="Vision manager not available.")
-
-    capture = vm.getCaptureThreadForRole("carousel")
-    if capture is None:
-        capture = vm.getCaptureThreadForRole("classification_channel")
-    if capture is None:
-        raise HTTPException(status_code=503, detail="Classification-channel camera not available.")
-    frame = capture.latest_frame
-    if frame is None:
-        raise HTTPException(status_code=503, detail="No live classification-channel frame available.")
-    return frame
 
 
 @router.post("/api/classification-channel/sector-occupancy")

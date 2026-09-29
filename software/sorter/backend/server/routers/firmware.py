@@ -299,24 +299,6 @@ def get_firmware_boards(refresh: bool = False) -> Dict[str, Any]:
     }
 
 
-@router.get("/api/firmware/config")
-def get_firmware_config() -> Dict[str, Any]:
-    from irl.config import CLASSIFICATION_CHANNEL_FLOW, FEEDER_FLOW, MACHINE_SETUP
-
-    gc = _gc()
-    payload: Dict[str, Any] = {
-        "hardware_state": shared_state.hardware_state,
-        "no_power_development_mode": bool(getattr(gc, "no_power_development_mode", False)),
-        "machine_setup": MACHINE_SETUP,
-        "feeder_mode": FEEDER_FLOW,
-        "classification_channel_mode": CLASSIFICATION_CHANNEL_FLOW,
-    }
-    from machine_toml import machine_toml_path
-
-    payload["machine_toml_present"] = machine_toml_path().exists()
-    return payload
-
-
 def _parseAsset(asset: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     name = asset.get("name", "")
     for pattern, family, variant, role in _ASSET_PATTERNS:

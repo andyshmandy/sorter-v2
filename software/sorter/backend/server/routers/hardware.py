@@ -18,7 +18,6 @@ from blob_manager import (
     getNotInInventoryBins,
     setNotInInventoryBins,
 )
-from hardware.bus import MCUBus
 from irl.bin_layout import (
     getBinLayout,
     saveBinLayout,
@@ -57,7 +56,6 @@ from local_state import (
 from server import shared_state
 from server.routers.steppers import _stepper_mapping, _halt_stepper
 from server.waveshare_inventory import get_waveshare_inventory_manager
-from machine_platform.control_board import discover_control_boards
 
 router = APIRouter()
 
@@ -80,31 +78,6 @@ def _ensure_not_homing(action: str) -> None:
         )
 
 
-def _control_board_summary(board: Any) -> Dict[str, Any]:
-    return {
-        "family": getattr(board.identity, "family", "unknown"),
-        "role": getattr(board.identity, "role", "unknown"),
-        "device_name": getattr(board.identity, "device_name", "Unknown"),
-        "port": getattr(board.identity, "port", ""),
-        "address": getattr(board.identity, "address", 0),
-        "logical_steppers": list(getattr(board, "logical_stepper_names", tuple())),
-    }
-
-
-def _control_board_observability(board: Any) -> Dict[str, Any]:
-    interface = getattr(board, "interface", None)
-    observability: Dict[str, Any] = {}
-    if interface is not None and hasattr(interface, "get_observability_info"):
-        try:
-            observability = dict(interface.get_observability_info())
-        except Exception as exc:
-            observability = {"error": str(exc)}
-    return {
-        **_control_board_summary(board),
-        "observability": observability,
-    }
-
-
 def _close_discovered_boards(boards: list[Any]) -> None:
     seen_serials: set[int] = set()
     for board in boards:
@@ -117,74 +90,6 @@ def _close_discovered_boards(boards: list[Any]) -> None:
             serial_obj.close()
         except Exception:
             pass
-
-
-@router.get("/api/hardware-config/control-boards/live")
-def get_live_control_boards() -> Dict[str, Any]:
-    active_irl = _active_irl()
-    if active_irl is None:
-        raise HTTPException(status_code=503, detail="Hardware not initialized.")
-    control_boards = getattr(active_irl, "control_boards", {})
-    if not isinstance(control_boards, dict):
-        control_boards = {}
-    return {
-        "ok": True,
-        "hardware_state": shared_state.hardware_state,
-        "boards": [
-            _control_board_summary(board)
-            for board in control_boards.values()
-        ],
-    }
-
-
-@router.get("/api/hardware-config/control-boards/observability")
-def get_control_board_observability() -> Dict[str, Any]:
-    active_irl = _active_irl()
-    if active_irl is not None:
-        control_boards = getattr(active_irl, "control_boards", {})
-        if not isinstance(control_boards, dict):
-            control_boards = {}
-        return {
-            "ok": True,
-            "hardware_state": shared_state.hardware_state,
-            "source": "live",
-            "boards": [
-                _control_board_observability(board)
-                for board in control_boards.values()
-            ],
-        }
-
-    worker = shared_state.hardware_worker_thread
-    if (
-        (worker is not None and worker.is_alive())
-        or shared_state.hardware_state in {"homing", "initializing"}
-    ):
-        raise HTTPException(status_code=409, detail="Hardware operation in progress.")
-
-    gc = shared_state.gc_ref
-    if gc is None:
-        raise HTTPException(status_code=503, detail="Global config is not initialized yet.")
-
-    discovered_boards: list[Any] = []
-    try:
-        discovered_boards = discover_control_boards(
-            gc,
-            required_stepper_names=(),
-            attempts=2,
-            retry_delay_s=0.2,
-        )
-        return {
-            "ok": True,
-            "hardware_state": shared_state.hardware_state,
-            "source": "scan",
-            "mcu_ports": MCUBus.enumerate_buses(),
-            "boards": [
-                _control_board_observability(board)
-                for board in discovered_boards
-            ],
-        }
-    finally:
-        _close_discovered_boards(discovered_boards)
 
 
 def _active_waveshare_service() -> Any | None:
@@ -304,11 +209,6 @@ class ServoMovePayload(BaseModel):
 
 class ServoNudgePayload(BaseModel):
     degrees: int
-
-
-class ServoLayerPreviewPayload(BaseModel):
-    invert: bool = False
-    is_open: bool = False
 
 
 class ServoLayerMovePayload(BaseModel):
@@ -998,33 +898,6 @@ def get_hardware_config() -> Dict[str, Any]:
     }
 
 
-@router.get("/api/hardware-config/servo/live")
-def get_live_servo_feedback() -> Dict[str, Any]:
-    config = machine_toml.read()
-    servo_settings = _servo_settings_from_config(config)
-    layer_count = int(servo_settings.get("layer_count", 0))
-    active_irl = _active_irl()
-
-    if active_irl is None:
-        return {
-            "ok": True,
-            "backend": servo_settings["backend"],
-            "live_available": False,
-            "layers": [],
-        }
-
-    servos = list(getattr(active_irl, "servos", []))
-    return {
-        "ok": True,
-        "backend": servo_settings["backend"],
-        "live_available": len(servos) > 0,
-        "layers": [
-            _live_servo_feedback_for_layer(index, servos[index] if index < len(servos) else None)
-            for index in range(layer_count)
-        ],
-    }
-
-
 @router.post("/api/hardware-config/servo")
 def save_servo_hardware_config(
     payload: ServoHardwareSettingsPayload,
@@ -1213,134 +1086,6 @@ def save_servo_speeds(payload: ServoSpeedSettingsPayload) -> Dict[str, Any]:
             pass
 
     return {"ok": True, "open_speed": open_speed, "close_speed": close_speed, "homing_speed": homing_speed}
-
-
-@router.post("/api/hardware-config/servo/layers/{layer_index}/toggle")
-def toggle_layer_servo(layer_index: int) -> Dict[str, Any]:
-    _ensure_not_homing("toggle a servo")
-    servo = _live_servo_for_layer(layer_index)
-    if not hasattr(servo, "toggle"):
-        raise HTTPException(status_code=500, detail="Selected servo does not support test toggling.")
-
-    try:
-        _cfg = machine_toml.read()
-        _speeds = _servo_settings_from_config(_cfg)
-        currently_open = hasattr(servo, "isOpen") and servo.isOpen()
-        _apply_pca_servo_speed(servo, _speeds.get("close_speed") if currently_open else _speeds.get("open_speed"))
-        servo.toggle()
-        feedback = _live_servo_feedback_for_layer(layer_index, servo)
-        is_open = bool(feedback.get("is_open")) if feedback.get("available") else False
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to toggle layer {layer_index + 1} servo: {e}")
-
-    # Persist servo states so they survive restarts
-    try:
-        from irl.config import save_servo_states
-        if shared_state.controller_ref is not None and hasattr(shared_state.controller_ref, "irl"):
-            servos = getattr(shared_state.controller_ref.irl, "servos", [])
-            save_servo_states(servos, shared_state.controller_ref.gc)
-    except Exception:
-        pass
-
-    return {
-        "ok": True,
-        "layer_index": layer_index,
-        "is_open": is_open,
-        "feedback": feedback,
-        "message": (
-            f"Layer {layer_index + 1} servo opened."
-            if is_open
-            else f"Layer {layer_index + 1} servo closed."
-        ),
-    }
-
-
-@router.post("/api/hardware-config/servo/layers/{layer_index}/preview")
-def preview_layer_servo(
-    layer_index: int,
-    payload: ServoLayerPreviewPayload,
-) -> Dict[str, Any]:
-    _ensure_not_homing("preview a servo")
-    servo = _live_servo_for_layer(layer_index)
-    config = machine_toml.read()
-    servo_settings = _servo_settings_from_config(config)
-    backend = servo_settings["backend"]
-    desired_open = bool(payload.is_open)
-    invert = bool(payload.invert)
-
-    layout = getBinLayout()
-    from irl.bin_layout import calibratedAnglesForLayer
-
-    if 0 <= layer_index < len(layout.layers):
-        layer_open, layer_closed = calibratedAnglesForLayer(layout, layer_index)
-    else:
-        layer_open = layer_closed = None
-
-    try:
-        if backend == "waveshare":
-            if hasattr(servo, "set_invert"):
-                servo.set_invert(invert)
-        elif (
-            hasattr(servo, "set_preset_angles")
-            and isinstance(layer_open, int)
-            and isinstance(layer_closed, int)
-        ):
-            if invert:
-                servo.set_preset_angles(layer_closed, layer_open)
-            else:
-                servo.set_preset_angles(layer_open, layer_closed)
-
-        if desired_open:
-            _apply_pca_servo_speed(servo, servo_settings.get("open_speed"))
-            if hasattr(servo, "open"):
-                servo.open()
-        else:
-            _apply_pca_servo_speed(servo, servo_settings.get("close_speed"))
-            if hasattr(servo, "close"):
-                servo.close()
-        feedback = _live_servo_feedback_for_layer(layer_index, servo)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to preview invert on layer {layer_index + 1}: {e}",
-        )
-
-    return {
-        "ok": True,
-        "layer_index": layer_index,
-        "is_open": desired_open,
-        "invert": invert,
-        "feedback": feedback,
-        "message": (
-            f"Layer {layer_index + 1} preview updated to {'open' if desired_open else 'closed'} "
-            f"with invert {'on' if invert else 'off'}."
-        ),
-    }
-
-
-@router.post("/api/hardware-config/servo/layers/{layer_index}/calibrate")
-def calibrate_layer_servo(layer_index: int) -> Dict[str, Any]:
-    _ensure_not_homing("calibrate a servo")
-    servo = _live_servo_for_layer(layer_index)
-    if not hasattr(servo, "recalibrate"):
-        raise HTTPException(
-            status_code=400,
-            detail="Calibration is only supported for Waveshare storage-layer servos.",
-        )
-
-    try:
-        min_limit, max_limit = servo.recalibrate()
-        feedback = _live_servo_feedback_for_layer(layer_index, servo)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to calibrate layer {layer_index + 1} servo: {e}")
-
-    return {
-        "ok": True,
-        "layer_index": layer_index,
-        "limits": {"min": min_limit, "max": max_limit},
-        "feedback": feedback,
-        "message": f"Layer {layer_index + 1} servo calibrated.",
-    }
 
 
 @router.post("/api/hardware-config/servo/layers/{layer_index}/nudge")
@@ -1555,12 +1300,6 @@ def get_servo_status() -> Dict[str, Any]:
     }
 
 
-@router.get("/api/hardware-config/waveshare/ports")
-def get_waveshare_ports() -> Dict[str, Any]:
-    status = _waveshare_inventory_status()
-    return {"ok": True, "ports": status.get("ports", [])}
-
-
 @router.get("/api/hardware-config/waveshare/status")
 def get_waveshare_inventory_status(port: str | None = None) -> Dict[str, Any]:
     return _waveshare_inventory_status(port=port)
@@ -1570,17 +1309,6 @@ def get_waveshare_inventory_status(port: str | None = None) -> Dict[str, Any]:
 def rescan_waveshare_inventory(port: str | None = None) -> Dict[str, Any]:
     _ensure_not_homing("scan Waveshare servos")
     return _waveshare_inventory_status(port=port, refresh=True)
-
-
-@router.get("/api/hardware-config/waveshare/servos")
-def get_waveshare_servos(port: str | None = None) -> Dict[str, Any]:
-    status = _waveshare_inventory_status(port=port)
-    return {
-        "ok": True,
-        "servos": status.get("servos", []),
-        "highest_seen_id": status.get("highest_seen_id", 0),
-        "suggested_next_id": status.get("suggested_next_id"),
-    }
 
 
 @router.post("/api/hardware-config/waveshare/servos/{servo_id}/set-id")

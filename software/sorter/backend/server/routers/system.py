@@ -11,10 +11,6 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 import server.shared_state as shared_state
-from subsystems.sample_collection_speed import (
-    default_speed_rpm,
-    microsteps_from_stepper_config,
-)
 
 router = APIRouter()
 
@@ -187,12 +183,6 @@ def initialize_system() -> Dict[str, Any]:
     )
 
 
-# Keep the old endpoint as alias for backwards compatibility
-@router.post("/api/system/start")
-def start_system() -> Dict[str, Any]:
-    return home_system()
-
-
 @router.post("/api/system/restart")
 def restart_system() -> Dict[str, Any]:
     """Restart the backend process.
@@ -294,154 +284,6 @@ def reboot_machine() -> Dict[str, Any]:
     return {"ok": True, "message": "Machine is restarting..."}
 
 
-def _shared_variables():
-    controller = shared_state.controller_ref
-    coordinator = getattr(controller, "coordinator", None) if controller is not None else None
-    return getattr(coordinator, "shared", None)
-
-
-def _open_all_layer_doors_for_sample_collection() -> Dict[str, Any]:
-    controller = shared_state.controller_ref
-    irl = getattr(controller, "irl", None) if controller is not None else shared_state.getActiveIRL()
-    gc = getattr(controller, "gc", None) if controller is not None else shared_state.gc_ref
-    if irl is None:
-        return {"ok": False, "reason": "hardware_not_initialized", "opened": 0, "errors": []}
-    if bool(getattr(gc, "disable_servos", False)):
-        return {"ok": True, "reason": "servos_disabled", "opened": 0, "errors": []}
-
-    servos = list(getattr(irl, "servos", []) or [])
-    errors: list[dict[str, Any]] = []
-    opened = 0
-    for index, servo in enumerate(servos):
-        if not bool(getattr(servo, "available", True)):
-            errors.append(
-                {
-                    "layer_index": index,
-                    "reason": "servo_unavailable",
-                }
-            )
-            continue
-        try:
-            open_fn = getattr(servo, "open", None)
-            if not callable(open_fn):
-                errors.append(
-                    {
-                        "layer_index": index,
-                        "reason": "open_not_supported",
-                    }
-                )
-                continue
-            open_fn()
-            opened += 1
-        except Exception as exc:
-            errors.append(
-                {
-                    "layer_index": index,
-                    "reason": str(exc),
-                }
-            )
-
-    logger = getattr(gc, "logger", None)
-    if logger is not None:
-        if errors and hasattr(logger, "warning"):
-            logger.warning(
-                "Sample collection mode: opened %d/%d layer doors; errors=%r"
-                % (opened, len(servos), errors)
-            )
-        elif hasattr(logger, "info"):
-            logger.info(
-                "Sample collection mode: opened %d/%d layer doors for discard passthrough"
-                % (opened, len(servos))
-            )
-
-    return {"ok": len(errors) == 0, "opened": opened, "errors": errors}
-
-
-def _irl_config_for_speed_defaults():
-    controller = shared_state.controller_ref
-    coordinator = getattr(controller, "coordinator", None) if controller is not None else None
-    config = getattr(coordinator, "irl_config", None)
-    if config is not None:
-        return config
-    config = getattr(shared_state.vision_manager, "_irl_config", None)
-    if config is not None:
-        return config
-    try:
-        from irl.config import mkIRLConfig
-
-        return mkIRLConfig()
-    except Exception:
-        return None
-
-
-def _sample_collection_default_speeds_rpm() -> Dict[str, float | None]:
-    config = _irl_config_for_speed_defaults()
-    if config is None:
-        return {role: None for role in shared_state.SAMPLE_COLLECTION_SPEED_ROLES}
-    feeder_config = getattr(config, "feeder_config", None)
-    if feeder_config is None:
-        return {role: None for role in shared_state.SAMPLE_COLLECTION_SPEED_ROLES}
-
-    specs = {
-        "c_channel_1": (
-            getattr(feeder_config, "first_rotor", None),
-            getattr(config, "c_channel_1_rotor_stepper", None),
-        ),
-        "c_channel_2": (
-            getattr(feeder_config, "second_rotor_normal", None),
-            getattr(config, "c_channel_2_rotor_stepper", None),
-        ),
-        "c_channel_3": (
-            getattr(feeder_config, "third_rotor_normal", None),
-            getattr(config, "c_channel_3_rotor_stepper", None),
-        ),
-        "classification_channel": (
-            getattr(feeder_config, "classification_channel_eject", None),
-            getattr(config, "c_channel_4_rotor_stepper", None)
-            or getattr(config, "carousel_stepper", None),
-        ),
-    }
-
-    defaults: Dict[str, float | None] = {}
-    for role, (pulse_config, stepper_config) in specs.items():
-        speed = getattr(pulse_config, "microsteps_per_second", None)
-        if not isinstance(speed, int) or isinstance(speed, bool) or speed <= 0:
-            defaults[role] = None
-            continue
-        defaults[role] = default_speed_rpm(
-            speed,
-            microsteps=microsteps_from_stepper_config(stepper_config),
-        )
-    return defaults
-
-
-def _sample_collection_speeds_payload() -> Dict[str, Any]:
-    overrides = shared_state.getSampleCollectionSpeedsRpmByRole()
-    defaults = _sample_collection_default_speeds_rpm()
-    effective = {
-        role: overrides.get(role) if overrides.get(role) is not None else defaults.get(role)
-        for role in shared_state.SAMPLE_COLLECTION_SPEED_ROLES
-    }
-    shared = _shared_variables()
-    return {
-        "ok": True,
-        "roles": list(shared_state.SAMPLE_COLLECTION_SPEED_ROLES),
-        "aliases": dict(shared_state.SAMPLE_COLLECTION_SPEED_ROLE_ALIASES),
-        "min_rpm": shared_state.SAMPLE_COLLECTION_SPEED_MIN_RPM,
-        "max_rpm": shared_state.SAMPLE_COLLECTION_SPEED_MAX_RPM,
-        "max_rpm_by_role": shared_state.getSampleCollectionSpeedMaxRpmByRole(),
-        "speeds_rpm_by_role": overrides,
-        "default_speeds_rpm_by_role": defaults,
-        "effective_speeds_rpm_by_role": effective,
-        "sample_collection_mode": (
-            bool(getattr(shared, "sample_collection_mode", False))
-            if shared is not None
-            else False
-        ),
-        "sample_collection_mode_available": shared is not None,
-    }
-
-
 @router.get("/api/system/dashboard-config")
 def get_dashboard_config() -> Dict[str, Any]:
     from toml_config import getDashboardConfig, incidentDefinitions
@@ -533,62 +375,6 @@ def set_profiler_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, **merged}
 
 
-@router.get("/api/system/sample-collection-mode")
-def get_sample_collection_mode() -> Dict[str, Any]:
-    shared = _shared_variables()
-    if shared is None:
-        return {"ok": False, "enabled": False, "reason": "controller_not_initialized"}
-    return {"ok": True, "enabled": bool(getattr(shared, "sample_collection_mode", False))}
-
-
-@router.post("/api/system/sample-collection-mode")
-def set_sample_collection_mode(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Toggle the feeder's sample-collection bypass.
-
-    When enabled, C3 advances pieces past the cameras regardless of the
-    classification-channel downstream gate. Use during training-sample
-    drives where the classification pipeline may be clogged by ghost
-    detections we are explicitly trying to record samples to retrain
-    against.
-    """
-    shared = _shared_variables()
-    if shared is None:
-        return {"ok": False, "reason": "controller_not_initialized"}
-    enabled = bool(payload.get("enabled", False))
-    shared.sample_collection_mode = enabled
-    doors = (
-        _open_all_layer_doors_for_sample_collection()
-        if enabled
-        else {"ok": True, "opened": 0, "errors": []}
-    )
-    return {
-        "ok": True,
-        "enabled": shared.sample_collection_mode,
-        "doors": doors,
-    }
-
-
-@router.get("/api/system/sample-collection-speeds")
-def get_sample_collection_speeds() -> Dict[str, Any]:
-    return _sample_collection_speeds_payload()
-
-
-@router.post("/api/system/sample-collection-speeds")
-def set_sample_collection_speeds(payload: Dict[str, Any]) -> Dict[str, Any]:
-    speeds = payload.get("speeds_rpm_by_role")
-    if speeds is None:
-        speeds = payload.get("speeds_rpm")
-    if speeds is None:
-        speeds = payload
-    try:
-        shared_state.setSampleCollectionSpeedsRpm(speeds)
-    except ValueError as exc:
-        result = _sample_collection_speeds_payload()
-        result.update({"ok": False, "reason": "invalid_speed", "message": str(exc)})
-        return result
-    return _sample_collection_speeds_payload()
-
-
 def _sample_collector():
     controller = shared_state.controller_ref
     gc = getattr(controller, "gc", None) if controller is not None else shared_state.gc_ref
@@ -625,8 +411,7 @@ def get_sample_capture() -> Dict[str, Any]:
 def set_sample_capture(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Standalone training-image capture: one enable toggle + a cadence.
 
-    Independent of machine mode and of the legacy sample_collection_mode
-    feeder bypass. ``enabled`` flips picture-taking on/off. Cadence is either
+    Independent of machine mode. ``enabled`` flips picture-taking on/off. Cadence is either
     the decay schedule (``decay_enabled`` + ``burst_interval_s`` /
     ``floor_interval_s`` / ``ramp_hours`` / ``jitter_frac``, default) or a
     fixed rate (``rate_hz`` / ``interval_s``, default 10s). ``reset_decay``

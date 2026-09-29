@@ -41,13 +41,6 @@ class SharedVariables:
         # falls. Written by the classification channel, read by Positioning.
         self.bucket_passthrough_hold: bool = False
         self._chute_move_in_progress: bool = False
-        # Sample-collection maintenance mode. When True, the feeder ignores
-        # downstream gates (ch3_held / classification_channel_block) so C2/C3
-        # keep advancing pieces past the cameras regardless of whether the
-        # classification channel is ready. Use during training-sample drives
-        # so the pipeline doesn't stall on ghost detections in C4. Toggled
-        # via the /api/sample-collection-mode endpoint.
-        self._sample_collection_mode: bool = False
         self._ignored_classification_dropzone_track_ids: set[int] = set()
 
     @property
@@ -79,14 +72,6 @@ class SharedVariables:
     @chute_move_in_progress.setter
     def chute_move_in_progress(self, value: bool) -> None:
         self.set_chute_motion(bool(value), target_bin=None)
-
-    @property
-    def sample_collection_mode(self) -> bool:
-        return self._sample_collection_mode
-
-    @sample_collection_mode.setter
-    def sample_collection_mode(self, value: bool) -> None:
-        self._sample_collection_mode = bool(value)
 
     def set_classification_gate(
         self,
