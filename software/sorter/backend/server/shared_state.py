@@ -13,10 +13,11 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
-from fastapi import WebSocket
+from fastapi import WebSocket, status
 
 from global_config import GlobalConfig
 from hardware.fault import HardwareFault
+from server.security import describe_origin_decision, websocket_connection_allowed
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -152,6 +153,19 @@ WS_SLOW_CLIENT_LIMIT_S = 5.0
 WS_HEARTBEAT_INTERVAL_S = 2.0
 ws_clients: set["WsClient"] = set()
 ws_slow_clients_closed = 0
+
+
+async def acceptWebsocket(websocket: WebSocket) -> bool:
+    """Accept a websocket from the UI; refuse one from any other origin."""
+    host = websocket.client.host if websocket.client is not None else None
+    origin = websocket.headers.get("Origin")
+    if websocket_connection_allowed(origin, host):
+        await websocket.accept()
+        return True
+    if gc_ref is not None:
+        gc_ref.logger.info(f"[WS reject] client_host={host!r} {describe_origin_decision(origin)}")
+    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="WebSocket origin not allowed.")
+    return False
 
 
 class WsClient:
