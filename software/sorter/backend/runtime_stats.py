@@ -1,5 +1,4 @@
 import inspect
-import statistics
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -37,51 +36,43 @@ def _appendSample(samples: list[float], value: float) -> None:
         del samples[0]
 
 
+def _stats(samples: list[float]) -> tuple[int, float, float, float, float, float]:
+    """n, mean, median, p90, min and max of a non-empty sample list. Plain float
+    arithmetic: the statistics module sums in exact fractions, which for the
+    ring buffers summarized every second cost more than all of perception's
+    Python."""
+    values = sorted(samples)
+    n = len(values)
+    mid = n // 2
+    median = values[mid] if n % 2 else (values[mid - 1] + values[mid]) / 2
+    return n, sum(values) / n, median, values[min(n - 1, int(n * 0.9))], values[0], values[-1]
+
+
 def _calcSummary(samples: list[float]) -> dict[str, float | int]:
     if not samples:
         return {"n": 0}
-    values = sorted(samples)
-    n = len(values)
-    p90_idx = min(n - 1, int(n * 0.9))
-    return {
-        "n": n,
-        "avg_s": float(statistics.mean(values)),
-        "med_s": float(statistics.median(values)),
-        "p90_s": float(values[p90_idx]),
-        "min_s": float(values[0]),
-        "max_s": float(values[-1]),
-    }
+    n, avg, med, p90, low, high = _stats(samples)
+    return {"n": n, "avg_s": float(avg), "med_s": float(med), "p90_s": float(p90), "min_s": float(low), "max_s": float(high)}
 
 
 def _calcValueSummary(samples: list[float]) -> dict[str, float | int]:
     if not samples:
         return {"n": 0}
-    values = sorted(samples)
-    n = len(values)
-    p90_idx = min(n - 1, int(n * 0.9))
-    return {
-        "n": n,
-        "avg": float(statistics.mean(values)),
-        "med": float(statistics.median(values)),
-        "p90": float(values[p90_idx]),
-        "min": float(values[0]),
-        "max": float(values[-1]),
-    }
+    n, avg, med, p90, low, high = _stats(samples)
+    return {"n": n, "avg": float(avg), "med": float(med), "p90": float(p90), "min": float(low), "max": float(high)}
 
 
 def _calcMsSummary(samples: list[float]) -> dict[str, float | int]:
     if not samples:
         return {"n": 0}
-    values = sorted(samples)
-    n = len(values)
-    p90_idx = min(n - 1, int(n * 0.9))
+    n, avg, med, p90, low, high = _stats(samples)
     return {
         "n": n,
-        "avg_ms": float(statistics.mean(values)),
-        "med_ms": float(statistics.median(values)),
-        "p90_ms": float(values[p90_idx]),
-        "min_ms": float(values[0]),
-        "max_ms": float(values[-1]),
+        "avg_ms": float(avg),
+        "med_ms": float(med),
+        "p90_ms": float(p90),
+        "min_ms": float(low),
+        "max_ms": float(high),
         "last_ms": float(samples[-1]),
     }
 

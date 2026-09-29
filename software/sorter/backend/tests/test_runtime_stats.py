@@ -1,6 +1,6 @@
 import unittest
 
-from runtime_stats import RuntimeStatsCollector
+from runtime_stats import RuntimeStatsCollector, _calcMsSummary, _calcValueSummary
 
 
 class RuntimeStatsCollectorBinClearTests(unittest.TestCase):
@@ -305,3 +305,16 @@ class RuntimeStatsReapStuckPiecesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SummaryTests(unittest.TestCase):
+    def test_summaries_report_mean_median_and_spread(self) -> None:
+        self.assertEqual(
+            {"n": 4, "avg_ms": 2.5, "med_ms": 2.5, "p90_ms": 4.0, "min_ms": 1.0, "max_ms": 4.0, "last_ms": 4.0},
+            _calcMsSummary([3.0, 1.0, 2.0, 4.0]),
+        )
+        self.assertEqual(
+            {"n": 3, "avg": 2.0, "med": 2.0, "p90": 3.0, "min": 1.0, "max": 3.0},
+            _calcValueSummary([3, 1, 2]),
+        )
+        self.assertEqual({"n": 0}, _calcMsSummary([]))
