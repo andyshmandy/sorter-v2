@@ -37,7 +37,6 @@ from server.camera_calibration_search import (
     CALIBRATION_METHOD_LLM_GUIDED,
     CALIBRATION_METHOD_TARGET_PLATE,
     EXPOSURE_HISTOGRAM_TARGET_LUMA,
-    _calibrate_android_camera_device_settings,
     _calibrate_exposure_via_histogram,
     _calibrate_usb_camera_device_settings,
     _capture_frame_for_calibration,
@@ -186,16 +185,7 @@ def _run_camera_calibration_sync(
     raw_config = machine_toml.read()
     original_picture_settings = _picture_settings_for_role(raw_config, role)
 
-    if provider == "android-camera-app":
-        original_settings = (
-            dict(current_response.get("settings"))
-            if isinstance(current_response.get("settings"), dict)
-            else {}
-        )
-    else:
-        original_settings = cameraDeviceSettingsToDict(
-            parseCameraDeviceSettings(current_response.get("settings"))
-        )
+    original_settings = cameraDeviceSettingsToDict(parseCameraDeviceSettings(current_response.get("settings")))
 
     try:
         calibration_metadata: Dict[str, Any] = {"method": normalized_method}
@@ -234,7 +224,6 @@ def _run_camera_calibration_sync(
                 report_progress("preparing", 0.05, "Preparing LLM-guided camera calibration.", None)
             best_settings, analysis, calibration_metadata = _calibrate_camera_device_settings_with_llm(
                 role,
-                str(provider or "unknown"),
                 source,
                 current_response,
                 openrouter_model=normalized_openrouter_model,
@@ -243,7 +232,7 @@ def _run_camera_calibration_sync(
                 report_trace=report_trace,
                 gallery_dir=gallery_dir,
             )
-        elif provider == "usb-opencv":
+        else:
             controls = current_response.get("controls")
             if not isinstance(controls, list) or not isinstance(source, int):
                 raise HTTPException(status_code=400, detail="USB camera controls are not available for calibration.")
@@ -257,29 +246,11 @@ def _run_camera_calibration_sync(
                 report_progress=report_progress,
                 gallery_dir=gallery_dir,
             )
-        elif provider == "android-camera-app":
-            capabilities = current_response.get("capabilities")
-            if not isinstance(capabilities, dict) or not isinstance(source, str):
-                raise HTTPException(status_code=400, detail="Android camera capabilities are not available for calibration.")
-            if report_progress is not None:
-                report_progress("preparing", 0.05, "Preparing Android camera calibration.", None)
-            best_settings, analysis = _calibrate_android_camera_device_settings(
-                role,
-                source,
-                current_response.get("settings") if isinstance(current_response.get("settings"), dict) else {},
-                capabilities,
-                report_progress=report_progress,
-            )
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail="This camera provider does not support target-based calibration yet.",
-            )
 
         if report_progress is not None:
             report_progress("saving", 0.91, "Saving calibrated exposure and white balance.", analysis)
         saved = save_camera_device_settings(role, best_settings)
-        time.sleep(1.5 if isinstance(source, str) else 0.2)
+        time.sleep(0.2)
 
         if normalized_method == CALIBRATION_METHOD_EXPOSURE_HISTOGRAM:
             return {

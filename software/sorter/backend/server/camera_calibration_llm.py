@@ -158,56 +158,7 @@ def _camera_calibration_analysis_summary(analysis: Dict[str, Any] | None) -> Dic
     }
 
 
-def _camera_calibration_allowed_controls(
-    provider: str,
-    current_response: Dict[str, Any],
-) -> Dict[str, Any]:
-    if provider == "android-camera-app":
-        capabilities = (
-            current_response.get("capabilities")
-            if isinstance(current_response.get("capabilities"), dict)
-            else {}
-        )
-        settings = current_response.get("settings") if isinstance(current_response.get("settings"), dict) else {}
-        white_balance_modes = [
-            str(mode)
-            for mode in capabilities.get("white_balance_modes", [])
-            if isinstance(mode, str) and mode
-        ]
-        processing_modes = [
-            str(mode)
-            for mode in capabilities.get("processing_modes", [])
-            if isinstance(mode, str) and mode
-        ]
-        return {
-            "exposure_compensation": {
-                "kind": "integer",
-                "current": int(settings.get("exposure_compensation", 0) or 0),
-                "min": int(capabilities.get("exposure_compensation_min", 0) or 0),
-                "max": int(capabilities.get("exposure_compensation_max", 0) or 0),
-            },
-            "white_balance_mode": {
-                "kind": "enum",
-                "current": str(settings.get("white_balance_mode", "")),
-                "allowed": white_balance_modes,
-            },
-            "processing_mode": {
-                "kind": "enum",
-                "current": str(settings.get("processing_mode", "")),
-                "allowed": processing_modes,
-            },
-            "ae_lock": {
-                "kind": "boolean",
-                "current": bool(settings.get("ae_lock")),
-                "supported": bool(capabilities.get("supports_ae_lock")),
-            },
-            "awb_lock": {
-                "kind": "boolean",
-                "current": bool(settings.get("awb_lock")),
-                "supported": bool(capabilities.get("supports_awb_lock")),
-            },
-        }
-
+def _camera_calibration_allowed_controls(current_response: Dict[str, Any]) -> Dict[str, Any]:
     controls = current_response.get("controls")
     if not isinstance(controls, list):
         return {}
@@ -256,7 +207,6 @@ def _is_exposure_or_gain_key(key: str) -> bool:
 
 
 def _compute_calibration_neutral_baseline(
-    provider: str,
     current_response: Dict[str, Any],
     current_settings: Dict[str, Any],
 ) -> tuple[Dict[str, Any], List[str]]:
@@ -270,16 +220,6 @@ def _compute_calibration_neutral_baseline(
 
     baseline = dict(current_settings)
     reset_keys: List[str] = []
-
-    if provider == "android-camera-app":
-        # Android camera app: the only meaningful "reset" we can do is to
-        # disable AE/AWB locks so the LLM can drive exposure_compensation
-        # and white_balance_mode freely. Everything else is provider-managed.
-        for key in ("ae_lock", "awb_lock"):
-            if baseline.get(key):
-                baseline[key] = False
-                reset_keys.append(key)
-        return baseline, reset_keys
 
     controls = current_response.get("controls")
     if not isinstance(controls, list):
@@ -349,7 +289,7 @@ LLM_CALIBRATION_TOOLS: List[Dict[str, Any]] = [
                                     "description": "Setting key from the allowed_controls list.",
                                 },
                                 "value": {
-                                    "description": "New value (number, boolean, or enum string per the control's kind).",
+                                    "description": "New value (number or boolean, per the control's kind).",
                                 },
                                 "reason": {
                                     "type": "string",
@@ -390,7 +330,6 @@ LLM_CALIBRATION_TOOLS: List[Dict[str, Any]] = [
 def _build_llm_calibration_system_prompt(
     *,
     role: str,
-    provider: str,
     max_iterations: int,
     allowed_controls: Dict[str, Any],
     baseline_reset_keys: List[str] | None = None,
@@ -408,7 +347,7 @@ def _build_llm_calibration_system_prompt(
         "The scene ideally contains a 6-color LEGO calibration plate (white, black, blue, red, green, yellow). "
         "You also have a clean reference image of the intended plate appearance.\n\n"
         "YOUR JOB:\n"
-        "- Your PRIMARY focus: deliver a CLEAN, WELL-EXPOSED RAW SIGNAL — exposure (exposure_time / exposure_compensation), "
+        "- Your PRIMARY focus: deliver a CLEAN, WELL-EXPOSED RAW SIGNAL — exposure, "
         "gain / ISO, brightness as fallback.\n"
         "- SECONDARY: if the raw image is clearly unusable (colors indistinguishable, extreme cast, crushed contrast), "
         "you MAY tune saturation, contrast, sharpness, gamma, or white balance — small, conservative nudges.\n"
@@ -420,10 +359,9 @@ def _build_llm_calibration_system_prompt(
         "- Call `apply_camera_settings` to change settings — you'll get the new frame back as a follow-up user message.\n"
         "- Call `finish_calibration` as soon as exposure is clean. Do NOT keep tweaking for cosmetic gains.\n"
         f"- Maximum {max_iterations} `apply_camera_settings` calls before the loop force-stops.\n"
-        "- Each call: at most 3 changes, only keys from `allowed_controls`, exact enum values for enum controls.\n"
+        "- Each call: at most 3 changes, only keys from `allowed_controls`.\n"
         "- Avoid oscillation: don't undo a previous change unless the new image clearly demands it.\n\n"
         f"Camera role: {role}\n"
-        f"Provider: {provider}\n"
         f"Max iterations: {max_iterations}\n"
         f"{baseline_note}"
         f"\nAllowed controls:\n{json.dumps(allowed_controls, indent=2, sort_keys=True)}"
@@ -550,7 +488,6 @@ def _coerce_llm_boolean(value: Any) -> bool | None:
 
 
 def _apply_llm_calibration_changes(
-    provider: str,
     current_settings: Dict[str, Any],
     current_response: Dict[str, Any],
     advisor_payload: Dict[str, Any],
@@ -565,63 +502,6 @@ def _apply_llm_calibration_changes(
             raw_changes = [{"key": key, "value": value} for key, value in settings_patch.items()]
         else:
             raw_changes = []
-
-    if provider == "android-camera-app":
-        capabilities = current_response.get("capabilities") if isinstance(current_response.get("capabilities"), dict) else {}
-        for change in raw_changes:
-            if not isinstance(change, dict) or not isinstance(change.get("key"), str):
-                continue
-            key = change["key"].strip()
-            reason = str(change.get("reason") or "").strip()
-            raw_value = change.get("value")
-            if key == "exposure_compensation":
-                if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float, str)):
-                    continue
-                try:
-                    numeric = int(round(float(raw_value)))
-                except (TypeError, ValueError):
-                    continue
-                exp_min = int(capabilities.get("exposure_compensation_min", numeric))
-                exp_max = int(capabilities.get("exposure_compensation_max", numeric))
-                coerced: Any = max(exp_min, min(exp_max, numeric))
-            elif key == "white_balance_mode":
-                allowed = {
-                    str(mode)
-                    for mode in capabilities.get("white_balance_modes", [])
-                    if isinstance(mode, str) and mode
-                }
-                if not isinstance(raw_value, str) or raw_value not in allowed:
-                    continue
-                coerced = raw_value
-            elif key == "processing_mode":
-                allowed = {
-                    str(mode)
-                    for mode in capabilities.get("processing_modes", [])
-                    if isinstance(mode, str) and mode
-                }
-                if not isinstance(raw_value, str) or raw_value not in allowed:
-                    continue
-                coerced = raw_value
-            elif key == "ae_lock":
-                if not bool(capabilities.get("supports_ae_lock")):
-                    continue
-                coerced = _coerce_llm_boolean(raw_value)
-                if coerced is None:
-                    continue
-            elif key == "awb_lock":
-                if not bool(capabilities.get("supports_awb_lock")):
-                    continue
-                coerced = _coerce_llm_boolean(raw_value)
-                if coerced is None:
-                    continue
-            else:
-                continue
-
-            if next_settings.get(key) == coerced:
-                continue
-            next_settings[key] = coerced
-            applied_changes.append({"key": key, "value": coerced, "reason": reason})
-        return next_settings, applied_changes
 
     controls = current_response.get("controls")
     if not isinstance(controls, list):
@@ -672,7 +552,6 @@ def _apply_llm_calibration_changes(
 
 def _calibrate_camera_device_settings_with_llm(
     role: str,
-    provider: str,
     source: int | str | None,
     current_response: Dict[str, Any],
     *,
@@ -690,22 +569,13 @@ def _calibrate_camera_device_settings_with_llm(
     earlier reasoning, applied changes, and resulting frames) — not a
     text-summarized recap.
     """
-    current_settings = (
-        dict(current_response.get("settings"))
-        if provider == "android-camera-app" and isinstance(current_response.get("settings"), dict)
-        else cameraDeviceSettingsToDict(parseCameraDeviceSettings(current_response.get("settings")))
-    )
-    if not current_settings:
-        current_settings = {}
-
-    allowed_controls = _camera_calibration_allowed_controls(provider, current_response)
+    current_settings = cameraDeviceSettingsToDict(parseCameraDeviceSettings(current_response.get("settings")))
+    allowed_controls = _camera_calibration_allowed_controls(current_response)
 
     # Reset color/processing controls to firmware defaults so the LLM and
     # the hardware tuning starts from a clean, neutral signal. Exposure/gain
     # controls are preserved (real sensor properties — let the LLM tune them).
-    baseline_settings, reset_keys = _compute_calibration_neutral_baseline(
-        provider, current_response, current_settings
-    )
+    baseline_settings, reset_keys = _compute_calibration_neutral_baseline(current_response, current_settings)
     if reset_keys:
         logger.info(
             "LLM calibration: reset %d post-processing control(s) to firmware defaults: %s",
@@ -791,7 +661,6 @@ def _calibrate_camera_device_settings_with_llm(
 
     system_prompt = _build_llm_calibration_system_prompt(
         role=role,
-        provider=provider,
         max_iterations=max_iterations,
         allowed_controls=allowed_controls,
         baseline_reset_keys=reset_keys,
@@ -979,7 +848,6 @@ def _calibrate_camera_device_settings_with_llm(
                     "changes": args.get("changes") if isinstance(args.get("changes"), list) else [],
                 }
                 next_settings, applied_changes = _apply_llm_calibration_changes(
-                    provider,
                     dict(applied_settings),
                     current_response,
                     advisor_payload_compat,

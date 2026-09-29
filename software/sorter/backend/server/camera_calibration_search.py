@@ -4,8 +4,7 @@ Every calibration method captures its frames through the helpers here, the
 LLM-guided one (server/camera_calibration_llm.py) included: preview candidate
 settings live through the device settings routes, grab the frame that
 follows, score it against the target plate. The searches themselves are here
-too: the target-plate search for a USB camera and for the Android camera app,
-and the exposure-histogram loop.
+too: the target-plate search for a USB camera and the exposure-histogram loop.
 
 server/camera_calibration.py finds and scores the target plate in a frame;
 server/routers/camera_calibration.py runs a calibration and saves its result.
@@ -23,10 +22,10 @@ import cv2
 import numpy as np
 from fastapi import HTTPException
 
-from irl.config import cameraDeviceSettingsToDict, parseCameraDeviceSettings, parseCameraPictureSettings
+from irl.config import cameraDeviceSettingsToDict, parseCameraDeviceSettings
 from server import shared_state
 from server.camera_calibration import analyze_color_plate_target
-from server.routers.camera_device_settings import _android_camera_bytes_request, preview_camera_device_settings
+from server.routers.camera_device_settings import preview_camera_device_settings
 
 CALIBRATION_METHOD_TARGET_PLATE = "target_plate"
 CALIBRATION_METHOD_LLM_GUIDED = "llm_guided"
@@ -110,32 +109,8 @@ def _capture_frame_for_calibration(
     *,
     after_timestamp: float | None = None,
     fallback_settings: Dict[str, int | float | bool] | None = None,
-    picture_settings: Dict[str, Any] | None = None,
 ) -> np.ndarray | None:
-    from vision.camera import (
-        apply_camera_device_settings,
-        apply_picture_settings,
-    )
-
-    parsed_picture_settings = parseCameraPictureSettings(picture_settings)
-
-    if isinstance(source, str):
-        best_frame = None
-        for index in range(5):
-            try:
-                jpg = _android_camera_bytes_request(source, "/snapshot.jpg")
-                buffer = np.frombuffer(jpg, dtype=np.uint8)
-                frame = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
-                if frame is not None and frame.size > 0:
-                    best_frame = frame
-            except HTTPException:
-                pass
-            if index < 4:
-                time.sleep(0.18)
-        if best_frame is not None:
-            best_frame = apply_picture_settings(best_frame, parsed_picture_settings)
-            return best_frame
-        return None
+    from vision.camera import apply_camera_device_settings
 
     if not isinstance(source, int):
         return None
@@ -161,10 +136,7 @@ def _capture_frame_for_calibration(
             ret, current = cap.read()
             if ret and current is not None:
                 frame = current
-        if frame is None:
-            return None
-        frame = apply_picture_settings(frame, parsed_picture_settings)
-        return frame.copy()
+        return frame.copy() if frame is not None else None
     finally:
         cap.release()
 
@@ -200,16 +172,9 @@ def _analyze_candidate_settings(
 ) -> tuple[Dict[str, Any], Dict[str, Any] | None, np.ndarray | None]:
     preview_started_at = time.time()
     preview = preview_camera_device_settings(role, settings)
-    preview_settings = preview.get("settings", settings)
-    if isinstance(source, str):
-        applied_settings = dict(preview_settings) if isinstance(preview_settings, dict) else dict(settings)
-        time.sleep(1.35)
-        frame = _capture_frame_for_calibration(role, source, after_timestamp=preview_started_at, fallback_settings=applied_settings)
-    else:
-        applied_settings = cameraDeviceSettingsToDict(parseCameraDeviceSettings(preview_settings))
-        time.sleep(0.25)
-        frame = _capture_frame_for_calibration(role, source, after_timestamp=preview_started_at, fallback_settings=applied_settings)
-
+    applied_settings = cameraDeviceSettingsToDict(parseCameraDeviceSettings(preview.get("settings", settings)))
+    time.sleep(0.25)
+    frame = _capture_frame_for_calibration(role, source, after_timestamp=preview_started_at, fallback_settings=applied_settings)
     if frame is None:
         return applied_settings, None, None
     analysis = analyze_color_plate_target(frame)
@@ -732,151 +697,4 @@ def _calibrate_usb_camera_device_settings(
         )
 
     _report("detection", "Calibration target detected.", best_analysis)
-    return best_settings, best_analysis
-
-
-# ---------------------------------------------------------------------------
-# Target-plate search: Android camera app
-# ---------------------------------------------------------------------------
-
-
-def _calibrate_android_camera_device_settings(
-    role: str,
-    source: str,
-    current_settings: Dict[str, Any],
-    capabilities: Dict[str, Any],
-    *,
-    report_progress: Callable[[str, float, str, Dict[str, Any] | None], None] | None = None,
-) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    white_balance_modes = [
-        str(mode)
-        for mode in capabilities.get("white_balance_modes", ["auto"])
-        if isinstance(mode, str) and mode
-    ] or ["auto"]
-    preferred_wb_mode = "auto" if "auto" in white_balance_modes else white_balance_modes[0]
-    exposure_min = int(capabilities.get("exposure_compensation_min", 0))
-    exposure_max = int(capabilities.get("exposure_compensation_max", 0))
-    neutral_exposure = int(max(exposure_min, min(exposure_max, 0)))
-
-    base_settings = {
-        "exposure_compensation": neutral_exposure,
-        "ae_lock": False,
-        "awb_lock": False,
-        "white_balance_mode": preferred_wb_mode,
-        "processing_mode": str(current_settings.get("processing_mode", "standard")),
-    }
-
-    best_settings: Dict[str, int | float | bool] | None = None
-    best_analysis: Dict[str, Any] | None = None
-    total_steps = 1
-
-    def tick(stage: str, progress: float, message: str, analysis: Dict[str, Any] | None = None) -> None:
-        if report_progress is not None:
-            report_progress(stage, min(0.9, progress), message, analysis)
-
-    steps_done = 0
-
-    def consider(candidate: Dict[str, Any], *, stage: str, message: str) -> None:
-        nonlocal best_settings, best_analysis
-        nonlocal steps_done
-        steps_done += 1
-        tick(stage, steps_done / total_steps, message)
-        applied_settings, analysis, _ = _analyze_candidate_settings(role, source, candidate)
-        if analysis is None:
-            return
-        if best_analysis is None or _calibration_selection_value(analysis) > _calibration_selection_value(best_analysis):
-            best_settings = dict(applied_settings)
-            best_analysis = analysis
-            tick(stage, steps_done / total_steps, message, analysis)
-
-    exposure_values = sorted(
-        {
-            exposure_min,
-            exposure_max,
-            neutral_exposure,
-            int(current_settings.get("exposure_compensation", neutral_exposure)),
-            *[
-                int(round(value))
-                for value in np.linspace(exposure_min, exposure_max, num=max(3, min(7, exposure_max - exposure_min + 1))).tolist()
-            ],
-        }
-    )
-    total_steps = max(1, 1 + len(exposure_values) + len(white_balance_modes))
-
-    consider(
-        base_settings,
-        stage="baseline",
-        message="Analyzing baseline candidate 1 of 1.",
-    )
-
-    for index, exposure_value in enumerate(exposure_values, start=1):
-        candidate = dict(base_settings)
-        candidate["exposure_compensation"] = int(exposure_value)
-        consider(
-            candidate,
-            stage="exposure_search",
-            message=f"Evaluating exposure candidate {index} of {len(exposure_values)}.",
-        )
-
-    if best_settings is None or best_analysis is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Calibration target not found. Make sure the 6-color calibration plate is fully visible and not clipped.",
-        )
-
-    # Refine exposure: try values around the best with finer steps
-    if best_settings is not None and exposure_min != exposure_max:
-        best_exp = int(best_settings.get("exposure_compensation", 0))
-        refine_values = sorted(
-            {
-                value
-                for value in range(max(exposure_min, best_exp - 2), min(exposure_max, best_exp + 2) + 1)
-                if value != best_exp
-            }
-        )
-        total_steps += len(refine_values)
-        for index, exp_value in enumerate(refine_values, start=1):
-            candidate = dict(best_settings)
-            candidate["exposure_compensation"] = int(exp_value)
-            candidate["ae_lock"] = False
-            candidate["awb_lock"] = False
-            consider(
-                candidate,
-                stage="exposure_refine",
-                message=f"Refining exposure candidate {index} of {len(refine_values)}.",
-            )
-
-    wb_base = dict(best_settings)
-    wb_base["ae_lock"] = False
-    wb_base["awb_lock"] = False
-    for index, mode in enumerate(white_balance_modes, start=1):
-        candidate = dict(wb_base)
-        candidate["white_balance_mode"] = mode
-        consider(
-            candidate,
-            stage="white_balance_search",
-            message=f"Evaluating white balance candidate {index} of {len(white_balance_modes)}.",
-        )
-
-    if best_settings is None or best_analysis is None:
-        raise HTTPException(status_code=400, detail="Calibration failed to find usable settings.")
-
-    # Final polish: try the best settings with locks to verify stability
-    total_steps += 1
-    polish_candidate = dict(best_settings)
-    if bool(capabilities.get("supports_ae_lock")):
-        polish_candidate["ae_lock"] = True
-    if bool(capabilities.get("supports_awb_lock")):
-        polish_candidate["awb_lock"] = True
-    consider(
-        polish_candidate,
-        stage="polish_search",
-        message="Verifying with exposure and white balance locked.",
-    )
-
-    if bool(capabilities.get("supports_ae_lock")):
-        best_settings["ae_lock"] = True
-    if bool(capabilities.get("supports_awb_lock")):
-        best_settings["awb_lock"] = True
-
     return best_settings, best_analysis
