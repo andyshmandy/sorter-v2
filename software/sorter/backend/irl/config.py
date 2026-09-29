@@ -1,4 +1,3 @@
-import os
 import time
 from dataclasses import dataclass
 
@@ -17,12 +16,12 @@ from machine_platform import (
     build_servo_controller,
     discover_control_boards,
 )
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from machine_platform.control_board import ControlBoard
     from machine_platform.servo_controller import ServoController
-    from hardware.sorter_interface import StepperMotor, ServoMotor, DigitalInputPin
+    from hardware.sorter_interface import StepperMotor, ServoMotor
     from subsystems.distribution.chute import Chute
 
 from .bin_layout import (
@@ -38,7 +37,6 @@ from .parse_user_toml import (
     loadMachineConfig,
     loadMachineSpecificParams,
     loadStepperBindingOverrides,
-    loadStepperCurrentOverrides,
     loadStepperDirectionInverts,
     loadServoChannelConfig,
     loadWaveshareServoConfig,
@@ -48,7 +46,7 @@ from .parse_user_toml import (
 )
 from .leds import LedController, discoverLedOutputs
 from blob_manager import getBinCategories
-from local_state import get_led_state, get_servo_states, set_servo_states
+from local_state import get_led_state, get_servo_states
 
 HARDWARE_INIT_COMMAND_ATTEMPTS = 4
 HARDWARE_INIT_RETRY_DELAY_S = 0.2
@@ -81,18 +79,6 @@ def _run_stepper_init_command_with_retry(
             time.sleep(retry_delay_s)
 
     return False
-
-
-def save_servo_states(servos: list, gc: GlobalConfig) -> None:
-    states = {}
-    for i, servo in enumerate(servos):
-        is_open = getattr(servo, "isOpen", lambda: None)()
-        if is_open is not None:
-            states[str(i)] = {"is_open": is_open}
-    try:
-        set_servo_states(states)
-    except Exception as e:
-        gc.logger.warning(f"Failed to save servo states: {e}")
 
 
 def restore_servo_states(servos: list, gc: GlobalConfig) -> None:

@@ -4,117 +4,11 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 import cv2
 import numpy as np
 
 BLOB_DIR = Path(__file__).parent / "blob"
-
-
-def loadData() -> dict[str, Any]:
-    data: dict[str, Any] = {}
-
-    from local_state import get_machine_id
-
-    machine_id = get_machine_id()
-    if machine_id:
-        data["machine_id"] = machine_id
-
-    stepper_positions = getAllStepperPositions()
-    if stepper_positions:
-        data["stepper_positions"] = stepper_positions
-
-    servo_positions = getAllServoPositions()
-    if servo_positions:
-        data["servo_positions"] = servo_positions
-
-    camera_setup = getCameraSetup()
-    if camera_setup is not None:
-        data["camera_setup"] = camera_setup
-
-    channel_polygons = getChannelPolygons()
-    if channel_polygons is not None:
-        data["channel_polygons"] = channel_polygons
-
-    classification_polygons = getClassificationPolygons()
-    if classification_polygons is not None:
-        data["classification_polygons"] = classification_polygons
-
-    machine_nickname = getMachineNickname()
-    if machine_nickname is not None:
-        data["machine_nickname"] = machine_nickname
-
-    bin_categories = getBinCategories()
-    if bin_categories is not None:
-        data["bin_categories"] = bin_categories
-
-    classification_detection = getClassificationDetectionConfig()
-    if classification_detection is not None:
-        data["classification_detection"] = classification_detection
-
-    feeder_detection = getFeederDetectionConfig()
-    if feeder_detection is not None:
-        data["feeder_detection"] = feeder_detection
-
-    carousel_detection = getCarouselDetectionConfig()
-    if carousel_detection is not None:
-        data["carousel_detection"] = carousel_detection
-
-    classification_training = getClassificationTrainingConfig()
-    if classification_training is not None:
-        data["classification_training"] = classification_training
-
-    sorting_profile_sync = getSortingProfileSyncState()
-    if sorting_profile_sync is not None:
-        data["sorting_profile_sync"] = sorting_profile_sync
-
-    api_keys = getApiKeys()
-    if api_keys:
-        data["api_keys"] = api_keys
-
-    hive = getHiveConfig()
-    if hive is not None:
-        data["hive"] = hive
-
-    return data
-
-
-def saveData(data: dict[str, Any]) -> None:
-    if not isinstance(data, dict):
-        raise ValueError("data must be a dict")
-
-    from local_state import set_machine_id, set_servo_positions, set_stepper_positions
-
-    if "machine_id" in data and isinstance(data["machine_id"], str):
-        set_machine_id(data["machine_id"])
-    if "stepper_positions" in data:
-        set_stepper_positions(data["stepper_positions"])
-    if "servo_positions" in data:
-        set_servo_positions(data["servo_positions"])
-    if "bin_categories" in data and isinstance(data["bin_categories"], list):
-        setBinCategories(data["bin_categories"])
-    if "camera_setup" in data and isinstance(data["camera_setup"], dict):
-        setCameraSetup(data["camera_setup"])
-    if "channel_polygons" in data and isinstance(data["channel_polygons"], dict):
-        setChannelPolygons(data["channel_polygons"])
-    if "classification_polygons" in data and isinstance(data["classification_polygons"], dict):
-        setClassificationPolygons(data["classification_polygons"])
-    if "machine_nickname" in data:
-        setMachineNickname(data["machine_nickname"])
-    if "classification_detection" in data and isinstance(data["classification_detection"], dict):
-        setClassificationDetectionConfig(data["classification_detection"])
-    if "feeder_detection" in data and isinstance(data["feeder_detection"], dict):
-        setFeederDetectionConfig(data["feeder_detection"])
-    if "carousel_detection" in data and isinstance(data["carousel_detection"], dict):
-        setCarouselDetectionConfig(data["carousel_detection"])
-    if "classification_training" in data and isinstance(data["classification_training"], dict):
-        setClassificationTrainingConfig(data["classification_training"])
-    if "sorting_profile_sync" in data and isinstance(data["sorting_profile_sync"], dict):
-        setSortingProfileSyncState(data["sorting_profile_sync"])
-    if "api_keys" in data and isinstance(data["api_keys"], dict):
-        setApiKeys(data["api_keys"])
-    if "hive" in data and isinstance(data["hive"], dict):
-        setHiveConfig(data["hive"])
 
 
 def getMachineId() -> str:
@@ -137,46 +31,6 @@ def getMachineNickname() -> str | None:
 def setMachineNickname(nickname: str | None) -> None:
     from toml_config import setMachineNickname as _set
     _set(nickname)
-
-
-def getStepperPosition(name: str) -> int:
-    from local_state import get_stepper_positions
-
-    return get_stepper_positions().get(name, 0)
-
-
-def setStepperPosition(name: str, position_steps: int) -> None:
-    from local_state import get_stepper_positions, set_stepper_positions
-
-    positions = get_stepper_positions()
-    positions[name] = position_steps
-    set_stepper_positions(positions)
-
-
-def getAllStepperPositions() -> dict[str, int]:
-    from local_state import get_stepper_positions
-
-    return get_stepper_positions()
-
-
-def getServoPosition(name: str) -> int:
-    from local_state import get_servo_positions
-
-    return get_servo_positions().get(name, 0)
-
-
-def setServoPosition(name: str, angle: int) -> None:
-    from local_state import get_servo_positions, set_servo_positions
-
-    positions = get_servo_positions()
-    positions[name] = angle
-    set_servo_positions(positions)
-
-
-def getAllServoPositions() -> dict[str, int]:
-    from local_state import get_servo_positions
-
-    return get_servo_positions()
 
 
 def getBinCategories() -> list[list[list[list[str]]]] | None:

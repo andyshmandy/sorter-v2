@@ -16,8 +16,6 @@ import db
 
 STATE_KEY_MACHINE_ID = "machine_id"
 STATE_KEY_SORTING_PROFILE_SYNC = "sorting_profile_sync"
-_STATE_KEY_STEPPER_POSITIONS = "stepper_positions"
-_STATE_KEY_SERVO_POSITIONS = "servo_positions"
 _STATE_KEY_CHANNEL_POLYGONS = "channel_polygons"
 _STATE_KEY_CLASSIFICATION_POLYGONS = "classification_polygons"
 _STATE_KEY_CLASSIFICATION_TRAINING = "classification_training"
@@ -90,16 +88,6 @@ def _without_none_values(state: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(state, dict):
         return None
     return {key: value for key, value in state.items() if isinstance(key, str) and value is not None}
-
-
-def _int_mapping(raw: Any) -> dict[str, int]:
-    if not isinstance(raw, dict):
-        return {}
-    result: dict[str, int] = {}
-    for key, value in raw.items():
-        if isinstance(key, str) and isinstance(value, int) and not isinstance(value, bool):
-            result[key] = value
-    return result
 
 
 def _normalize_string_dict(raw: Any) -> dict[str, str]:
@@ -222,22 +210,6 @@ def set_basically_services_state(record: dict[str, Any]) -> None:
     _write_state(_STATE_KEY_BASICALLY_SERVICES, record)
 
 
-def get_stepper_positions() -> dict[str, int]:
-    return _int_mapping(_read_state(_STATE_KEY_STEPPER_POSITIONS))
-
-
-def set_stepper_positions(positions: dict[str, int]) -> None:
-    _write_state(_STATE_KEY_STEPPER_POSITIONS, _int_mapping(positions))
-
-
-def get_servo_positions() -> dict[str, int]:
-    return _int_mapping(_read_state(_STATE_KEY_SERVO_POSITIONS))
-
-
-def set_servo_positions(positions: dict[str, int]) -> None:
-    _write_state(_STATE_KEY_SERVO_POSITIONS, _int_mapping(positions))
-
-
 def get_channel_polygons() -> dict[str, Any] | None:
     return _read_dict(_STATE_KEY_CHANNEL_POLYGONS)
 
@@ -336,10 +308,6 @@ def set_api_keys(keys: dict[str, str] | None) -> None:
 
 def get_servo_states() -> dict[str, Any]:
     return _read_dict(_STATE_KEY_SERVO_STATES) or {}
-
-
-def set_servo_states(states: dict[str, Any]) -> None:
-    _write_state(_STATE_KEY_SERVO_STATES, dict(states))
 
 
 def get_set_progress_state() -> dict[str, Any] | None:

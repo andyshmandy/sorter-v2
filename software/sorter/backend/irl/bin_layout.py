@@ -222,8 +222,6 @@ def _parseLayersDict(data: dict) -> BinLayoutConfig | None:
 
 
 def _loadFromToml() -> BinLayoutConfig | None:
-    import os
-
     config = machine_toml.read()
 
     layers_table = config.get("layers")
@@ -366,10 +364,6 @@ def mkLayoutFromConfig(config: BinLayoutConfig) -> DistributionLayout:
             max_dimension_mm=layer_config.max_dimension_mm,
         ))
     return DistributionLayout(layers=layers)
-
-
-def mkDefaultLayout() -> DistributionLayout:
-    return mkLayoutFromConfig(DEFAULT_BIN_LAYOUT)
 
 
 def extractCategories(layout: DistributionLayout) -> list[list[list[list[str]]]]:

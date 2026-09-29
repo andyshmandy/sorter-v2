@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import threading
-import time
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from defs.events import CameraName
 from irl.config import (
@@ -143,21 +142,6 @@ class CameraService:
         if device is None:
             return None
         return device.capture_thread
-
-    def get_device_settings_for_role(self, role: str) -> dict[str, int | float | bool] | None:
-        device = self._device_for_role(role)
-        if device is None:
-            return None
-        return device.get_device_settings()
-
-    def describe_device_controls_for_role(
-        self,
-        role: str,
-    ) -> tuple[list[dict[str, Any]], dict[str, int | float | bool]] | None:
-        device = self._device_for_role(role)
-        if device is None:
-            return None
-        return device.describe_device_controls()
 
     def inspect_device_controls_for_role(
         self,
