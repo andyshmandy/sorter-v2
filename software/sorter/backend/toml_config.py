@@ -7,6 +7,7 @@ session state, and secrets lives in `local_state.sqlite` via `local_state.py`.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 from urllib.parse import urlparse
 
@@ -355,13 +356,25 @@ def incidentDefinitions() -> list[dict[str, Any]]:
     return [dict(entry) for entry in _INCIDENT_DEFINITIONS]
 
 
+# The control loop asks how each incident is handled on every tick, so the map
+# is read from machine.toml at most once a second (and at once after
+# setDashboardConfig): (file, read at, handling).
+_INCIDENT_HANDLING_TTL_S = 1.0
+_incident_handling: tuple[Any, float, dict[str, Any]] | None = None
+
+
 def incidentHandlingMode(kind: str) -> str:
+    global _incident_handling
     canonical_kind = _canonicalIncidentKind(kind) or kind
-    handling = getDashboardConfig().get("incident_handling")
-    if isinstance(handling, dict):
-        mode = handling.get(canonical_kind)
-        if mode in {_INCIDENT_MODE_OFF, _INCIDENT_MODE_MANUAL, _INCIDENT_MODE_AUTOMATIC}:
-            return str(mode)
+    path, now = machine_toml.machine_toml_path(), time.monotonic()
+    cached = _incident_handling
+    if cached is None or cached[0] != path or now - cached[1] >= _INCIDENT_HANDLING_TTL_S:
+        handling = getDashboardConfig().get("incident_handling")
+        cached = (path, now, handling if isinstance(handling, dict) else {})
+        _incident_handling = cached
+    mode = cached[2].get(canonical_kind)
+    if mode in {_INCIDENT_MODE_OFF, _INCIDENT_MODE_MANUAL, _INCIDENT_MODE_AUTOMATIC}:
+        return str(mode)
     return _INCIDENT_HANDLING_DEFAULTS.get(canonical_kind, _INCIDENT_MODE_MANUAL)
 
 
@@ -394,6 +407,7 @@ def getDashboardConfig() -> dict[str, Any]:
 
 def setDashboardConfig(updates: dict[str, Any]) -> dict[str, Any]:
     """Persist dashboard preferences; unknown keys are ignored. Returns merged state."""
+    global _incident_handling
     sanitized: dict[str, Any] = {}
     if "show_sample_capture" in updates and isinstance(updates["show_sample_capture"], bool):
         sanitized["show_sample_capture"] = updates["show_sample_capture"]
@@ -414,6 +428,7 @@ def setDashboardConfig(updates: dict[str, Any]) -> dict[str, Any]:
     with machine_toml.edit() as config:
         existing = config.get("dashboard") if isinstance(config.get("dashboard"), dict) else {}
         config["dashboard"] = {**existing, **sanitized}
+    _incident_handling = None
     return getDashboardConfig()
 
 
