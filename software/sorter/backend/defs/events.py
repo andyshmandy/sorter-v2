@@ -206,9 +206,16 @@ class CameraHealthEvent(BaseModel):
     data: CameraHealthData
 
 
+class HardwareErrorData(BaseModel):
+    """What stopped the machine or needs the operator (hardware/fault.py)."""
+
+    title: str
+    message: str
+
+
 class SystemStatusData(BaseModel):
     hardware_state: str
-    hardware_error: Optional[str] = None
+    hardware_error: Optional[HardwareErrorData] = None
     homing_step: Optional[str] = None
     no_power_development_mode: bool = False
 

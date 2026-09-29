@@ -51,7 +51,6 @@ from server.routers.chute import _chute_move, _chute_settings_from_config
 from server.routers.steppers import _ensure_not_homing
 from sorting_profile import MISC_CATEGORY
 from subsystems.distribution.chute import BinAddress
-from subsystems.distribution.positioning import clearBinsFullAlertIfOwned
 from toml_config import getBinAssignmentConfig, setBinAssignmentConfig
 
 router = APIRouter()
@@ -479,7 +478,6 @@ def assign_bin_categories(
 
     categories[layer_index][section_index][bin_index] = cleaned
     _apply_and_persist_bin_categories(categories)
-    clearBinsFullAlertIfOwned()
     return {
         "ok": True,
         "layer_index": layer_index,

@@ -177,7 +177,7 @@ class StepperMotor:
         self._gc = gc
         self.software_disabled = False
         # StallGuard config, stamped from [stepper_stallguard.*] at init by
-        # applyStepperStallguard. The stall monitor reads these to decide which
+        # _configureStepper (irl/config.py). The stall monitor reads these to decide which
         # steppers to arm and at what threshold. sgthrs is None => unconfigured.
         self.stallguard_sgthrs: int | None = None
         self.stallguard_tcoolthrs: int = 0xFFFFF

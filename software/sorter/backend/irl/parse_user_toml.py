@@ -1,16 +1,9 @@
 import os
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from global_config import GlobalConfig
 import machine_toml
-from hardware.bus import MCUBusError
-from hardware.cobs import DecodeError
-
-if TYPE_CHECKING:
-    from hardware.sorter_interface import StepperMotor
 
 
 # Servos have no hard-coded open/closed angle defaults. A PWM servo must be
@@ -43,8 +36,6 @@ DEFAULT_CHUTE_OPERATING_SPEED_MICROSTEPS_PER_SEC = 3000
 DEFAULT_CHUTE_HOME_PIN_CHANNEL = 3
 # For boards whose profile does not name a polarity (see BoardProfile).
 DEFAULT_CHUTE_ENDSTOP_ACTIVE_HIGH = True
-HARDWARE_INIT_COMMAND_ATTEMPTS = 4
-HARDWARE_INIT_RETRY_DELAY_S = 0.2
 
 LOGICAL_STEPPER_BINDING_BASES = {
     "c_channel_1": "c_channel_1_rotor",
@@ -81,7 +72,7 @@ class MachineConfig:
     servo_homing_speed: int | None = None
     stepper_current_overrides: dict[str, tuple[int, int, int]] = field(default_factory=dict)
     # canonical stepper name -> (sgthrs, tcoolthrs, enabled). From
-    # [stepper_stallguard.*]; consumed by applyStepperStallguard + the stall monitor.
+    # [stepper_stallguard.*]; consumed by stepper init (irl/config.py) and the stall monitor.
     stepper_stallguard: dict[str, tuple[int, int, bool]] = field(default_factory=dict)
 
 
@@ -655,121 +646,3 @@ def loadChuteCalibrationConfig(
     )
 
 
-def applyStepperCurrentOverride(
-    stepper: "StepperMotor",
-    stepper_name: str,
-    overrides: dict[str, tuple[int, int, int]],
-    gc: GlobalConfig,
-) -> None:
-    override = overrides.get(stepper_name)
-    if override is None:
-        irun, ihold, ihold_delay = DEFAULT_STEPPER_CURRENTS.get(
-            stepper_name,
-            (DEFAULT_STEPPER_IRUN, DEFAULT_STEPPER_IHOLD, DEFAULT_STEPPER_IHOLD_DELAY),
-        )
-        source = "defaults"
-    else:
-        irun, ihold, ihold_delay = override
-        source = "override"
-
-    for attempt in range(1, HARDWARE_INIT_COMMAND_ATTEMPTS + 1):
-        try:
-            stepper.set_current(irun, ihold, ihold_delay)
-            break
-        except (MCUBusError, OSError, DecodeError) as e:
-            if attempt == HARDWARE_INIT_COMMAND_ATTEMPTS:
-                gc.logger.warning(
-                    f"Failed to apply stepper current config for '{stepper_name}' from {source} "
-                    f"(IRUN={irun}, IHOLD={ihold}, IHOLD_DELAY={ihold_delay}) after "
-                    f"{HARDWARE_INIT_COMMAND_ATTEMPTS} attempts: {e}. Continuing."
-                )
-                return
-            gc.logger.warning(
-                f"Failed to apply stepper current config for '{stepper_name}' from {source} "
-                f"on attempt {attempt}/{HARDWARE_INIT_COMMAND_ATTEMPTS}: {e}. "
-                f"Retrying in {HARDWARE_INIT_RETRY_DELAY_S:.2f}s..."
-            )
-            time.sleep(HARDWARE_INIT_RETRY_DELAY_S)
-
-    gc.logger.info(
-        f"Stepper '{stepper_name}' current config applied from {source}: "
-        f"IRUN={irun}, IHOLD={ihold}, IHOLD_DELAY={ihold_delay}"
-    )
-
-
-# TMC2209 StallGuard registers.
-_TMC_REG_TCOOLTHRS = 0x14
-_TMC_REG_SGTHRS = 0x40
-
-
-def applyStepperStallguard(
-    stepper: "StepperMotor",
-    stepper_name: str,
-    configs: dict[str, tuple[int, int, bool]],
-    gc: GlobalConfig,
-) -> None:
-    """Stamp [stepper_stallguard.*] onto the stepper, write SGTHRS/TCOOLTHRS, and
-    turn DIAG detection ON.
-
-    Simple rule: if a stepper has an enabled entry, detection is on for every
-    move — there is no per-move or per-state arming. It's switched on once here at
-    hardware init and stays on. (Homing doesn't false-trip because it runs far
-    slower than cruise, below the TCOOLTHRS velocity floor where DIAG is inactive.)
-    Steppers with no entry, or enabled=false, are simply left off.
-    """
-    from hardware.sorter_interface import DISABLE_STALLGUARD
-
-    if DISABLE_STALLGUARD:
-        gc.logger.info(
-            f"Stepper '{stepper_name}' StallGuard skipped (DISABLE_STALLGUARD=1)."
-        )
-        return
-
-    config = configs.get(stepper_name)
-    if config is None:
-        return
-    sgthrs, tcoolthrs, enabled = config
-    stepper.stallguard_sgthrs = sgthrs
-    stepper.stallguard_tcoolthrs = tcoolthrs
-    stepper.stallguard_enabled = enabled
-
-    if not enabled:
-        gc.logger.info(
-            f"Stepper '{stepper_name}' StallGuard configured but disabled "
-            f"(sgthrs={sgthrs}); not arming."
-        )
-        return
-
-    for attempt in range(1, HARDWARE_INIT_COMMAND_ATTEMPTS + 1):
-        try:
-            stepper.write_driver_register(_TMC_REG_SGTHRS, sgthrs)
-            stepper.write_driver_register(_TMC_REG_TCOOLTHRS, tcoolthrs)
-            break
-        except (MCUBusError, OSError, DecodeError) as e:
-            if attempt == HARDWARE_INIT_COMMAND_ATTEMPTS:
-                gc.logger.warning(
-                    f"Failed to apply StallGuard config for '{stepper_name}' "
-                    f"(sgthrs={sgthrs}, tcoolthrs={tcoolthrs}) after "
-                    f"{HARDWARE_INIT_COMMAND_ATTEMPTS} attempts: {e}. Continuing."
-                )
-                return
-            gc.logger.warning(
-                f"Failed to apply StallGuard config for '{stepper_name}' on "
-                f"attempt {attempt}/{HARDWARE_INIT_COMMAND_ATTEMPTS}: {e}. "
-                f"Retrying in {HARDWARE_INIT_RETRY_DELAY_S:.2f}s..."
-            )
-            time.sleep(HARDWARE_INIT_RETRY_DELAY_S)
-
-    try:
-        stepper.clear_stall()
-        stepper.enable_stall_detection(True)
-    except (MCUBusError, OSError, DecodeError) as e:
-        gc.logger.warning(
-            f"Wrote StallGuard regs for '{stepper_name}' but failed to arm DIAG "
-            f"detection: {e}. The stall monitor will retry on its next poll."
-        )
-
-    gc.logger.info(
-        f"Stepper '{stepper_name}' StallGuard armed: "
-        f"sgthrs={sgthrs}, tcoolthrs={tcoolthrs:#x}, enabled={enabled}"
-    )

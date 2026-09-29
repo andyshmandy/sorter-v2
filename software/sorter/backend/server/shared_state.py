@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 from fastapi import WebSocket
 
 from global_config import GlobalConfig
+from hardware.fault import HardwareFault
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -50,7 +51,8 @@ runtime_stats_live: Optional[dict[str, Any]] = None
 # motor. Manual jogs and runtime resume must stay blocked until the worker
 # reaches "initialized" or "ready".
 hardware_state: str = "standby"
-hardware_error: Optional[str] = None
+# What stopped or needs the operator: {"title", "message"} (HardwareFault.data()).
+hardware_error: Optional[dict[str, str]] = None
 hardware_homing_step: Optional[str] = None  # Current homing phase description
 _hardware_start_fn: Optional[Any] = None  # Callable set by main.py
 _hardware_initialize_fn: Optional[Any] = None  # Callable set by main.py
@@ -240,7 +242,7 @@ def publishSystemStatus() -> None:
 def setHardwareStatus(
     *,
     state: Optional[str] = None,
-    error: Optional[str] = None,
+    error: Optional[HardwareFault] = None,
     homing_step: Optional[str] = None,
     clear_error: bool = False,
     clear_homing_step: bool = False,
@@ -256,8 +258,8 @@ def setHardwareStatus(
     if state is not None and state != hardware_state:
         hardware_state = state
         changed = True
-    if error is not None and error != hardware_error:
-        hardware_error = error
+    if error is not None and error.data() != hardware_error:
+        hardware_error = error.data()
         changed = True
     elif clear_error and hardware_error is not None:
         hardware_error = None

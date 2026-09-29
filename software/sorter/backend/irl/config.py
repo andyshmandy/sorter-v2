@@ -1,3 +1,4 @@
+import contextlib
 import time
 from dataclasses import dataclass
 
@@ -11,7 +12,8 @@ MACHINE_SETUP = "classification_channel"
 from global_config import GlobalConfig
 from hardware.bus import MCUBus, MCUBusError
 from hardware.cobs import DecodeError
-from hardware.sorter_interface import SorterInterface
+from hardware.fault import HardwareFault
+from hardware.sorter_interface import DISABLE_STALLGUARD, SorterInterface
 from machine_platform import (
     build_servo_controller,
     discover_control_boards,
@@ -33,6 +35,10 @@ from .bin_layout import (
     applyCategories,
 )
 from .parse_user_toml import (
+    DEFAULT_STEPPER_CURRENTS,
+    DEFAULT_STEPPER_IHOLD,
+    DEFAULT_STEPPER_IHOLD_DELAY,
+    DEFAULT_STEPPER_IRUN,
     LOGICAL_STEPPER_BINDING_BASES,
     loadMachineConfig,
     loadMachineSpecificParams,
@@ -41,8 +47,6 @@ from .parse_user_toml import (
     loadServoChannelConfig,
     loadWaveshareServoConfig,
     loadChuteCalibrationConfig,
-    applyStepperCurrentOverride,
-    applyStepperStallguard,
 )
 from .leds import LedController, discoverLedOutputs
 from bin_layout_store import get_bin_categories, get_not_in_inventory_bins
@@ -50,35 +54,131 @@ from local_state import get_led_state, get_servo_states
 
 HARDWARE_INIT_COMMAND_ATTEMPTS = 4
 HARDWARE_INIT_RETRY_DELAY_S = 0.2
+# TMC2209 registers. Driver writes are one-way (the board acknowledges them
+# without hearing from the driver), so init reads IFCNT, the driver's count of
+# writes it accepted, before and after to prove they all landed.
+_TMC_REG_GCONF = 0x00
+_TMC_REG_IFCNT = 0x02
+_TMC_REG_TCOOLTHRS = 0x14
+_TMC_REG_SGTHRS = 0x40
+_TMC_GCONF_UART_INIT = 0x1C0  # PD_DISABLE | MSTEP_REG_SELECT | MULTISTEP_FILT
+_STEPPER_LABELS = {
+    "c_channel_1_rotor": "C-Channel 1",
+    "c_channel_2_rotor": "C-Channel 2",
+    "c_channel_3_rotor": "C-Channel 3",
+    "carousel": "carousel",
+    "chute_stepper": "chute",
+}
+_CHECK_POWER = (
+    "Check that the motor power supply is on and the control board is connected, "
+    "then home again."
+)
 
 
-def _run_stepper_init_command_with_retry(
-    gc: GlobalConfig,
-    stepper_name: str,
-    description: str,
-    command,
-    *,
-    attempts: int = HARDWARE_INIT_COMMAND_ATTEMPTS,
-    retry_delay_s: float = HARDWARE_INIT_RETRY_DELAY_S,
-) -> bool:
-    for attempt in range(1, attempts + 1):
+def _initCommand(gc: GlobalConfig, label: str, action: str, command):
+    """One init command, retried on bus errors. When the last attempt fails the
+    stepper would run on whatever settings it has, so init stops with the reason."""
+    for attempt in range(1, HARDWARE_INIT_COMMAND_ATTEMPTS + 1):
         try:
-            command()
-            return True
+            return command()
         except (MCUBusError, OSError, DecodeError) as exc:
-            if attempt == attempts:
-                gc.logger.warning(
-                    f"Failed to apply {description} for stepper '{stepper_name}' after "
-                    f"{attempts} attempts: {exc}. Continuing."
-                )
-                return False
+            if attempt == HARDWARE_INIT_COMMAND_ATTEMPTS:
+                raise HardwareFault(
+                    "Stepper setup failed",
+                    f"The control board could not {action} for the {label} stepper "
+                    f"({HARDWARE_INIT_COMMAND_ATTEMPTS} tries: {exc}). {_CHECK_POWER}",
+                ) from exc
             gc.logger.warning(
-                f"Failed to apply {description} for stepper '{stepper_name}' on "
-                f"attempt {attempt}/{attempts}: {exc}. Retrying in {retry_delay_s:.2f}s..."
+                f"Could not {action} for the {label} stepper on attempt "
+                f"{attempt}/{HARDWARE_INIT_COMMAND_ATTEMPTS}: {exc}. "
+                f"Retrying in {HARDWARE_INIT_RETRY_DELAY_S:.2f}s..."
             )
-            time.sleep(retry_delay_s)
+            time.sleep(HARDWARE_INIT_RETRY_DELAY_S)
 
-    return False
+
+def _configureStepper(
+    gc: GlobalConfig,
+    stepper: "StepperMotor",
+    canonical_name: str,
+    label: str,
+    stepper_config: "StepperConfig | None",
+    machine_config,
+) -> None:
+    """Put the stepper's TMC2209 in UART mode and write its microsteps, speed,
+    acceleration, current and StallGuard settings. Raises HardwareFault when a
+    command fails or the driver did not take every write: a driver left on its
+    power-on settings runs at the wrong current and microstepping, or not at all.
+
+    Without motor power (NO_POWER_DEVELOPMENT_MODE) the drivers cannot answer,
+    so the writes go out unchecked."""
+    verify = not gc.no_power_development_mode
+
+    def run(action: str, command):
+        return _initCommand(gc, label, action, command)
+
+    def interfaceCount() -> int:
+        return run("read its driver", lambda: stepper.read_driver_register(_TMC_REG_IFCNT)) & 0xFF
+
+    before = interfaceCount() if verify else 0
+    # GCONF puts the TMC2209 in UART-controlled mode. The chip may have powered
+    # on (or reset) after the firmware's own initialize() ran, leaving it at its
+    # reset defaults, so init writes it whatever the power sequencing was.
+    run("set GCONF", lambda: stepper.write_driver_register(_TMC_REG_GCONF, _TMC_GCONF_UART_INIT))
+    writes = 1
+    if stepper_config is not None:
+        microsteps = stepper_config.microsteps
+        speed = stepper_config.default_steps_per_second
+        acceleration = stepper_config.acceleration_microsteps_per_second_sq
+        run(f"set microsteps={microsteps}", lambda: stepper.set_microsteps(microsteps))
+        writes += 1
+        run(f"set speed limits 16..{speed}", lambda: stepper.set_speed_limits(16, speed))
+        # Every move re-asserts the default acceleration; this sets it before the
+        # first move (homing).
+        stepper.set_default_acceleration(acceleration)
+        run(f"set acceleration={acceleration}", lambda: stepper.set_acceleration(acceleration))
+
+    irun, ihold, ihold_delay = machine_config.stepper_current_overrides.get(
+        canonical_name
+    ) or DEFAULT_STEPPER_CURRENTS.get(
+        canonical_name,
+        (DEFAULT_STEPPER_IRUN, DEFAULT_STEPPER_IHOLD, DEFAULT_STEPPER_IHOLD_DELAY),
+    )
+    run(
+        f"set current IRUN={irun} IHOLD={ihold}",
+        lambda: stepper.set_current(irun, ihold, ihold_delay),
+    )
+    writes += 1
+
+    # [stepper_stallguard.*]: detection is switched on here, once, and stays on;
+    # the stall monitor reads the stamped values. Homing does not false-trip: it
+    # runs below the TCOOLTHRS velocity floor, where DIAG is inactive.
+    stallguard = machine_config.stepper_stallguard.get(canonical_name)
+    if stallguard is not None and not DISABLE_STALLGUARD:
+        sgthrs, tcoolthrs, enabled = stallguard
+        stepper.stallguard_sgthrs = sgthrs
+        stepper.stallguard_tcoolthrs = tcoolthrs
+        stepper.stallguard_enabled = enabled
+        if enabled:
+            run("set the StallGuard threshold", lambda: stepper.write_driver_register(_TMC_REG_SGTHRS, sgthrs))
+            run("set the StallGuard speed floor", lambda: stepper.write_driver_register(_TMC_REG_TCOOLTHRS, tcoolthrs))
+            writes += 2
+            run("clear its stall latch", stepper.clear_stall)
+            run("arm stall detection", lambda: stepper.enable_stall_detection(True))
+
+    if verify:
+        took = (interfaceCount() - before) % 256
+        if took < writes:
+            raise HardwareFault(
+                "Stepper settings not applied",
+                f"The {label} stepper's driver took {took} of the {writes} settings it "
+                f"was sent, so it would run at the wrong current or microstepping. "
+                f"Check the driver's connection. {_CHECK_POWER}",
+            )
+    gc.logger.info(
+        f"Stepper '{label}' configured: IRUN={irun} IHOLD={ihold} IHOLD_DELAY={ihold_delay}, "
+        f"StallGuard {'on' if stepper.stallguard_enabled else 'off'}"
+        + (f", driver took {writes} writes" if verify else ", unchecked (no motor power)")
+    )
 
 
 def restore_servo_states(servos: list, gc: GlobalConfig) -> None:
@@ -565,29 +665,32 @@ class IRLInterface:
                 stepper.enabled = False
 
     def shutdown(self) -> None:
-        if self.led_controller is not None:
-            self.led_controller.allOff()
-        if self.servo_controller is not None and hasattr(self.servo_controller, "shutdown"):
-            try:
-                self.servo_controller.shutdown()
-            except Exception:
-                pass
-        for iface in self.interfaces.values():
-            iface.shutdown()
-        # Close the underlying serial buses so standby genuinely releases the
-        # ttys — otherwise the fds linger until GC and the firmware flasher (or
-        # the next discovery pass) races a stale open on the same port.
-        # Interfaces can share a bus (multi-address), so dedupe before closing.
-        seen_buses: set[int] = set()
-        for iface in self.interfaces.values():
-            bus = getattr(iface, "_bus", None)
-            if bus is None or id(bus) in seen_buses:
-                continue
-            seen_buses.add(id(bus))
-            try:
-                bus.close()
-            except Exception:
-                pass
+        try:
+            if self.led_controller is not None:
+                self.led_controller.allOff()
+            if self.servo_controller is not None and hasattr(self.servo_controller, "shutdown"):
+                try:
+                    self.servo_controller.shutdown()
+                except Exception:
+                    pass
+            for iface in self.interfaces.values():
+                iface.shutdown()
+        finally:
+            # Close the underlying serial buses, even when a board no longer
+            # answers, so standby genuinely releases the ttys: otherwise the fds
+            # linger until GC and the firmware flasher (or the next discovery
+            # pass) races a stale open on the same port. Interfaces can share a
+            # bus (multi-address), so dedupe before closing.
+            seen_buses: set[int] = set()
+            for iface in self.interfaces.values():
+                bus = getattr(iface, "_bus", None)
+                if bus is None or id(bus) in seen_buses:
+                    continue
+                seen_buses.add(id(bus))
+                try:
+                    bus.close()
+                except Exception:
+                    pass
 
 
 def mkCameraConfig(
@@ -898,10 +1001,21 @@ def mkIRLInterface(config: IRLConfig, gc: GlobalConfig) -> IRLInterface:
     The firmware reports which steppers are available via stepper_names.
     """
     irl_interface = IRLInterface()
+    try:
+        _bindHardware(irl_interface, config, gc)
+    except BaseException:
+        # Release the boards discovery opened: their ports are opened
+        # exclusively, so the next attempt would find them held.
+        with contextlib.suppress(Exception):
+            irl_interface.shutdown()
+        raise
+    return irl_interface
+
+
+def _bindHardware(irl_interface: IRLInterface, config: IRLConfig, gc: GlobalConfig) -> None:
     machine_specific_params = loadMachineSpecificParams(gc)
     machine_config = loadMachineConfig(gc, machine_specific_params)
     stepper_binding_overrides = loadStepperBindingOverrides(gc, machine_specific_params)
-    stepper_current_overrides = machine_config.stepper_current_overrides
     stepper_direction_inverts = loadStepperDirectionInverts(gc, machine_specific_params)
     servo_channel_config = loadServoChannelConfig(gc, machine_specific_params)
     mcu_ports = MCUBus.enumerate_buses()
@@ -990,53 +1104,14 @@ def mkIRLInterface(config: IRLConfig, gc: GlobalConfig) -> IRLInterface:
         stepper_config: StepperConfig | None = getattr(config, attr, None)
         stepper.set_hardware_name(physical_name)
         stepper.set_name(attr_base)
-        # Write GCONF to put the TMC2209 in UART-controlled mode. The chip may have
-        # powered on (or reset) after the firmware's own initialize() ran, leaving it
-        # at hardware reset defaults (I_SCALE_ANALOG=1, MSTEP_REG_SELECT=0). Setting
-        # these bits here means the backend init is idempotent regardless of motor
-        # power sequencing.
-        _TMC_GCONF_UART_INIT = 0x1C0  # PD_DISABLE | MSTEP_REG_SELECT | MULTISTEP_FILT
-        _run_stepper_init_command_with_retry(
+        _configureStepper(
             gc,
-            attr_base,
-            "GCONF UART init",
-            lambda: stepper.write_driver_register(0x00, _TMC_GCONF_UART_INIT),
+            stepper,
+            canonical_name,
+            _STEPPER_LABELS.get(attr_base, attr_base),
+            stepper_config,
+            machine_config,
         )
-        if stepper_config is not None:
-            microsteps = stepper_config.microsteps
-            default_steps_per_second = stepper_config.default_steps_per_second
-            default_acceleration = stepper_config.acceleration_microsteps_per_second_sq
-            _run_stepper_init_command_with_retry(
-                gc,
-                attr_base,
-                f"microsteps={microsteps}",
-                lambda: stepper.set_microsteps(microsteps),
-            )
-            _run_stepper_init_command_with_retry(
-                gc,
-                attr_base,
-                f"speed limits min=16 max={default_steps_per_second}",
-                lambda: stepper.set_speed_limits(16, default_steps_per_second),
-            )
-            # Record the default so every move re-asserts it, and apply it once
-            # now so the value is correct before the first move (e.g. homing).
-            stepper.set_default_acceleration(default_acceleration)
-            _run_stepper_init_command_with_retry(
-                gc,
-                attr_base,
-                f"acceleration={default_acceleration}",
-                lambda: stepper.set_acceleration(default_acceleration),
-            )
-            gc.logger.info(
-                f"Stepper '{attr_base}' (physical '{physical_name}') config: microsteps={microsteps}, speed={default_steps_per_second}, acceleration={default_acceleration}"
-            )
-        else:
-            gc.logger.warn(
-                f"Stepper '{attr_base}' (physical '{physical_name}') has no StepperConfig (attr='{attr}'), using defaults"
-            )
-
-        applyStepperCurrentOverride(stepper, canonical_name, stepper_current_overrides, gc)
-        applyStepperStallguard(stepper, canonical_name, machine_config.stepper_stallguard, gc)
         logical_name = logical_name_for_attr_base.get(attr_base)
         stepper.set_direction_inverted(
             stepper_direction_inverts.get(logical_name, False) if logical_name is not None else False
@@ -1152,5 +1227,3 @@ def mkIRLInterface(config: IRLConfig, gc: GlobalConfig) -> IRLInterface:
         endstop_active_high=chute_calibration.endstop_active_high,
         operating_speed_microsteps_per_second=chute_calibration.operating_speed_microsteps_per_second,
     )
-
-    return irl_interface

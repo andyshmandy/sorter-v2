@@ -11,25 +11,15 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 import server.shared_state as shared_state
+from hardware.fault import HardwareFault
 
 router = APIRouter()
-
-
-def _system_status_payload() -> Dict[str, Any]:
-    return {
-        "hardware_state": shared_state.hardware_state,
-        "hardware_error": shared_state.hardware_error,
-        "homing_step": shared_state.hardware_homing_step,
-        "no_power_development_mode": bool(
-            getattr(shared_state.gc_ref, "no_power_development_mode", False)
-        ),
-    }
 
 
 @router.get("/api/system/status")
 def get_system_status() -> Dict[str, Any]:
     with shared_state.hardware_lifecycle_lock:
-        return _system_status_payload()
+        return shared_state.systemStatusData()
 
 
 @router.post("/api/system/reset")
@@ -54,7 +44,7 @@ def reset_system() -> Dict[str, Any]:
         except Exception as exc:
             shared_state.setHardwareStatus(
                 state="error",
-                error=f"Reset failed: {exc}",
+                error=HardwareFault("Reset failed", str(exc)),
                 clear_homing_step=True,
             )
             return {
@@ -101,7 +91,7 @@ def _start_hardware_worker(
             with shared_state.hardware_lifecycle_lock:
                 shared_state.setHardwareStatus(
                     state="error",
-                    error=str(exc),
+                    error=HardwareFault.of(exc),
                     clear_homing_step=True,
                 )
         else:

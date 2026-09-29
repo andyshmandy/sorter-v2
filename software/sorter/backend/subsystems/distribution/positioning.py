@@ -15,13 +15,12 @@ from bin_layout_store import set_bin_categories
 import db
 from defs.events import PauseCommandData, PauseCommandEvent
 from defs.known_object import PieceStage
+from hardware.fault import HardwareFault
 from utils.event import knownObjectToEvent
 
 
-BINS_FULL_ALERT_PREFIX = "No bin available"
-MISC_PASSTHROUGH_ALERT_PREFIX = "Misc passthrough"
-CHUTE_JAM_ALERT_PREFIX = "Chute jam"
-SERVO_BUS_ALERT_PREFIX = "Servo bus offline"
+CHUTE_JAM_TITLE = "Chute jammed"
+SERVO_BUS_OFFLINE_TITLE = "Servo bus offline"
 DISTRIBUTION_CHUTE_JAM_INCIDENT_KIND = "distribution_chute_jam"
 DISTRIBUTION_SERVO_BUS_OFFLINE_INCIDENT_KIND = "distribution_servo_bus_offline"
 DISTRIBUTION_NO_BIN_AVAILABLE_INCIDENT_KIND = "distribution_no_bin_available"
@@ -53,19 +52,6 @@ def _allowMultiCategoryBins() -> bool:
         )
     except Exception:
         return False
-
-
-def clearBinsFullAlertIfOwned() -> None:
-    try:
-        with shared_state.hardware_lifecycle_lock:
-            err = shared_state.hardware_error
-            if isinstance(err, str) and (
-                err.startswith(BINS_FULL_ALERT_PREFIX)
-                or err.startswith(MISC_PASSTHROUGH_ALERT_PREFIX)
-            ):
-                shared_state.setHardwareStatus(clear_error=True)
-    except Exception:
-        pass
 
 
 def _persistBinCategories(layout: DistributionLayout) -> None:
@@ -153,7 +139,6 @@ class Positioning(BaseState):
                     f"Positioning: piece {piece.uuid} is too big "
                     f"({piece.max_dimension_mm}mm) — passthrough to misc bottom bin"
                 )
-                clearBinsFullAlertIfOwned()
                 self._clearChuteJamAlertIfOwned()
                 self._openAllDoorsForPassthrough()
                 piece.stage = PieceStage.distributing
@@ -204,7 +189,6 @@ class Positioning(BaseState):
                     f"Positioning: unrouted piece loose on the classification channel — "
                     f"piece {piece.uuid} passes through to the bucket instead of claiming a bin"
                 )
-                clearBinsFullAlertIfOwned()
                 self._clearChuteJamAlertIfOwned()
                 self._openAllDoorsForPassthrough()
                 piece.stage = PieceStage.distributing
@@ -268,7 +252,6 @@ class Positioning(BaseState):
                     f"Positioning: piece {piece.uuid} ({piece.max_dimension_mm}mm) exceeds "
                     f"layer {address.layer_index} limit ({layer_max}mm) — passthrough to misc bottom bin"
                 )
-                clearBinsFullAlertIfOwned()
                 self._clearChuteJamAlertIfOwned()
                 self._openAllDoorsForPassthrough()
                 piece.stage = PieceStage.distributing
@@ -284,7 +267,6 @@ class Positioning(BaseState):
                 self._setOccupancyState("positioning.passthrough_too_big_for_layer")
                 return DistributionState.READY
 
-            clearBinsFullAlertIfOwned()
             self._clearChuteJamAlertIfOwned()
             self.logger.info(
                 f"Positioning: moving to bin at layer={address.layer_index}, section={address.section_index}, bin={address.bin_index}"
@@ -606,10 +588,10 @@ class Positioning(BaseState):
             return
         self._servo_bus_pause_enqueued = True
         message = (
-            f"{SERVO_BUS_ALERT_PREFIX} — {detail}. "
-            "Check Waveshare USB + power, then press Resume."
+            f"{detail[:1].upper()}{detail[1:]}. "
+            "Check the servo bus's USB cable and power, then press Resume."
         )
-        self.logger.error(message)
+        self.logger.error(f"{SERVO_BUS_OFFLINE_TITLE}: {message}")
         try:
             self.gc.runtime_stats.observeBlockedReason(
                 "distribution", "servo_bus_offline"
@@ -619,7 +601,9 @@ class Positioning(BaseState):
             pass
         try:
             with shared_state.hardware_lifecycle_lock:
-                shared_state.setHardwareStatus(error=message)
+                shared_state.setHardwareStatus(
+                    error=HardwareFault(SERVO_BUS_OFFLINE_TITLE, message)
+                )
         except Exception:
             pass
         try:
@@ -699,7 +683,7 @@ class Positioning(BaseState):
         try:
             with shared_state.hardware_lifecycle_lock:
                 err = shared_state.hardware_error
-                if isinstance(err, str) and err.startswith(SERVO_BUS_ALERT_PREFIX):
+                if err is not None and err["title"] == SERVO_BUS_OFFLINE_TITLE:
                     shared_state.setHardwareStatus(clear_error=True)
         except Exception:
             pass
@@ -725,7 +709,7 @@ class Positioning(BaseState):
             if not self._jam_ignored_logged:
                 self._jam_ignored_logged = True
                 self.logger.warning(
-                    f"{CHUTE_JAM_ALERT_PREFIX} check tripped ({detail}) but Chute Jam "
+                    f"Chute jam check tripped ({detail}) but Chute Jam "
                     "handling is Off - ignoring and waiting for the motion to finish"
                 )
             return
@@ -743,18 +727,17 @@ class Positioning(BaseState):
             return
         self._jam_pause_enqueued = True
         message = (
-            f"{CHUTE_JAM_ALERT_PREFIX}: {detail}. "
-            "Clear any piece stuck in the chute or on the distribution tray, "
+            f"{detail[:1].upper()}{detail[1:]}. Clear any piece stuck in the chute or on the distribution tray, "
             "make sure the servo flap can move freely, then press play."
         )
-        self.logger.error(message)
+        self.logger.error(f"{CHUTE_JAM_TITLE}: {message}")
         try:
             self.gc.runtime_stats.observeBlockedReason("distribution", "chute_jam")
         except Exception:
             pass
         try:
             with shared_state.hardware_lifecycle_lock:
-                shared_state.setHardwareStatus(error=message)
+                shared_state.setHardwareStatus(error=HardwareFault(CHUTE_JAM_TITLE, message))
         except Exception:
             pass
         try:
@@ -769,7 +752,7 @@ class Positioning(BaseState):
         try:
             with shared_state.hardware_lifecycle_lock:
                 err = shared_state.hardware_error
-                if isinstance(err, str) and err.startswith(CHUTE_JAM_ALERT_PREFIX):
+                if err is not None and err["title"] == CHUTE_JAM_TITLE:
                     shared_state.setHardwareStatus(clear_error=True)
         except Exception:
             pass

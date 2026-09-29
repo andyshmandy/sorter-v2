@@ -29,11 +29,11 @@ from server import shared_state
 from sorting_profile import MISC_CATEGORY, SortingProfile
 from subsystems.distribution.chute import BinAddress, Chute
 from subsystems.distribution.positioning import (
-    CHUTE_JAM_ALERT_PREFIX,
+    CHUTE_JAM_TITLE,
     DISTRIBUTION_NO_BIN_AVAILABLE_INCIDENT_KIND,
     DOORS_STOP_WAIT_S,
     Positioning,
-    SERVO_BUS_ALERT_PREFIX,
+    SERVO_BUS_OFFLINE_TITLE,
 )
 from subsystems.distribution.states import DistributionState
 from subsystems.shared_variables import SharedVariables
@@ -162,8 +162,7 @@ class ServoBusFatalTests(unittest.TestCase):
         # Fatal banner set + distinct from chute-jam prefix.
         self.assertIsNotNone(shared_state.hardware_error)
         assert shared_state.hardware_error is not None
-        self.assertTrue(shared_state.hardware_error.startswith(SERVO_BUS_ALERT_PREFIX))
-        self.assertFalse(shared_state.hardware_error.startswith(CHUTE_JAM_ALERT_PREFIX))
+        self.assertEqual(SERVO_BUS_OFFLINE_TITLE, shared_state.hardware_error["title"])
 
         # A pause command was enqueued for the main-thread handler.
         self.assertFalse(self.cmd_queue.empty())
@@ -341,8 +340,8 @@ class ServoBusFatalTests(unittest.TestCase):
         servos = [_mk_offline_servo(), _mk_offline_servo()]
         positioning = self._mk_positioning(servos=servos)
         positioning.step()
-        self.assertTrue(
-            (shared_state.hardware_error or "").startswith(SERVO_BUS_ALERT_PREFIX)
+        self.assertEqual(
+            SERVO_BUS_OFFLINE_TITLE, (shared_state.hardware_error or {}).get("title")
         )
 
         # Bus recovered: flip the servos back to healthy.
@@ -379,7 +378,7 @@ class ServoBusFatalTests(unittest.TestCase):
 
         self.assertIsNotNone(shared_state.hardware_error)
         assert shared_state.hardware_error is not None
-        self.assertTrue(shared_state.hardware_error.startswith(CHUTE_JAM_ALERT_PREFIX))
+        self.assertEqual(CHUTE_JAM_TITLE, shared_state.hardware_error["title"])
         snap = self.runtime_stats.snapshot()
         self.assertIsNotNone(snap.get("active_incident"))
         self.assertEqual("distribution_chute_jam", snap["active_incident"]["kind"])
@@ -436,7 +435,7 @@ class MainBootServoHealthCheckTests(unittest.TestCase):
         self._run_check([_mk_offline_servo(), _mk_offline_servo()])
         self.assertIsNotNone(shared_state.hardware_error)
         assert shared_state.hardware_error is not None
-        self.assertTrue(shared_state.hardware_error.startswith(SERVO_BUS_ALERT_PREFIX))
+        self.assertEqual(SERVO_BUS_OFFLINE_TITLE, shared_state.hardware_error["title"])
         self.assertIsNotNone(self.runtime_stats.servo_bus_offline_since_ts)
 
     def test_boot_with_at_least_one_online_leaves_error_clear(self) -> None:

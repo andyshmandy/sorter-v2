@@ -50,6 +50,13 @@ export interface ClassificationAttempt {
   duration_s?: number | null;
   image_ts?: number[];
 }
+/**
+ * What stopped the machine or needs the operator (hardware/fault.py).
+ */
+export interface HardwareErrorData {
+  title: string;
+  message: string;
+}
 export interface HeartbeatData {
   timestamp: number;
 }
@@ -190,7 +197,7 @@ export interface SortingProfileStatusEvent {
 }
 export interface SystemStatusData {
   hardware_state: string;
-  hardware_error?: string | null;
+  hardware_error?: HardwareErrorData | null;
   homing_step?: string | null;
   no_power_development_mode?: boolean;
 }

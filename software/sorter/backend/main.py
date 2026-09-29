@@ -41,6 +41,7 @@ from irl.config import (
 from vision import VisionManager
 from process_guard import acquire_backend_process_guard, ProcessGuardError
 from hardware.bus import MCUBusError
+from hardware.fault import HardwareFault
 from hardware.waveshare_bus_service import close_all_waveshare_bus_services
 from server.waveshare_inventory import get_waveshare_inventory_manager
 import uvicorn
@@ -70,7 +71,6 @@ LOOP_STALL_WARN_MS = 250.0
 RUNTIME_STATS_SNAPSHOT_INTERVAL_S = 1.0
 RUNTIME_STATS_LIVE_INTERVAL_S = 0.5
 
-SERVO_BUS_ALERT_PREFIX = "Servo bus offline"
 CAMERA_SHUTDOWN_SETTLE_S = float(os.getenv("SORTER_CAMERA_SHUTDOWN_SETTLE_S", "1.0"))
 
 server_to_main_queue = queue.Queue()
@@ -89,6 +89,7 @@ def _checkServoBusHealth(gc: GlobalConfig, irl) -> None:
     reconnecting the bus recovers without a full restart.
     """
     import server.shared_state as shared_state
+    from subsystems.distribution.positioning import SERVO_BUS_OFFLINE_TITLE
 
     servos = list(getattr(irl, "servos", []) or [])
     if not servos:
@@ -98,17 +99,17 @@ def _checkServoBusHealth(gc: GlobalConfig, irl) -> None:
         return
 
     message = (
-        f"{SERVO_BUS_ALERT_PREFIX} — no layer servos responded at boot. "
-        "Check Waveshare USB + power, then press Resume."
+        "No layer servo responded at boot. "
+        "Check the servo bus's USB cable and power, then press Resume."
     )
-    gc.logger.error(message)
+    gc.logger.error(f"{SERVO_BUS_OFFLINE_TITLE}: {message}")
     try:
         gc.runtime_stats.setServoBusOffline()
     except Exception:
         pass
     try:
         with shared_state.hardware_lifecycle_lock:
-            shared_state.setHardwareStatus(error=message)
+            shared_state.setHardwareStatus(error=HardwareFault(SERVO_BUS_OFFLINE_TITLE, message))
     except Exception:
         pass
 
@@ -125,7 +126,10 @@ def _parkAfterLinkFailure(gc: GlobalConfig, controller, exc: MCUBusError) -> Non
         gc.logger.error(f"Pausing after the link failure also failed: {pause_exc}")
     with shared_state.hardware_lifecycle_lock:
         shared_state.setHardwareStatus(
-            state="error", error=f"Control board link failed: {exc}. Run Safe Home to reconnect."
+            state="error",
+            error=HardwareFault(
+                "Control board link lost", f"{exc}. Home the machine to reconnect."
+            ),
         )
 
 

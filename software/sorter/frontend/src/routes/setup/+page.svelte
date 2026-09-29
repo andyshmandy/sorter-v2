@@ -577,7 +577,7 @@
 			if (seq !== wizardLoadSeq) return;
 			wizard = payload;
 			hardwareState = payload.hardware.state;
-			hardwareError = payload.hardware.error;
+			hardwareError = payload.hardware.error?.message ?? null;
 			homingStep = payload.hardware.homing_step;
 			// The wizard reloads on its own (hardware state changes, machine
 			// switches), and it used to overwrite the name field every time —
@@ -709,7 +709,7 @@
 		const nextState = ws.hardware_state ?? 'standby';
 		const previousState = hardwareState;
 		hardwareState = nextState;
-		hardwareError = ws.hardware_error ?? null;
+		hardwareError = ws.hardware_error?.message ?? null;
 		homingStep = ws.homing_step ?? null;
 		if (nextState !== previousState) {
 			void loadWizard();
