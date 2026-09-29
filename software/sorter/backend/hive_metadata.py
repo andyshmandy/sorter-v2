@@ -172,6 +172,30 @@ def getPieceMetadata(
     return metadata
 
 
+def cachedPieceMetadata(
+    part_num: Optional[str], color_id: Optional[Any] = None
+) -> tuple[bool, Optional[dict[str, Any]]]:
+    """(known, metadata) from memory only, never the database or Hive: what the
+    control loop may call. getPieceMetadata on another thread fills the memory."""
+    if not part_num:
+        return True, None
+    with _cache_lock:
+        key = (part_num, _parseColorKey(color_id))
+        if key in _cache:
+            return True, _cache[key]
+    return False, None
+
+
+def warmPieceMetadata(gc: GlobalConfig, part_num: str, color_id: Optional[Any] = None) -> None:
+    def _run() -> None:
+        try:
+            getPieceMetadata(gc, part_num, color_id)
+        except Exception as exc:
+            gc.logger.warning(f"hive piece metadata warm-up failed for {part_num}: {exc}")
+
+    threading.Thread(target=_run, daemon=True, name="hive-metadata-warm").start()
+
+
 def getBatchMovingAvgPrices(
     gc: GlobalConfig, pairs: list[tuple[Optional[str], Optional[Any]]]
 ) -> dict[tuple[Optional[str], Optional[Any]], Optional[float]]:

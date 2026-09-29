@@ -644,6 +644,8 @@ class Rev01BaseState(BaseState):
             requests[0].strategy if requests else ClassificationAttemptStrategy.combined
         )
         winner_result = applied[1] if applied is not None else None
+        if isinstance(winner_result, dict):
+            self._prefetchHiveMetadata(winner_result)
         with self.ctx.classify_lock:
             self.ctx.classification_attempts = list(attempts)
             self.ctx.classification_strategy = strategy
@@ -838,22 +840,47 @@ class Rev01BaseState(BaseState):
         )
         return rec, bgr
 
+    def _prefetchHiveMetadata(self, result: dict) -> None:
+        # Runs on the classify thread, which already waits on the network, with
+        # the part and color updateKnownObjectWithResult is about to apply. The
+        # control loop then finds the metadata in memory: it used to fetch from
+        # Hive itself and froze every channel for seconds when Hive was slow.
+        items = result.get("items") or []
+        if not items or not items[0].get("id"):
+            return
+        colors = result.get("colors") or []
+        if self.ctx.hosted_color is not None:
+            color_id = self.ctx.hosted_color[0]
+        elif colors:
+            color_id = str(max(colors, key=lambda c: c.get("score", 0)).get("id", "any_color"))
+        else:
+            color_id = None
+        try:
+            from hive_metadata import getPieceMetadata
+
+            getPieceMetadata(self.gc, items[0]["id"], color_id)
+        except Exception as exc:
+            self.logger.warning(f"{LOG_TAG} hive metadata prefetch failed: {exc}")
+
     def _applyHivePieceMetadata(self, obj) -> None:
-        # One fetch from Hive (via the persistent metadata cache) resolves this
-        # piece's metadata + BrickLink pricing AND its physical dimensions: stash
-        # the full blob + moving-average price, and flag too_big when any single
-        # axis exceeds the oversize limit. Hive being unreachable (and the cache
-        # cold) must never block classification — best effort only.
+        # Stash this piece's metadata + BrickLink pricing and flag too_big when
+        # any single axis exceeds the oversize limit. On the control loop, so
+        # memory only: _prefetchHiveMetadata filled it, and a miss (Hive was
+        # unreachable) warms the cache in the background instead of waiting.
         self._applyBsxInventoryFlag(obj)
         try:
             from hive_metadata import (
                 OVERSIZE_MAX_DIMENSION_MM,
-                getPieceMetadata,
+                cachedPieceMetadata,
                 isOversize,
                 maxDimensionMm,
+                warmPieceMetadata,
             )
 
-            metadata = getPieceMetadata(self.gc, obj.part_id, obj.color_id)
+            known, metadata = cachedPieceMetadata(obj.part_id, obj.color_id)
+            if not known:
+                warmPieceMetadata(self.gc, obj.part_id, obj.color_id)
+                return
             if metadata is None:
                 return
             obj.piece_metadata = metadata
