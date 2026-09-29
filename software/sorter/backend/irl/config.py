@@ -1131,7 +1131,7 @@ def mkIRLInterface(config: IRLConfig, gc: GlobalConfig) -> IRLInterface:
         else:
             gc.logger.warn("Saved bin categories don't match layout, ignoring")
 
-    from local_state import get_not_in_inventory_bins
+    from bin_layout_store import get_not_in_inventory_bins
     from irl.bin_layout import applyNotInInventory, notInInventoryMatchesLayout
     saved_nii = get_not_in_inventory_bins()
     if saved_nii is not None:

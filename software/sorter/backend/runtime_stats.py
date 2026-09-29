@@ -264,7 +264,7 @@ class RuntimeStatsCollector:
 
         if current.get("distributed_at") is not None and current.get("destination_bin") is not None:
             try:
-                from local_state import record_piece_distribution
+                from bin_contents import record_piece_distribution
 
                 record_piece_distribution(current)
             except Exception as exc:

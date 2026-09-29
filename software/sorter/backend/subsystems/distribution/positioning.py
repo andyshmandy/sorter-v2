@@ -869,7 +869,7 @@ class Positioning(BaseState):
         # everyone else routes only among the normal bins. The two pools never
         # mix. Within the not-in-inventory pool, overlap (multi-category) is
         # always allowed as the last resort ("if we run out, overlap them").
-        from local_state import get_current_bin_piece_counts
+        from bin_contents import get_current_bin_piece_counts
 
         piece_counts = get_current_bin_piece_counts()
         # A category may be assigned to more than one bin (the same category_id

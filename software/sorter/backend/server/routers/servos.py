@@ -10,8 +10,8 @@ from pydantic import BaseModel
 
 import machine_toml
 from hardware.waveshare_bus_service import get_waveshare_bus_service
+from bin_layout_store import set_servo_channel_angle
 from irl.bin_layout import channelIdForLayer, getBinLayout
-from local_state import set_servo_channel_angle
 from server import shared_state
 from server.routers.steppers import _ensure_not_homing
 from server.waveshare_inventory import (

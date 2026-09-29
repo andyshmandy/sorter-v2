@@ -11,8 +11,8 @@ import db
 # Stepper / TMC2209 StallGuard telemetry. Lives in the shared local_state SQLite
 # DB (same file as the rest of the machine's persistent state) but owns its own
 # tables and module so the high-volume sample writes stay self-contained. Two
-# tables, mirroring the chute_stress_runs + *_snapshots pattern already in
-# local_state.py: a run row groups a recording session (a targeted sweep, a
+# tables, mirroring the power_stress_runs + power_stress_events pattern in
+# stress_test_runs.py: a run row groups a recording session (a targeted sweep, a
 # stall test, or a passive logging window), and many sample rows hang off it.
 
 # Recording sources.
