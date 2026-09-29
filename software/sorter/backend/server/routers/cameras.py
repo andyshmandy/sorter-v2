@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict
 
 from blob_manager import BLOB_DIR, getChannelPolygons
 from vision.camera_modes import default_capture_mode, list_v4l2_modes, preview_capture_mode
+from vision.outputs.mjpeg import MjpegOutput
 from vision.channel_alignment import (
     alignmentRotationDeg,
     dropStartAngleForRole,
@@ -499,18 +500,6 @@ def _analyze_candidate_settings(
 # ---------------------------------------------------------------------------
 # Camera opening helpers
 # ---------------------------------------------------------------------------
-
-
-def _open_camera(index: int) -> cv2.VideoCapture:
-    if platform.system() == "Darwin":
-        return cv2.VideoCapture(index, cv2.CAP_AVFOUNDATION)
-    return cv2.VideoCapture(index)
-
-
-def _open_camera_source(source: int | str) -> cv2.VideoCapture:
-    if isinstance(source, int):
-        return _open_camera(source)
-    return cv2.VideoCapture(source)
 
 
 def _open_camera_for_probe(index: int) -> cv2.VideoCapture:
@@ -3382,150 +3371,131 @@ def _apply_dashboard_crop(frame: np.ndarray, spec: Dict[str, Any] | None) -> np.
     return processed
 
 
+# At most this many preview frames a second per camera view, however fast
+# perception runs: the budget for CPU on the machine and bandwidth to browsers.
+PREVIEW_MAX_FPS = 10.0
+
+
+class _SharedFeed:
+    """One preview of a camera role (annotated or raw, dashboard crop or not).
+
+    While anyone watches, a producer on the event loop renders and JPEG-encodes
+    each new source frame once, in a worker thread, and every viewer streams
+    those same bytes. A slow viewer skips frames instead of queueing them."""
+
+    def __init__(self, role: str, annotated: bool, dashboard: bool) -> None:
+        self.role = role
+        self.annotated = annotated
+        self.dashboard = dashboard
+        self.viewers = 0
+        self.chunk: bytes | None = None
+        self.seq = 0
+        self.fresh = asyncio.Event()
+        self.producer: asyncio.Future | None = None
+        self.last_ts: float | None = None
+        # (frame size, crop spec, when computed): recomputed now and then so
+        # zone edits show up in views that stay open.
+        self.crop: tuple[tuple[int, int], Dict[str, Any] | None, float] | None = None
+
+    def _render(self) -> bytes | None:
+        """The newest frame as an MJPEG part, or None when nothing is new. Runs
+        in a worker thread."""
+        gc = shared_state.gc_ref
+        ps = getattr(gc, "perception_service", None) if gc is not None else None
+        channel_id = ps.channel_id_for_role(self.role) if ps is not None else None
+        result = None
+        if self.annotated and channel_id is not None:
+            # Rendered at preview width once per inference frame, shared.
+            result = ps.preview_frame(channel_id, PREVIEW_MAX_WIDTH)
+        if result is None:
+            # Annotations off, or perception not ready yet: raw pixels from the
+            # same shared capture thread, never a VisionManager overlay.
+            feed = shared_state.camera_service.get_feed(self.role) if shared_state.camera_service else None
+            frame_obj = feed.get_frame(annotated=False) if feed is not None else None
+            if frame_obj is None:
+                return None
+            result = (frame_obj.raw, frame_obj.timestamp)
+        frame, frame_ts = result
+        if frame_ts == self.last_ts:
+            return None
+        self.last_ts = frame_ts
+        started = time.perf_counter()
+        if PREVIEW_MAX_WIDTH > 0 and frame.shape[1] > PREVIEW_MAX_WIDTH:
+            scale = PREVIEW_MAX_WIDTH / float(frame.shape[1])
+            frame = cv2.resize(
+                frame,
+                (PREVIEW_MAX_WIDTH, int(round(frame.shape[0] * scale))),
+                interpolation=cv2.INTER_AREA,
+            )
+        if self.dashboard:
+            frame_h, frame_w = frame.shape[:2]
+            if self.crop is None or self.crop[0] != (frame_w, frame_h) or time.monotonic() - self.crop[2] > 5.0:
+                self.crop = ((frame_w, frame_h), _dashboard_crop_spec(self.role, frame_w, frame_h), time.monotonic())
+            frame = _apply_dashboard_crop(frame, self.crop[1])
+        chunk = MjpegOutput().encode_chunk(frame, quality=55)
+        if gc is not None:
+            gc.runtime_stats.observePerfMs(f"preview.{self.role}.frame_age_ms", max(0.0, (time.time() - float(frame_ts)) * 1000.0))
+            gc.runtime_stats.observePerfMs(f"preview.{self.role}.encode_ms", (time.perf_counter() - started) * 1000.0)
+            gc.runtime_stats.observePerfMs(f"preview.{self.role}.viewers", float(self.viewers))
+        return chunk
+
+    async def _produce(self) -> None:
+        loop = asyncio.get_running_loop()
+        self.crop = None
+        while self.viewers:
+            started = loop.time()
+            try:
+                chunk = await loop.run_in_executor(None, self._render)
+            except Exception as exc:
+                logger.warning(f"camera feed {self.role}: {exc}")
+                await asyncio.sleep(1.0)
+                continue
+            if chunk is None:
+                await asyncio.sleep(0.02)
+                continue
+            self.chunk = chunk
+            self.seq += 1
+            fresh, self.fresh = self.fresh, asyncio.Event()
+            fresh.set()
+            await asyncio.sleep(max(0.0, started + 1.0 / PREVIEW_MAX_FPS - loop.time()))
+        self.chunk = None
+
+    async def stream(self):
+        self.viewers += 1
+        if self.producer is None or self.producer.done():
+            self.producer = asyncio.ensure_future(self._produce())
+        try:
+            seq = 0
+            while True:
+                if self.chunk is None or self.seq == seq:
+                    await self.fresh.wait()
+                    continue
+                seq = self.seq
+                yield self.chunk
+        finally:
+            self.viewers -= 1
+
+
+_shared_feeds: Dict[tuple[str, bool, bool], _SharedFeed] = {}
+
+
 @router.get("/api/cameras/feed/{role}")
 def camera_feed_by_role(
     role: str,
     annotated: bool = True,
     layer: str = "annotated",
-    direct: bool = False,
     dashboard: bool = False,
-    show_regions: bool = True,
 ):
-    """MJPEG stream for a camera role.
+    """MJPEG stream for a camera role, shared by everyone watching the same view.
 
     ``layer`` controls annotation: ``"annotated"`` (default) or ``"raw"``.
     The legacy ``annotated`` bool param is supported for backward compat.
     """
-    from vision.camera import (
-        apply_camera_device_settings,
-        apply_picture_settings,
-    )
-    from vision.outputs.mjpeg import MjpegOutput
-
-    # Resolve layer — legacy `annotated` param maps into `layer`
-    want_annotated = layer == "annotated" and annotated
-    raw = machine_toml.read()
-    picture_settings = parseCameraPictureSettings(cameraSettingsForRole(_get_picture_settings_table(raw), role))
-    saved_device_settings = parseCameraDeviceSettings(
-        cameraSettingsForRole(_get_camera_device_settings_table(raw), role)
-    )
-    settings_role = "classification_channel" if role == "carousel" else role
-    preview_device_settings = shared_state.camera_device_preview_overrides.get(settings_role)
-    device_settings = cameraDeviceSettingsToDict(
-        preview_device_settings if preview_device_settings is not None else saved_device_settings
-    )
-    source = _camera_source_for_role(raw, role)
-    if source is None:
+    if _camera_source_for_role(machine_toml.read(), role) is None:
         raise HTTPException(404, f"Camera role '{role}' not configured")
-
-    encoder = MjpegOutput()
-
-    cached_dashboard_shape: tuple[int, int] | None = None
-    cached_dashboard_spec: Dict[str, Any] | None = None
-
-    def _dashboard_frame(frame: np.ndarray) -> np.ndarray:
-        nonlocal cached_dashboard_shape, cached_dashboard_spec
-        if not dashboard:
-            return frame
-        frame_h, frame_w = frame.shape[:2]
-        shape = (frame_w, frame_h)
-        if cached_dashboard_shape != shape:
-            cached_dashboard_spec = _dashboard_crop_spec(role, frame_w, frame_h)
-            cached_dashboard_shape = shape
-        return _apply_dashboard_crop(frame, cached_dashboard_spec)
-
-    if not direct:
-        prof = shared_state.gc_ref.profiler if shared_state.gc_ref is not None else None
-
-        def generate_perception_stack():
-            last_frame_ts: float | None = None
-            while True:
-                # Re-read the service each loop so a connection opened before
-                # perception finished initializing upgrades from raw -> overlay
-                # without a reconnect.
-                ps = (
-                    getattr(shared_state.gc_ref, "perception_service", None)
-                    if shared_state.gc_ref is not None
-                    else None
-                )
-                channel_id = ps.channel_id_for_role(role) if ps is not None else None
-                result = None
-                if want_annotated and ps is not None and channel_id is not None:
-                    # preview_frame renders the overlay at preview width at most
-                    # once per inference cycle (cached + shared across clients).
-                    result = ps.preview_frame(channel_id, PREVIEW_MAX_WIDTH)
-                if result is not None:
-                    frame, frame_ts = result
-                else:
-                    # Annotations off, or perception not ready yet: raw pixels
-                    # from the SAME shared capture thread — never a VisionManager
-                    # overlay.
-                    feed = (
-                        shared_state.camera_service.get_feed(role)
-                        if shared_state.camera_service is not None
-                        else None
-                    )
-                    frame_obj = (
-                        feed.get_frame(annotated=False)
-                        if feed is not None
-                        else None
-                    )
-                    if frame_obj is None:
-                        time.sleep(0.05)
-                        continue
-                    frame_ts = frame_obj.timestamp
-                    frame = frame_obj.raw
-                    if PREVIEW_MAX_WIDTH > 0 and frame.shape[1] > PREVIEW_MAX_WIDTH:
-                        scale = PREVIEW_MAX_WIDTH / float(frame.shape[1])
-                        frame = cv2.resize(
-                            frame,
-                            (PREVIEW_MAX_WIDTH, int(round(frame.shape[0] * scale))),
-                            interpolation=cv2.INTER_AREA,
-                        )
-                if last_frame_ts == frame_ts:
-                    time.sleep(0.01)
-                    continue
-                last_frame_ts = frame_ts
-                shared_state.gc_ref.runtime_stats.observePerfMs(
-                    f"preview.{role}.frame_age_ms",
-                    max(0.0, (time.time() - float(frame_ts)) * 1000.0),
-                )
-                frame = _dashboard_frame(frame)
-                if prof is not None:
-                    prof.hit(f"encode.{role}.frames")
-                    prof.mark(f"encode.{role}.interval_ms")
-                    with prof.timer(f"encode.{role}.encode_ms"):
-                        chunk = encoder.encode_chunk(frame, quality=55)
-                else:
-                    chunk = encoder.encode_chunk(frame, quality=55)
-                yield chunk
-
-        return StreamingResponse(
-            generate_perception_stack(),
-            media_type="multipart/x-mixed-replace; boundary=frame",
-        )
-
-    def generate_direct():
-        cap = _open_camera_source(source)
-        if not cap.isOpened():
-            return
-        try:
-            if isinstance(source, int) and device_settings:
-                apply_camera_device_settings(cap, device_settings, source=source)
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                frame = apply_picture_settings(frame, picture_settings)
-                frame = _dashboard_frame(frame)
-                yield encoder.encode_chunk(frame, quality=70)
-        finally:
-            cap.release()
-
-    return StreamingResponse(
-        generate_direct(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-    )
+    key = (role, layer == "annotated" and annotated, dashboard)
+    feed = _shared_feeds.get(key) or _shared_feeds.setdefault(key, _SharedFeed(*key))
+    return StreamingResponse(feed.stream(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 
 @router.post("/api/cameras/assign")

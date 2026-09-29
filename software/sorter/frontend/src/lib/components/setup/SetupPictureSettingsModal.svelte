@@ -1,5 +1,6 @@
 <script lang="ts">
 	import PictureSettingsSidebar from '$lib/components/settings/PictureSettingsSidebar.svelte';
+	import { tab } from '$lib/tabVisibility.svelte';
 	import { pictureSettingsEqual, type PictureSettings } from '$lib/settings/picture-settings';
 	import type { CameraRole } from '$lib/settings/stations';
 	import { createEventDispatcher } from 'svelte';
@@ -206,7 +207,7 @@
 				{#if hasCamera}
 					{#key `${role}::${typeof source === 'string' ? source : source === null ? 'none' : source}::${feedRevision}`}
 						<img
-							src={mjpegSrc}
+							src={tab.visible ? mjpegSrc : undefined}
 							alt={label}
 							class="absolute inset-0 h-full w-full object-contain"
 							style={previewTransformStyle()}

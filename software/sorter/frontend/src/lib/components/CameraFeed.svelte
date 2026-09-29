@@ -3,6 +3,7 @@
 	import { getBackendHttpBase, machineHttpBaseUrlFromWsUrl } from '$lib/backend';
 	import type { DashboardFeedCrop } from '$lib/dashboard/crops';
 	import StreamControlsOverlay from '$lib/components/StreamControlsOverlay.svelte';
+	import { tab } from '$lib/tabVisibility.svelte';
 	import { WifiOff, VideoOff } from 'lucide-svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import { onDestroy } from 'svelte';
@@ -183,7 +184,7 @@
 	>
 		{#if is_configured}
 			<img
-				src={mjpegSrc}
+				src={tab.visible ? mjpegSrc : undefined}
 				alt={display_label}
 				class="absolute inset-0 h-full w-full object-contain"
 				class:opacity-30={!is_healthy}

@@ -27,6 +27,7 @@
 		X
 	} from 'lucide-svelte';
 	import StreamControlsOverlay from '$lib/components/StreamControlsOverlay.svelte';
+	import { tab } from '$lib/tabVisibility.svelte';
 	import { createEventDispatcher, onMount } from 'svelte';
 
 	type Channel =
@@ -4037,7 +4038,7 @@
 								</div>
 							{:else if currentAssignment() !== null}
 								<img
-									src={streamSrc(currentChannel)}
+									src={tab.visible ? streamSrc(currentChannel) : undefined}
 									alt={CHANNEL_LABELS[currentChannel]}
 									class="absolute inset-0 h-full w-full object-contain"
 									style={feedImageStyle(currentChannel)}
