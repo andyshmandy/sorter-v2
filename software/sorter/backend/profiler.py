@@ -287,54 +287,5 @@ class Profiler:
             )
         return rows
 
-    def getReport(self) -> str:
-        if not self.enabled:
-            return ""
-
-        with self._lock:
-            durations = list(self._durations.items())
-            counters = list(self._counters.items())
-            values = list(self._values.items())
-            intervals = list(self._intervals.items())
-
-        durations.sort(key=lambda kv: kv[1].total_ms, reverse=True)
-        counters.sort(key=lambda kv: kv[1].count, reverse=True)
-        values.sort(key=lambda kv: kv[1].total, reverse=True)
-        intervals.sort(key=lambda kv: kv[1].total_ms, reverse=True)
-
-        lines: list[str] = []
-        lines.append("\n" + "=" * 80)
-        lines.append("PROFILER REPORT")
-        lines.append("=" * 80)
-
-        lines.append("Top durations (by total ms):")
-        for name, stat in durations[: self.top_n]:
-            avg_ms = stat.total_ms / stat.count if stat.count > 0 else 0.0
-            min_display = stat.min_ms if stat.min_ms != float("inf") else 0.0
-            lines.append(
-                f"  {name}: count={stat.count} total={stat.total_ms:.1f}ms avg={avg_ms:.1f}ms min={min_display:.1f}ms max={stat.max_ms:.1f}ms last={stat.last_ms:.1f}ms"
-            )
-
-        lines.append("Top counters:")
-        for name, stat in counters[: self.top_n]:
-            lines.append(f"  {name}: count={stat.count}")
-
-        lines.append("Top observed values:")
-        for name, stat in values[: self.top_n]:
-            avg_value = stat.total / stat.count if stat.count > 0 else 0.0
-            lines.append(
-                f"  {name}: count={stat.count} avg={avg_value:.2f} max={stat.max_value:.2f} last={stat.last_value:.2f}"
-            )
-
-        lines.append("Top intervals:")
-        for name, stat in intervals[: self.top_n]:
-            avg_ms = stat.total_ms / stat.count if stat.count > 0 else 0.0
-            lines.append(
-                f"  {name}: count={stat.count} avg={avg_ms:.1f}ms max={stat.max_ms:.1f}ms last={stat.last_ms:.1f}ms"
-            )
-
-        lines.append("=" * 80 + "\n")
-        return "\n".join(lines)
-
     def stop(self) -> None:
         return

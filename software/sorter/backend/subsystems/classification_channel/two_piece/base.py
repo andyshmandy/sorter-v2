@@ -1,5 +1,4 @@
 import base64
-import json
 import threading
 import time
 from dataclasses import dataclass
@@ -914,73 +913,6 @@ class Rev01BaseState(BaseState):
             obj.not_in_inventory = (in_inventory is False)
         except Exception as exc:
             self.gc.logger.warn(f"bsx inventory check failed: {exc}")
-
-    def dumpBurstCaptureArtifacts(
-        self,
-        all_captures: list[np.ndarray],
-        selected_captures: list[np.ndarray],
-        *,
-        result: object | None,
-        error: str | None,
-    ) -> None:
-        root = getattr(self.gc, "classification_burst_dump_root", None)
-        piece = self.ctx.known_object
-        if root is None or piece is None:
-            return
-        piece_uuid = getattr(piece, "uuid", None)
-        if not isinstance(piece_uuid, str) or not piece_uuid:
-            return
-        piece_dir = Path(root) / piece_uuid
-        captures_dir = piece_dir / "captures"
-        selected_dir = piece_dir / "selected"
-        try:
-            captures_dir.mkdir(parents=True, exist_ok=True)
-            selected_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as exc:
-            self.logger.warning(f"{LOG_TAG} could not create burst dump dir: {exc}")
-            return
-
-        all_paths: list[str] = []
-        for idx, image in enumerate(all_captures):
-            path = captures_dir / f"burst_{idx:03d}.jpg"
-            if self._writeJpeg(path, image):
-                all_paths.append(str(path))
-
-        selected_paths: list[str] = []
-        for idx, image in enumerate(selected_captures):
-            path = selected_dir / f"selected_{idx:03d}.jpg"
-            if self._writeJpeg(path, image):
-                selected_paths.append(str(path))
-
-        manifest = {
-            "piece_uuid": piece_uuid,
-            "captured_count": len(all_captures),
-            "selected_count": len(selected_captures),
-            "capture_timestamps": list(self.ctx.captured_crop_timestamps[: len(all_captures)]),
-            "capture_paths": all_paths,
-            "selected_paths": selected_paths,
-            "classification_error": error,
-            "classification_result": result if isinstance(result, dict) else None,
-            "brickognize_result": self._knownObjectResultSnapshot(),
-        }
-        try:
-            (piece_dir / "brickognize_result.json").write_text(
-                json.dumps(
-                    {
-                        "piece_uuid": piece_uuid,
-                        "classification_error": error,
-                        "classification_result": result if isinstance(result, dict) else None,
-                        "brickognize_result": self._knownObjectResultSnapshot(),
-                    },
-                    indent=2,
-                    sort_keys=True,
-                )
-            )
-            (piece_dir / "burst_manifest.json").write_text(
-                json.dumps(manifest, indent=2, sort_keys=True)
-            )
-        except Exception as exc:
-            self.logger.warning(f"{LOG_TAG} could not write burst manifest: {exc}")
 
     def _knownObjectResultSnapshot(self) -> dict[str, object]:
         obj = self.ctx.known_object

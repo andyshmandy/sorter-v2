@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, List, Dict, Tuple
+from typing import Any, Dict, Tuple
 import numpy as np
 
 from defs.consts import (
@@ -9,7 +9,7 @@ from defs.consts import (
     CH2_PRECISE_SECTIONS, CH2_DROPZONE_SECTIONS,
     CLASSIFICATION_CHANNEL_CLOCKWISE,
 )
-from defs.channel import PolygonChannel, ChannelGeometry, ChannelDetection
+from defs.channel import PolygonChannel, ChannelGeometry
 
 
 @dataclass(frozen=True)
@@ -479,49 +479,6 @@ class ChannelAction(Enum):
     PULSE_PRECISE = "precise"
 
 
-def computeChannelGeometry(
-    saved_polygons: Dict[str, np.ndarray],
-    channel_angles: Dict[str, float],
-    channel_masks: Dict[str, np.ndarray],
-    channel_arc_params: Dict[str, Any] | None = None,
-) -> ChannelGeometry:
-    geometry = ChannelGeometry(second_channel=None, third_channel=None)
-
-    second_poly = saved_polygons.get("second_channel")
-    if second_poly is not None and len(second_poly) >= 3:
-        center = tuple(np.mean(second_poly, axis=0).tolist())
-        r1_angle = channel_angles.get("second", 0.0)
-        second_zones = parseSavedChannelArcZones("second", channel_angles, channel_arc_params)
-        second_drop_sections, second_exit_sections = zoneSectionsForChannel(2, r1_angle, second_zones)
-        geometry.second_channel = PolygonChannel(
-            channel_id=2,
-            polygon=second_poly,
-            center=center,
-            radius1_angle_image=r1_angle,
-            mask=channel_masks["second_channel"],
-            dropzone_sections=second_drop_sections,
-            exit_sections=second_exit_sections,
-        )
-
-    third_poly = saved_polygons.get("third_channel")
-    if third_poly is not None and len(third_poly) >= 3:
-        center = tuple(np.mean(third_poly, axis=0).tolist())
-        r1_angle = channel_angles.get("third", 0.0)
-        third_zones = parseSavedChannelArcZones("third", channel_angles, channel_arc_params)
-        third_drop_sections, third_exit_sections = zoneSectionsForChannel(3, r1_angle, third_zones)
-        geometry.third_channel = PolygonChannel(
-            channel_id=3,
-            polygon=third_poly,
-            center=center,
-            radius1_angle_image=r1_angle,
-            mask=channel_masks["third_channel"],
-            dropzone_sections=third_drop_sections,
-            exit_sections=third_exit_sections,
-        )
-
-    return geometry
-
-
 def _isInChannel(point: Tuple[float, float], ch: PolygonChannel) -> bool:
     x, y = int(point[0]), int(point[1])
     if 0 <= y < ch.mask.shape[0] and 0 <= x < ch.mask.shape[1]:
@@ -670,59 +627,3 @@ def _exitOverlapRatio(sections: set[int], exit_sections: set[int]) -> float:
         return 0.0
     return float(len(sections & exit_sections)) / float(len(sections))
 
-
-def analyzeFeederChannels(
-    detections: List[ChannelDetection],
-    ignored_dropzone_detection_ids: set[tuple[int, int]] | None = None,
-) -> FeederAnalysis:
-    result = FeederAnalysis()
-    ignored_dropzone_detection_ids = ignored_dropzone_detection_ids or set()
-
-    for det in detections:
-        sections = getBboxSections(det.bbox, det.channel)
-        global_id = getattr(det, "global_id", None)
-        ignore_dropzone = (
-            isinstance(global_id, int)
-            and (int(det.channel_id), int(global_id)) in ignored_dropzone_detection_ids
-        )
-
-        if det.channel_id == 3:
-            drop_overlap = bboxSectionOverlapRatio(det.bbox, det.channel, det.channel.dropzone_sections)
-            if drop_overlap > result.ch3_dropzone_overlap_max:
-                result.ch3_dropzone_overlap_max = drop_overlap
-            if not ignore_dropzone and sections & det.channel.dropzone_sections:
-                result.ch3_dropzone_occupied = True
-            overlap = _bboxExitOverlapRatio(det.bbox, det.channel)
-            if overlap > result.ch3_exit_overlap_max:
-                result.ch3_exit_overlap_max = overlap
-            if bboxCenterCrossedSectionMidpoint(
-                det.bbox,
-                det.channel,
-                det.channel.exit_sections,
-            ):
-                result.ch3_exit_center_crossed = True
-            if overlap > 0.0 or result.ch3_exit_center_crossed:
-                result.ch3_action = ChannelAction.PULSE_PRECISE
-            elif result.ch3_action == ChannelAction.IDLE:
-                result.ch3_action = ChannelAction.PULSE_NORMAL
-        elif det.channel_id == 2:
-            drop_overlap = bboxSectionOverlapRatio(det.bbox, det.channel, det.channel.dropzone_sections)
-            if drop_overlap > result.ch2_dropzone_overlap_max:
-                result.ch2_dropzone_overlap_max = drop_overlap
-            if not ignore_dropzone and sections & det.channel.dropzone_sections:
-                result.ch2_dropzone_occupied = True
-            overlap = _bboxExitOverlapRatio(det.bbox, det.channel)
-            if overlap > result.ch2_exit_overlap_max:
-                result.ch2_exit_overlap_max = overlap
-            if bboxCenterCrossedSectionMidpoint(
-                det.bbox,
-                det.channel,
-                det.channel.exit_sections,
-            ):
-                result.ch2_exit_center_crossed = True
-            if overlap > 0.0 or result.ch2_exit_center_crossed:
-                result.ch2_action = ChannelAction.PULSE_PRECISE
-            elif result.ch2_action == ChannelAction.IDLE:
-                result.ch2_action = ChannelAction.PULSE_NORMAL
-
-    return result
