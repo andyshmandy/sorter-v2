@@ -1,6 +1,4 @@
-import type { AndroidCameraCapabilities } from '$lib/settings/android-camera-settings';
-
-export type CameraDeviceProvider = 'none' | 'network-stream' | 'android-camera-app' | 'usb-opencv';
+export type CameraDeviceProvider = 'none' | 'network-stream' | 'usb-opencv';
 
 export type CameraCalibrationMethod = 'target_plate' | 'llm_guided' | 'exposure_histogram';
 
@@ -24,7 +22,6 @@ export type CameraDeviceSettingsResponse = {
 	source: string | number | null;
 	provider: CameraDeviceProvider | string;
 	settings?: Record<string, unknown>;
-	capabilities?: Partial<AndroidCameraCapabilities>;
 	controls?: UsbCameraControl[];
 	supported?: boolean;
 	message?: string;
