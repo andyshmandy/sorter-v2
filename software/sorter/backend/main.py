@@ -237,8 +237,11 @@ def runServer(gc: GlobalConfig) -> None:
     # setup is unused — and it intermittently crashed the api-server thread at
     # startup ("ValueError: Unknown level: 'INFO'" out of dictConfig), leaving
     # main.py alive but port 8000 unbound so the UI couldn't connect. Skipping
-    # dictConfig removes the failure mode entirely.
-    uvicorn.run(app, host=host, port=BACKEND_PORT, log_level="error", ws="wsproto", log_config=None)
+    # dictConfig removes the failure mode entirely. No per-message deflate:
+    # JPEG video frames do not compress, so deflating them only costs CPU.
+    uvicorn.run(
+        app, host=host, port=BACKEND_PORT, log_level="error", ws="wsproto", ws_per_message_deflate=False, log_config=None
+    )
 
 
 def runBroadcaster(gc: GlobalConfig) -> None:
