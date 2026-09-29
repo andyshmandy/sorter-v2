@@ -1,12 +1,12 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status
+from fastapi import FastAPI, WebSocket, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import asyncio
+import json
 import os
 import time
-from pathlib import Path
 
 import db
 import machine_toml
@@ -32,16 +32,7 @@ from server.security import (
     websocket_connection_allowed,
 )
 
-from server.shared_state import (
-    active_connections,
-    broadcastEvent,
-    setGlobalConfig,
-    setRuntimeVariables,
-    setCommandQueue,
-    setController,
-    setVisionManager,
-    _getRuntimeVariables,
-)
+from server.shared_state import _getRuntimeVariables
 import server.shared_state as shared_state
 
 # ---------------------------------------------------------------------------
@@ -84,7 +75,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -94,23 +85,26 @@ from starlette.responses import Response
 _LOG_ALL_REQUESTS = os.environ.get("SORTER_LOG_REQUESTS", "").lower() in ("1", "true", "yes")
 
 
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        gc = shared_state.gc_ref
-        if _LOG_ALL_REQUESTS and gc is not None:
-            client = request.client.host if request.client is not None else None
-            gc.logger.info(
-                f"[req] {request.method} {request.url.path} "
-                f"origin={request.headers.get('origin')!r} client={client!r}"
-            )
-            response: Response = await call_next(request)
-            gc.logger.info(f"[req] <- {response.status_code} {request.method} {request.url.path}")
-            return response
-        if request.method != "GET" and gc is not None:
-            gc.logger.info(f"[API] {request.method} {request.url.path}")
-        return await call_next(request)
+class _LogRequests:
+    """Logs each non-GET request. Plain ASGI: responses, streamed camera frames
+    included, pass straight through instead of being re-queued through a task."""
 
-app.add_middleware(RequestLoggingMiddleware)
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        gc = shared_state.gc_ref
+        if scope["type"] == "http" and gc is not None:
+            if _LOG_ALL_REQUESTS:
+                origin = dict(scope["headers"]).get(b"origin", b"").decode()
+                client = scope["client"][0] if scope.get("client") else None
+                gc.logger.info(f"[req] {scope['method']} {scope['path']} origin={origin!r} client={client!r}")
+            elif scope["method"] != "GET":
+                gc.logger.info(f"[API] {scope['method']} {scope['path']}")
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(_LogRequests)
 
 
 @app.exception_handler(machine_toml.MachineTomlError)
@@ -202,11 +196,20 @@ async def _loop_lag_probe() -> None:
             gc.runtime_stats.observePerfMs("socket.loop_lag_ms", max(0.0, lag_ms))
 
 
+async def _heartbeats() -> None:
+    """The server's ping: a tab that hears nothing for a few seconds reconnects."""
+    while True:
+        await asyncio.sleep(shared_state.WS_HEARTBEAT_INTERVAL_S)
+        heartbeat = {"tag": "heartbeat", "data": {"timestamp": time.time()}}
+        shared_state.fanOut("heartbeat", shared_state.encodeEvent(heartbeat))
+
+
 @app.on_event("startup")
 async def onStartup() -> None:
     _load_saved_api_keys_into_environment()
     shared_state.server_loop = asyncio.get_running_loop()
     asyncio.create_task(_loop_lag_probe())
+    asyncio.create_task(_heartbeats())
     getSetProgressSyncWorker().start()
     get_waveshare_inventory_manager().start()
     keep_tailscale_installed()
@@ -250,26 +253,16 @@ class MachineIdentityUpdateRequest(BaseModel):
 
 
 def _getMachineIdentityData() -> MachineIdentityData:
-    machine_id = shared_state.gc_ref.machine_id if shared_state.gc_ref is not None else getMachineId()
+    gc = shared_state.gc_ref
     return MachineIdentityData(
-        machine_id=machine_id,
+        machine_id=gc.machine_id if gc is not None else getMachineId(),
         nickname=getMachineNickname(),
+        run_id=gc.run_id if gc is not None else None,
     )
 
 
 def _broadcastIdentityUpdate() -> None:
-    if shared_state.server_loop is None:
-        return
-
-    identity_event = IdentityEvent(tag="identity", data=_getMachineIdentityData())
-    future = asyncio.run_coroutine_threadsafe(
-        broadcastEvent(identity_event.model_dump()),
-        shared_state.server_loop,
-    )
-    try:
-        future.result(timeout=1.0)
-    except Exception:
-        pass
+    shared_state.broadcast(IdentityEvent(tag="identity", data=_getMachineIdentityData()).model_dump())
 
 
 @app.get("/api/machine-identity", response_model=MachineIdentityData)
@@ -739,90 +732,61 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         return
 
     await websocket.accept()
-    active_connections.append(websocket)
-
-    identity_event = IdentityEvent(tag="identity", data=_getMachineIdentityData())
-    await websocket.send_json(identity_event.model_dump())
-    # No known_object replay on connect — clients hydrate recent pieces via
-    # GET /api/pieces instead of a sqlite-backed ring of past events.
-    if shared_state.runtime_stats_snapshot is not None:
-        await websocket.send_json(
-            {
-                "tag": "runtime_stats",
-                "data": {"payload": shared_state.runtime_stats_snapshot},
-            }
-        )
-
-    # Always send a fresh system_status snapshot on connect (cheap + always valid).
-    await websocket.send_json(
-        {
-            "tag": "system_status",
-            "data": {
-                "hardware_state": shared_state.hardware_state,
-                "hardware_error": shared_state.hardware_error,
-                "homing_step": shared_state.hardware_homing_step,
-                "no_power_development_mode": bool(
-                    getattr(shared_state.gc_ref, "no_power_development_mode", False)
-                ),
-            },
-        }
-    )
-    if shared_state.sorter_state_snapshot is None:
-        fsm_state = "initializing"
-        if shared_state.controller_ref is not None:
-            fsm_state = getattr(shared_state.controller_ref.state, "value", "initializing")
-        shared_state.sorter_state_snapshot = {
-            "state": fsm_state,
-        }
-    await websocket.send_json(
-        {
-            "tag": "sorter_state",
-            "data": shared_state.sorter_state_snapshot,
-        }
-    )
-
-    # Populate cameras_config snapshot on-demand from the live config file.
-    if shared_state.cameras_config_snapshot is None:
-        try:
-            from server.routers.cameras import get_camera_config
-            shared_state.cameras_config_snapshot = {"cameras": get_camera_config()}
-        except Exception:
-            shared_state.cameras_config_snapshot = None
-    if shared_state.cameras_config_snapshot is not None:
-        await websocket.send_json(
-            {
-                "tag": "cameras_config",
-                "data": shared_state.cameras_config_snapshot,
-            }
-        )
-    # Always compute fresh sorting profile status on connect — cheap file read,
-    # keeps frontend in sync without depending on mutation-time broadcasts.
+    client = shared_state.WsClient(websocket)
+    # Registered before the snapshot is read, so no change in between is lost.
+    shared_state.ws_clients.add(client)
+    tasks: list[asyncio.Future] = []
     try:
-        from server.routers.sorting_profiles import _current_local_profile_status
-        await websocket.send_json(
-            {
-                "tag": "sorting_profile_status",
-                "data": _current_local_profile_status(),
-            }
-        )
+        snapshot = await run_in_threadpool(_connectSnapshot)
+        # A broadcast that arrived meanwhile is at least as new, so it keeps its
+        # value; the snapshot keeps its place, identity first.
+        client.pending = {**snapshot, **client.pending}
+        tasks = [
+            asyncio.ensure_future(client.send()),
+            asyncio.ensure_future(_readUntilDisconnect(websocket)),
+        ]
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        shared_state.ws_clients.discard(client)
+        for task in tasks:
+            task.cancel()
+
+
+def _connectSnapshot() -> dict[str, str]:
+    """Everything a new client needs before the live updates, identity first,
+    read fresh. Runs in a worker thread: it reads SQLite and machine.toml.
+    No known_object replay: clients hydrate recent pieces via GET /api/pieces."""
+    from server.routers.cameras import get_camera_config
+    from server.routers.sorting_profiles import _current_local_profile_status
+
+    controller = shared_state.controller_ref
+    events = [
+        {"tag": "identity", "data": _getMachineIdentityData().model_dump()},
+        {"tag": "system_status", "data": shared_state.systemStatusData()},
+        {"tag": "sorter_state", "data": {"state": getattr(getattr(controller, "state", None), "value", "initializing")}},
+    ]
+    if shared_state.runtime_stats_live is not None:
+        events.append({"tag": "runtime_stats", "data": {"payload": shared_state.runtime_stats_live}})
+    optional = {
+        "camera_health": lambda: {"cameras": shared_state.camera_service.get_health_map()},
+        "cameras_config": lambda: {"cameras": get_camera_config()},
+        "sorting_profile_status": _current_local_profile_status,
+    }
+    for tag, read in optional.items():
+        try:
+            events.append({"tag": tag, "data": read()})
+        except Exception:
+            pass  # not available yet; it is broadcast when it is
+    return {event["tag"]: shared_state.encodeEvent(event) for event in events}
+
+
+async def _readUntilDisconnect(websocket: WebSocket) -> None:
+    # Clients send nothing the server acts on; reading is how a disconnect shows.
+    try:
+        while (await websocket.receive())["type"] != "websocket.disconnect":
+            pass
     except Exception:
         pass
-
-    tracker = getattr(shared_state.gc_ref, 'set_progress_tracker', None) if shared_state.gc_ref else None
-    if tracker is not None:
-        await websocket.send_json(
-            {
-                "tag": "set_progress",
-                "data": tracker.get_snapshot(),
-            }
-        )
-
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        if websocket in active_connections:
-            active_connections.remove(websocket)
 
 
 # ---------------------------------------------------------------------------
@@ -847,10 +811,14 @@ class RuntimeStatsRecordsResponse(BaseModel):
 
 
 @app.get("/runtime-stats", response_model=RuntimeStatsResponse)
-def getRuntimeStats() -> RuntimeStatsResponse:
-    if shared_state.runtime_stats_snapshot is None:
-        return RuntimeStatsResponse(payload={})
-    return RuntimeStatsResponse(payload=shared_state.runtime_stats_snapshot)
+def getRuntimeStats() -> Response:
+    """The full snapshot, at most a second old. It is up to several hundred KB,
+    so it is encoded here in the worker thread, not on the event loop."""
+    return _jsonResponse({"payload": shared_state.runtime_stats_snapshot or {}})
+
+
+def _jsonResponse(content: Any) -> Response:
+    return Response(json.dumps(content, separators=(",", ":")), media_type="application/json")
 
 
 class PerfHistoryResponse(BaseModel):
@@ -861,18 +829,14 @@ class PerfHistoryResponse(BaseModel):
 
 
 @app.get("/runtime-stats/perf-history", response_model=PerfHistoryResponse)
-def getPerfHistory(window_s: float = 300.0) -> PerfHistoryResponse:
-    import time as _time
+def getPerfHistory(window_s: float = 300.0) -> Response:
     from server import perf_history
 
-    now = _time.time()
+    now = time.time()
     window_s = max(1.0, min(float(window_s), 3900.0))
     rows = perf_history.window(window_s, now)
-    return PerfHistoryResponse(
-        window_s=window_s,
-        now=now,
-        rows=rows,
-        rates=perf_history.computeRates(rows),
+    return _jsonResponse(
+        {"window_s": window_s, "now": now, "rows": rows, "rates": perf_history.computeRates(rows)}
     )
 
 

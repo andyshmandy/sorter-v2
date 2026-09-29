@@ -17,7 +17,6 @@ from runtime_variables import mkRuntimeVariables
 from utils.event import slimKnownObjectForSocket
 from server.api import app
 from server.shared_state import (
-    broadcastEvent,
     setGlobalConfig,
     setRuntimeVariables,
     setCommandQueue,
@@ -36,7 +35,6 @@ from lifetime_stats import LifetimeStatsTracker
 import db
 from message_queue.handler import handleServerToMainEvent
 from defs.consts import BACKEND_PORT
-from defs.events import HeartbeatEvent, HeartbeatData, MainThreadToServerCommand
 from defs.events import RuntimeStatsEvent, RuntimeStatsData
 from irl.config import (
     mkIRLConfig,
@@ -52,7 +50,6 @@ import functools
 import threading
 import queue
 import time
-import asyncio
 import signal
 import sys
 
@@ -67,9 +64,13 @@ def _mkIRLInterfaceStandby(config, gc):
 
 
 FRAME_RECORD_INTERVAL_MS = 100
-RUNTIME_STATS_BROADCAST_INTERVAL_MS = 1000
 LIFETIME_FLUSH_INTERVAL_MS = 10000
 LOOP_STALL_WARN_MS = 250.0
+# The broadcaster thread builds both views of the runtime stats, never the
+# control loop: the full snapshot behind GET /runtime-stats and the perf
+# history, and the small live part pushed to the dashboard when it changes.
+RUNTIME_STATS_SNAPSHOT_INTERVAL_S = 1.0
+RUNTIME_STATS_LIVE_INTERVAL_S = 0.5
 
 SERVO_BUS_ALERT_PREFIX = "Servo bus offline"
 CAMERA_SHUTDOWN_SETTLE_S = float(os.getenv("SORTER_CAMERA_SHUTDOWN_SETTLE_S", "1.0"))
@@ -259,11 +260,13 @@ def runBroadcaster(gc: GlobalConfig) -> None:
     # second, mark any that have gone silent past the timeout as dead and
     # broadcast a final event so the UI (and the per-piece lookup) drop them.
     from defs.consts import STUCK_PIECE_TIMEOUT_S, STUCK_PIECE_REAP_INTERVAL_S
+    from server import perf_history
 
     last_reap_mono = 0.0
+    last_snapshot_mono = 0.0
+    last_live_mono = 0.0
 
     while True:
-        latest_frame_commands = {}
         pending_commands = []
         ko_latest: dict = {}
 
@@ -278,9 +281,7 @@ def runBroadcaster(gc: GlobalConfig) -> None:
             except queue.Empty:
                 break
 
-            if command.tag == "frame":
-                latest_frame_commands[command.data.camera] = command
-            elif command.tag == "known_object":
+            if command.tag == "known_object":
                 # Coalesce per piece (latest wins) using cheap attribute access;
                 # we only model_dump() the events we actually send below, so a
                 # piece emitting at camera-frame rate with a growing image list
@@ -305,7 +306,22 @@ def runBroadcaster(gc: GlobalConfig) -> None:
             for uuid in [u for u, v in ko_last_broadcast.items() if v[0] < cutoff]:
                 del ko_last_broadcast[uuid]
 
-        pending_commands.extend(latest_frame_commands.values())
+        try:
+            if now_mono - last_snapshot_mono >= RUNTIME_STATS_SNAPSHOT_INTERVAL_S:
+                last_snapshot_mono = now_mono
+                snapshot = gc.runtime_stats.snapshot()
+                shared_state.runtime_stats_snapshot = snapshot
+                perf_history.record(snapshot, time.time())
+            if now_mono - last_live_mono >= RUNTIME_STATS_LIVE_INTERVAL_S:
+                last_live_mono = now_mono
+                live = gc.runtime_stats.snapshot(live=True)
+                if live != shared_state.runtime_stats_live:
+                    shared_state.runtime_stats_live = live
+                    pending_commands.append(
+                        RuntimeStatsEvent(tag="runtime_stats", data=RuntimeStatsData(payload=live))
+                    )
+        except Exception as exc:
+            gc.logger.warning(f"runtime stats snapshot failed: {exc}")
 
         if pending_commands:
             gc.runtime_stats.observePerfMs("socket.queue_depth", float(queue_depth))
@@ -349,23 +365,12 @@ def runBroadcaster(gc: GlobalConfig) -> None:
                         "socket.known_object_send_age_ms",
                         max(0.0, (time.time() - float(updated_at)) * 1000.0),
                     )
-            if (
-                command.tag != "frame"
-                and command.tag != "heartbeat"
-                and command.tag != "runtime_stats"
-            ):
+            if command.tag != "runtime_stats":
                 gc.logger.debug(f"broadcasting {command.tag} event")
+            # Encodes the event once and hands it to the event loop; it never
+            # waits for a client (each has its own sender, see WsClient).
             send_started = time.perf_counter()
-            future = asyncio.run_coroutine_threadsafe(
-                broadcastEvent(payload), shared_state.server_loop
-            )
-            try:
-                future.result(timeout=1.0)
-            except Exception:
-                pass
-            # Time to push ONE event to all clients. Large here (with depth ~0)
-            # points at a slow client or a saturated asyncio loop (e.g. MJPEG),
-            # not a producer backlog.
+            shared_state.broadcast(payload)
             gc.runtime_stats.observePerfMs(
                 "socket.broadcast_event_ms",
                 (time.perf_counter() - send_started) * 1000.0,
@@ -398,14 +403,7 @@ def runBroadcaster(gc: GlobalConfig) -> None:
                     f"status={getattr(full_payload.get('classification_status'), 'value', full_payload.get('classification_status'))}) "
                     "— no progress to distributed before timeout"
                 )
-                future = asyncio.run_coroutine_threadsafe(
-                    broadcastEvent({"tag": "known_object", "data": slim}),
-                    shared_state.server_loop,
-                )
-                try:
-                    future.result(timeout=1.0)
-                except Exception:
-                    pass
+                shared_state.broadcast({"tag": "known_object", "data": slim})
 
         time.sleep(gc.timeouts.main_loop_sleep_ms / 1000.0)
 
@@ -506,7 +504,7 @@ def main() -> None:
             time.sleep(CHECK_INTERVAL_S)
             try:
                 last_ok = ss.last_broadcast_ok_ts
-                n_clients = len(ss.active_connections)
+                n_clients = len(ss.ws_clients)
                 if last_ok <= 0.0 or n_clients == 0:
                     warned = False
                     continue
@@ -847,9 +845,7 @@ def main() -> None:
     elif DISABLE_STALLGUARD:
         gc.logger.info("StallGuard monitor not started (DISABLE_STALLGUARD=1).")
 
-    last_heartbeat = time.time()
     last_frame_record = time.time()
-    last_runtime_stats_broadcast = time.time()
     last_lifetime_flush = time.time()
     last_main_loop_started = time.perf_counter()
     db.watch_realtime_thread()
@@ -875,18 +871,6 @@ def main() -> None:
                 pass
 
             current_time = time.time()
-
-            # send periodic heartbeat
-            # can probably remove this later, just helps debug web sockets from time to time
-            if (
-                current_time - last_heartbeat
-                >= gc.timeouts.heartbeat_interval_ms / 1000.0
-            ):
-                heartbeat = HeartbeatEvent(
-                    tag="heartbeat", data=HeartbeatData(timestamp=current_time)
-                )
-                main_to_server_queue.put(heartbeat)
-                last_heartbeat = current_time
             marks.append(("events", time.perf_counter()))
 
             # Video reaches the frontend only through MJPEG camera feeds. Keep
@@ -900,18 +884,6 @@ def main() -> None:
                     vision.recordFrames()
                 last_frame_record = current_time
             marks.append(("frames", time.perf_counter()))
-
-            if (
-                current_time - last_runtime_stats_broadcast
-                >= RUNTIME_STATS_BROADCAST_INTERVAL_MS / 1000.0
-            ):
-                runtime_stats = RuntimeStatsEvent(
-                    tag="runtime_stats",
-                    data=RuntimeStatsData(payload=gc.runtime_stats.snapshot()),
-                )
-                main_to_server_queue.put(runtime_stats)
-                last_runtime_stats_broadcast = current_time
-            marks.append(("stats", time.perf_counter()))
 
             # Lifetime powered/sorted time: handed to the database writer every
             # 10 s, so a crash loses at most that much.

@@ -200,18 +200,14 @@
 		restartConfirmOpen = false;
 		restartingBackend = true;
 		const baseUrl = currentBackendBaseUrl();
-		const restart = await requestBackendRestart(baseUrl);
-		if (!restart.ok) {
+		if (!(await requestBackendRestart(baseUrl))) {
 			restartingBackend = false;
 			return;
 		}
 		await waitForBackend(baseUrl, { maxAttempts: 60 });
-		const wsUrl = currentBackendWsUrl();
-		manager.connect(wsUrl, { force: true });
-		manager.refreshSelectedCameraFeeds();
+		// The new process's identity reopens the camera feeds (see MachineManager).
+		manager.connect(currentBackendWsUrl(), { force: true });
 		restartingBackend = false;
-		// Ws will reconnect and push fresh snapshots automatically; the feed
-		// epoch forces existing MJPEG <img> streams to reconnect without a page reload.
 	}
 
 	function requestPowerDown() {
@@ -296,7 +292,6 @@
 			return;
 		}
 		manager.connect(currentBackendWsUrl(), { force: true });
-		manager.refreshSelectedCameraFeeds();
 	}
 
 	function handlePowerMenuClickOutside(event: MouseEvent) {
@@ -418,9 +413,6 @@
 	});
 
 	onMount(() => {
-		if (manager.machines.size === 0) {
-			manager.connect(`${getBackendWsBase()}/ws`);
-		}
 		document.addEventListener('click', handlePowerMenuClickOutside);
 		return () => {
 			document.removeEventListener('click', handlePowerMenuClickOutside);

@@ -1036,7 +1036,12 @@ class RuntimeStatsCollector:
             )
         }
 
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(self, live: bool = False) -> dict[str, Any]:
+        """Everything, for GET /runtime-stats, the perf history and saved runs.
+
+        ``live`` is the small part the dashboard shows as it happens (pushed on
+        the websocket): no perf histograms, timings or timelines. Safe to call
+        off the control-loop thread; the loops below iterate over copies."""
         now = time.time()
 
         def addDuration(
@@ -1152,7 +1157,6 @@ class RuntimeStatsCollector:
                 "distribution_positioned_at",
             )
 
-        timings = {k: _calcSummary(v) for k, v in timing_samples.items()}
         running_time_s = self._running_total_s
         if self._is_running and self._running_started_at_monotonic is not None:
             running_time_s += max(
@@ -1186,7 +1190,7 @@ class RuntimeStatsCollector:
             for k, v in sorted(self._pulse_counts.items())
         }
         feeder_signal_totals_s = dict(self._feeder_signal_totals_s)
-        for signal_name, is_active in self._feeder_signal_current.items():
+        for signal_name, is_active in list(self._feeder_signal_current.items()):
             if not is_active:
                 continue
             entered_at = self._feeder_signal_started_at_monotonic.get(signal_name)
@@ -1206,7 +1210,7 @@ class RuntimeStatsCollector:
 
         state_machines: dict[str, Any] = {}
         state_totals_snapshot: dict[str, dict[str, float]] = {}
-        for machine, current in self._state_current.items():
+        for machine, current in list(self._state_current.items()):
             totals = dict(self._state_totals_s.get(machine, {}))
             current_state = str(current.get("state"))
             if self._is_running:
@@ -1317,19 +1321,8 @@ class RuntimeStatsCollector:
                 }
             channel_throughput[channel] = channel_entry
 
-        perf_ms = {
-            key: _calcMsSummary(values)
-            for key, values in sorted(self._perf_ms_samples.items())
-        }
-
-        return {
-            "updated_at": now,
-            "lifecycle_state": self._lifecycle_state,
-            "is_running": self._is_running,
+        live_part = {
             "counts": counts,
-            "timings": timings,
-            "perf_ms": perf_ms,
-            "perf_total_counts": dict(self._perf_total_counts),
             "throughput": {
                 "running_time_s": running_time_s,
                 "distributed_count": counts["distributed"],
@@ -1338,6 +1331,31 @@ class RuntimeStatsCollector:
                 "inter_piece_ppm": _calcValueSummary(inter_piece_ppm_samples),
             },
             "channel_throughput": channel_throughput,
+            "bus_recent": (
+                list(self._bus_provider.recent())
+                if self._bus_provider is not None and hasattr(self._bus_provider, "recent")
+                else []
+            ),
+            "active_incident": dict(self._active_incident) if self._active_incident else None,
+        }
+        if live:
+            live_part["state_machines"] = {
+                machine: {"current_state": m["current_state"], "entered_at": m["entered_at"]}
+                for machine, m in state_machines.items()
+            }
+            return live_part
+
+        return {
+            **live_part,
+            "updated_at": now,
+            "lifecycle_state": self._lifecycle_state,
+            "is_running": self._is_running,
+            "timings": {k: _calcSummary(v) for k, v in timing_samples.items()},
+            "perf_ms": {
+                key: _calcMsSummary(values)
+                for key, values in sorted(self._perf_ms_samples.items())
+            },
+            "perf_total_counts": dict(self._perf_total_counts),
             "feeder": {
                 "pulse_counts": pulse_counts,
                 "skip_counts": dict(sorted(self._skip_counts.items())),
@@ -1357,11 +1375,6 @@ class RuntimeStatsCollector:
             },
             "state_machines": state_machines,
             "timeline_recent": list(self._state_timeline),
-            "bus_recent": (
-                list(self._bus_provider.recent())
-                if self._bus_provider is not None and hasattr(self._bus_provider, "recent")
-                else []
-            ),
             "bus_publish_counts": (
                 dict(self._bus_provider.publish_counts())
                 if self._bus_provider is not None and hasattr(self._bus_provider, "publish_counts")
@@ -1369,7 +1382,6 @@ class RuntimeStatsCollector:
             ),
             "blocked_reason_counts": dict(sorted(self._blocked_reason_counts.items())),
             "pieces_cached": len(self._piece_by_uuid),
-            "active_incident": dict(self._active_incident) if self._active_incident else None,
             "servo_bus_offline_since_ts": self._servo_bus_offline_since_ts,
             "last_update_age_s": max(0.0, now - self._last_updated_at),
         }
