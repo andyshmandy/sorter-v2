@@ -45,7 +45,6 @@ class VideoSocket {
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	private closeTimer: ReturnType<typeof setTimeout> | null = null;
 	private resendTimer: ReturnType<typeof setTimeout> | null = null;
-	private sendQueued = false;
 
 	constructor(baseUrl: string) {
 		const url = new URL('/ws/video', baseUrl);
@@ -62,11 +61,11 @@ class VideoSocket {
 		if (this.closeTimer) clearTimeout(this.closeTimer);
 		this.closeTimer = null;
 		if (!this.ws && !this.reconnectTimer) this.open();
-		this.queueSend();
+		queueMicrotask(() => this.send());
 		return () => {
 			listeners.delete(onFrame);
 			if (listeners.size === 0 && this.views.get(view) === listeners) this.views.delete(view);
-			this.queueSend();
+			queueMicrotask(() => this.send());
 			if (this.views.size > 0 || this.closeTimer) return;
 			this.closeTimer = setTimeout(() => {
 				this.closeTimer = null;
@@ -101,15 +100,6 @@ class VideoSocket {
 			}, this.retryMs);
 			this.retryMs = Math.min(this.retryMs * 2, RETRY_MAX_MS);
 		};
-	}
-
-	private queueSend(): void {
-		if (this.sendQueued) return;
-		this.sendQueued = true;
-		queueMicrotask(() => {
-			this.sendQueued = false;
-			this.send();
-		});
 	}
 
 	/** Tells the backend the whole set of views this page shows now. */

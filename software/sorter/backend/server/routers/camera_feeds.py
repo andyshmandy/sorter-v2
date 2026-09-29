@@ -55,8 +55,6 @@ PREVIEW_MAX_FPS = 10.0
 # tell a quiet socket from a dead one.
 KEEPALIVE_S = 2.0
 
-THUMBNAIL_SIZE = (426, 240)
-
 
 class _Feed:
     """One view, shared by everyone watching it. While anyone watches, a
@@ -160,13 +158,9 @@ class _RoleFeed(_Feed):
         return (frame_obj.raw, frame_obj.timestamp) if frame_obj is not None else None
 
     def _fit(self, frame: np.ndarray) -> np.ndarray:
-        if PREVIEW_MAX_WIDTH > 0 and frame.shape[1] > PREVIEW_MAX_WIDTH:
-            scale = PREVIEW_MAX_WIDTH / float(frame.shape[1])
-            frame = cv2.resize(
-                frame,
-                (PREVIEW_MAX_WIDTH, int(round(frame.shape[0] * scale))),
-                interpolation=cv2.INTER_AREA,
-            )
+        if 0 < PREVIEW_MAX_WIDTH < frame.shape[1]:
+            height = int(round(frame.shape[0] * PREVIEW_MAX_WIDTH / frame.shape[1]))
+            frame = cv2.resize(frame, (PREVIEW_MAX_WIDTH, height), interpolation=cv2.INTER_AREA)
         if self.dashboard:
             frame_h, frame_w = frame.shape[:2]
             if self.crop is None or self.crop[0] != (frame_w, frame_h) or time.monotonic() - self.crop[2] > 5.0:
@@ -204,11 +198,7 @@ def _device_capturing_index(index: int):
     service = shared_state.camera_service
     if service is None:
         return None
-    seen: set[int] = set()
     for device in service.devices.values():
-        if id(device) in seen:
-            continue
-        seen.add(id(device))
         try:
             if device.capture_thread.getCameraSource() == index:
                 return device
@@ -251,7 +241,7 @@ class _IndexFeed(_Feed):
         return frame, time.time()
 
     def _fit(self, frame: np.ndarray) -> np.ndarray:
-        return cv2.resize(frame, THUMBNAIL_SIZE)
+        return cv2.resize(frame, (426, 240))
 
     def _release(self) -> None:
         if self.cap is not None:
