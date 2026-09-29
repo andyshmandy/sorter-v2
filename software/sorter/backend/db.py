@@ -50,6 +50,11 @@ def configure(logger: Any) -> None:
     _logger = logger
 
 
+def report_failure(op: str, exc: BaseException) -> None:
+    """For a caller that carries on when a database write fails: say so."""
+    _warn(f"[db] {op} failed: {exc}")
+
+
 def watch_realtime_thread() -> None:
     """From now on, log the connections the calling thread opens: it must never wait on the disk."""
     _realtime_threads.add(threading.get_ident())

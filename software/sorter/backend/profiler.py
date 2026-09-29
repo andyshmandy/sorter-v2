@@ -3,9 +3,6 @@ import threading
 from dataclasses import dataclass
 from typing import Optional
 
-DEFAULT_REPORT_INTERVAL_S = 5.0
-DEFAULT_TOP_N = 20
-
 
 @dataclass
 class DurationStat:
@@ -19,14 +16,6 @@ class DurationStat:
 @dataclass
 class CounterStat:
     count: int = 0
-
-
-@dataclass
-class ValueStat:
-    count: int = 0
-    total: float = 0.0
-    max_value: float = 0.0
-    last_value: float = 0.0
 
 
 @dataclass
@@ -55,25 +44,16 @@ class _TimerContext:
 
 
 class Profiler:
-    def __init__(
-        self,
-        enabled: bool,
-        report_interval_s: float = DEFAULT_REPORT_INTERVAL_S,
-        top_n: int = DEFAULT_TOP_N,
-    ):
+    def __init__(self, enabled: bool):
         self.enabled = enabled
-        self.report_interval_s = report_interval_s
-        self.top_n = top_n
 
         self._lock = threading.Lock()
         self._durations: dict[str, DurationStat] = {}
         self._counters: dict[str, CounterStat] = {}
-        self._values: dict[str, ValueStat] = {}
         self._intervals: dict[str, IntervalStat] = {}
         self._last_mark_s: dict[str, float] = {}
         self._state_start_s: dict[str, float] = {}
         self._state_name: dict[str, str] = {}
-        self._active_timers: dict[tuple[str, str], float] = {}
 
     def timer(self, name: str) -> _TimerContext:
         return _TimerContext(self, name)
@@ -179,79 +159,3 @@ class Profiler:
             stat = CounterStat()
             self._counters[name] = stat
         stat.count += count
-
-    def snapshotRows(self) -> list[dict[str, float | int | str | None]]:
-        if not self.enabled:
-            return []
-
-        with self._lock:
-            durations = list(self._durations.items())
-            counters = list(self._counters.items())
-            values = list(self._values.items())
-            intervals = list(self._intervals.items())
-
-        rows: list[dict[str, float | int | str | None]] = []
-        for name, stat in durations:
-            rows.append(
-                {
-                    "metric_kind": "duration",
-                    "metric_name": name,
-                    "count": stat.count,
-                    "total_ms": stat.total_ms,
-                    "min_ms": stat.min_ms if stat.count else None,
-                    "max_ms": stat.max_ms if stat.count else None,
-                    "last_ms": stat.last_ms if stat.count else None,
-                    "total_value": None,
-                    "max_value": None,
-                    "last_value": None,
-                }
-            )
-        for name, stat in counters:
-            rows.append(
-                {
-                    "metric_kind": "counter",
-                    "metric_name": name,
-                    "count": stat.count,
-                    "total_ms": None,
-                    "min_ms": None,
-                    "max_ms": None,
-                    "last_ms": None,
-                    "total_value": None,
-                    "max_value": None,
-                    "last_value": None,
-                }
-            )
-        for name, stat in values:
-            rows.append(
-                {
-                    "metric_kind": "value",
-                    "metric_name": name,
-                    "count": stat.count,
-                    "total_ms": None,
-                    "min_ms": None,
-                    "max_ms": None,
-                    "last_ms": None,
-                    "total_value": stat.total,
-                    "max_value": stat.max_value,
-                    "last_value": stat.last_value,
-                }
-            )
-        for name, stat in intervals:
-            rows.append(
-                {
-                    "metric_kind": "interval",
-                    "metric_name": name,
-                    "count": stat.count,
-                    "total_ms": stat.total_ms,
-                    "min_ms": None,
-                    "max_ms": stat.max_ms if stat.count else None,
-                    "last_ms": stat.last_ms if stat.count else None,
-                    "total_value": None,
-                    "max_value": None,
-                    "last_value": None,
-                }
-            )
-        return rows
-
-    def stop(self) -> None:
-        return

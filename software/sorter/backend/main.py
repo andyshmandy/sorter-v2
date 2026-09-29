@@ -8,10 +8,6 @@ from pathlib import Path
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 from local_state import get_api_keys
-from local_metrics import (
-    recordProfilerMetricSnapshot,
-    recordRuntimePerfMetricSnapshot,
-)
 _saved_api_keys = get_api_keys()
 if _saved_api_keys.get("openrouter"):
     os.environ["OPENROUTER_API_KEY"] = _saved_api_keys["openrouter"]
@@ -845,8 +841,6 @@ def main() -> None:
     last_frame_record = time.time()
     last_runtime_stats_broadcast = time.time()
     last_lifetime_flush = time.time()
-    last_runtime_perf_snapshot = time.time()
-    last_profiler_snapshot = time.time()
     last_main_loop_started = time.perf_counter()
     db.watch_realtime_thread()
 
@@ -915,29 +909,6 @@ def main() -> None:
                 gc.lifetime_stats.flush()
                 last_lifetime_flush = current_time
             marks.append(("lifetime", time.perf_counter()))
-
-            if (
-                current_time - last_runtime_perf_snapshot
-                >= RUNTIME_STATS_BROADCAST_INTERVAL_MS / 1000.0
-            ):
-                recordRuntimePerfMetricSnapshot(
-                    gc.run_id,
-                    current_time,
-                    gc.runtime_stats.perfSnapshotRows(),
-                )
-                last_runtime_perf_snapshot = current_time
-
-            if (
-                gc.profiler.enabled
-                and current_time - last_profiler_snapshot >= gc.profiler.report_interval_s
-            ):
-                recordProfilerMetricSnapshot(
-                    gc.run_id,
-                    current_time,
-                    gc.profiler.snapshotRows(),
-                )
-                last_profiler_snapshot = current_time
-            marks.append(("metrics", time.perf_counter()))
 
             with controller_lock:
                 current_controller = controller
