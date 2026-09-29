@@ -10,6 +10,8 @@ import pytest
 
 from server.routers import versions
 
+BUILD_UI = versions._buildUi
+
 
 def _git(cwd: Path, *args: str) -> str:
     return subprocess.run(
@@ -46,6 +48,7 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     restarts: list[bool] = []
     monkeypatch.setattr(versions, "_repo_root_cache", checkout)
     monkeypatch.setattr(versions, "_deferredRestart", lambda: restarts.append(True))
+    monkeypatch.setattr(versions, "_buildUi", lambda: None)
     return checkout
 
 
@@ -96,3 +99,26 @@ def test_refuses_anything_but_a_stable_release(machine: Path, kind: str, name: s
     result = versions.update_version(versions.UpdateRequest(kind=kind, name=name))
     assert result["ok"] is False
     assert _git(machine, "rev-parse", "HEAD") == _git(machine, "rev-parse", "sorter/stable/v0.1.0^{}")
+
+
+def test_the_update_installs_and_builds_the_ui(machine: Path, monkeypatch: pytest.MonkeyPatch):
+    calls: list[tuple[list[str], Path]] = []
+
+    def run(command: list[str], cwd: Path, **_kwargs) -> subprocess.CompletedProcess[str]:
+        calls.append((command, cwd))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(versions.subprocess, "run", run)
+    assert BUILD_UI() is None
+    frontend = machine / "software" / "sorter" / "frontend"
+    assert calls == [(["pnpm", "install", "--frozen-lockfile"], frontend), (["pnpm", "build"], frontend)]
+
+
+def test_a_failed_ui_build_restarts_nothing(machine: Path, monkeypatch: pytest.MonkeyPatch):
+    restarts: list[bool] = []
+    monkeypatch.setattr(versions, "_deferredRestart", lambda: restarts.append(True))
+    monkeypatch.setattr(versions, "_buildUi", lambda: "pnpm build failed: out of memory")
+    result = versions.update_version(versions.UpdateRequest(kind="tag", name="sorter/stable/v0.1.1"))
+    assert result["ok"] is False
+    assert "out of memory" in result["message"]
+    assert restarts == []

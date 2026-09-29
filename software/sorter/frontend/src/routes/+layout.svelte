@@ -1,4 +1,9 @@
 <script lang="ts">
+	// The fonts come with the build, so a machine with no internet has them.
+	import '@fontsource-variable/ibm-plex-sans';
+	import '@fontsource/ibm-plex-mono/400.css';
+	import '@fontsource/ibm-plex-mono/500.css';
+	import '@fontsource/ibm-plex-mono/600.css';
 	import './layout.css';
 	import MachinesProvider from '$lib/components/MachinesProvider.svelte';
 	import MachineProvider from '$lib/components/MachineProvider.svelte';

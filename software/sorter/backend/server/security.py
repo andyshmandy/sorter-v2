@@ -154,10 +154,11 @@ def is_ui_origin_allowed(origin: str | None) -> bool:
         port = parsed.port
     except ValueError:
         return False
-    # Accept the configured UI dev port (5173) AND a bare host with no explicit
-    # port (the UI served on the default 80/443), so http://<device-ip> works
-    # just like http://<device-ip>:5173.
-    if port is not None and str(port) != _ui_port():
+    # Accept the configured UI dev port (5173), the port the supervisor serves
+    # the UI on, AND a bare host with no explicit port (the UI served on the
+    # default 80/443), so http://<device-ip> works just like
+    # http://<device-ip>:5173.
+    if port is not None and str(port) not in (_ui_port(), os.getenv("SORTER_SUPERVISOR_UI_PORT")):
         return False
     # Any mDNS .local name (e.g. sorter.local) resolves only on the local link,
     # so it's treated as this device on the LAN.

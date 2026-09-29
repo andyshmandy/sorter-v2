@@ -20,11 +20,13 @@ RELEASE_CHANNELS = (("stable", STABLE_TAG_PREFIX),)
 MAX_TAGS_LISTED = 20
 GIT_TIMEOUT_S = 30.0
 GIT_FETCH_TIMEOUT_S = 90.0
+UI_BUILD_TIMEOUT_S = 900.0
 REF_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+# An update reports changes to these, which need installing by hand. The UI's
+# packages it installs itself (_buildUi).
 DEPENDENCY_FILES = (
     "software/sorter/backend/pyproject.toml",
     "software/sorter/backend/requirements.txt",
-    "software/sorter/frontend/package.json",
 )
 
 _repo_root_cache: Optional[Path] = None
@@ -157,6 +159,23 @@ def _changedDependencyFiles(old_sha: str, new_sha: str) -> List[str]:
     return [line for line in result.stdout.strip().splitlines() if line]
 
 
+def _buildUi() -> Optional[str]:
+    """Install the checked-out UI's packages and build it, which the
+    supervisor serves from then on. What went wrong, or None."""
+    frontend = _repoRoot() / "software" / "sorter" / "frontend"
+    for command in (["pnpm", "install", "--frozen-lockfile"], ["pnpm", "build"]):
+        try:
+            result = subprocess.run(
+                command, cwd=frontend, capture_output=True, text=True, timeout=UI_BUILD_TIMEOUT_S
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return f"{' '.join(command)}: {exc}"
+        if result.returncode != 0:
+            output = (result.stderr.strip() or result.stdout.strip()).splitlines()
+            return f"{' '.join(command)} failed: {' '.join(output[-5:])}"
+    return None
+
+
 def _deferredRestart() -> None:
     def _exit() -> None:
         time.sleep(0.5)
@@ -230,6 +249,13 @@ def update_version(req: UpdateRequest) -> Dict[str, Any]:
             return {"ok": False, "message": f"git checkout failed: {checkout.stderr.strip()}"}
 
         deps_changed = _changedDependencyFiles(old_sha, target["full_sha"])
+
+        # The old UI is served until the new build replaces it, in the build's
+        # last seconds. If the build fails, nothing restarts: the old backend
+        # and UI keep running, and trying the update again retries the build.
+        ui_error = _buildUi()
+        if ui_error is not None:
+            return {"ok": False, "message": f"Checked out {req.name}, but building its UI failed: {ui_error}"}
 
         if req.restart:
             _deferredRestart()

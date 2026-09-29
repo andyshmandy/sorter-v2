@@ -19,7 +19,7 @@
 	--color-warning: #F2A900;
 	--color-warning-dark: #4A3300;
 	--color-info: #0055BF;
-	--font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+	--font-sans: 'IBM Plex Sans Variable', system-ui, sans-serif;
 	--font-mono: 'IBM Plex Mono', monospace;
 }
 
@@ -32,7 +32,7 @@
 }
 
 body {
-	font-family: 'IBM Plex Sans', system-ui, sans-serif;
+	font-family: 'IBM Plex Sans Variable', system-ui, sans-serif;
 }
 
 *:focus-visible {

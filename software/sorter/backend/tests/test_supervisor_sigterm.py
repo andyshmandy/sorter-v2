@@ -33,7 +33,7 @@ def test_sigterm_stops_the_supervisor_and_its_backend(tmp_path):
     port = _free_port()
     pid_file = tmp_path / "backend.pid"
     supervisor = subprocess.Popen(
-        [sys.executable, "supervisor.py", "--control-port", str(port),
+        [sys.executable, "supervisor.py", "--ui-port", str(port),
          "--", "sh", "-c", f"echo $$ > {pid_file}; exec sleep 60"],
         cwd=BACKEND_DIR,
         stdout=subprocess.DEVNULL,

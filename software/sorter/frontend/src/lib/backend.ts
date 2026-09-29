@@ -37,21 +37,26 @@ export function machineWsUrlFromHttpBaseUrl(
 	}
 }
 
-// The backend exits and its service restarts it. (The supervisor listens on
-// loopback only, so a browser cannot reach it.)
+// The supervisor that served this page restarts its backend even when the
+// backend no longer answers. A backend on another host, or a page from the
+// dev server, is asked to exit instead, and its supervisor starts it again.
 export async function requestBackendRestart(
 	backendBaseUrl: string,
 	timeoutMs = 4000
 ): Promise<boolean> {
-	try {
-		const response = await fetch(`${backendBaseUrl}/api/system/restart`, {
-			method: 'POST',
-			signal: AbortSignal.timeout(timeoutMs)
-		});
-		return response.ok;
-	} catch {
-		return false;
+	const urls = [`${backendBaseUrl}/api/system/restart`];
+	if (new URL(backendBaseUrl).hostname === window.location.hostname) {
+		urls.unshift('/api/supervisor/restart');
 	}
+	for (const url of urls) {
+		try {
+			const response = await fetch(url, { method: 'POST', signal: AbortSignal.timeout(timeoutMs) });
+			if (response.ok) return true;
+		} catch {
+			// the next way, if there is one
+		}
+	}
+	return false;
 }
 
 export async function backendHealthy(backendBaseUrl: string, timeoutMs = 2500): Promise<boolean> {

@@ -8,8 +8,8 @@ NEVER fatal.
 
 The stages up to install-services are what it takes to run the Sorter UI.
 Once those are done the backend starts, and when it answers the progress page
-hands port 80 to the UI, even if a later stage (Tailscale) is still retrying
-or has given up. A later stage that
+hands port 80 to the UI (the backend's supervisor serves it), even if a later
+stage (Tailscale) is still retrying or has given up. A later stage that
 keeps failing stops after LATE_STAGE_MAX_FAILURES tries so a bad key doesn't
 retry forever.
 
@@ -112,10 +112,11 @@ class Stage:
 # fonts, and dark mode from the browser. Everything is inline: the page must
 # work with nothing else on the machine answering yet.
 #
-# When everything the UI needs is in place the backend starts first, while
-# this page keeps port 80. Once the backend answers, the page gives port 80 to
-# the UI, and the copy still open in the browser, which polls, opens the UI as
-# soon as it answers. It never offers a link to a UI that isn't there yet.
+# When everything the UI needs is in place the backend starts, while this page
+# keeps port 80. Its supervisor, which serves the UI, tries the port every
+# second. Once the backend answers, the page lets port 80 go, the supervisor
+# takes it, and the copy still open in the browser, which polls, opens the UI
+# as soon as it answers. It never offers a link to a UI that isn't there yet.
 
 _state_lock = threading.Lock()
 _stage_state: dict[str, dict] = {}
@@ -738,11 +739,15 @@ def stage_pnpm_install() -> None:
     sh(["pnpm", "install", "--frozen-lockfile"], cwd=frontend)
 
 
+# The UI's static build, which the backend's supervisor serves on port 80.
+UI_SHELL = SOFTWARE_DIR / "sorter" / "frontend" / "build" / "index.html"
+
+
 def stage_pnpm_build() -> None:
     frontend = SOFTWARE_DIR / "sorter" / "frontend"
     if not (frontend / "node_modules").exists():
         raise RuntimeError("pnpm install not done yet")
-    if (frontend / ".svelte-kit" / "output" / "client").exists():
+    if UI_SHELL.exists():
         return
     sh(["pnpm", "build"], cwd=frontend)
 
@@ -751,19 +756,17 @@ def stage_install_services() -> None:
     systemd_src = SOFTWARE_DIR / "systemd"
     if not systemd_src.exists():
         raise RuntimeError("repo not cloned yet")
-    if not (SOFTWARE_DIR / "sorter" / "frontend" / ".svelte-kit" / "output" / "client").exists():
+    if not UI_SHELL.exists():
         raise RuntimeError("pnpm build not done yet")
 
-    pnpm_bin = subprocess.check_output(["which", "pnpm"], text=True).strip()
     replacements = {
         "__USER__": "root",
         "__SOFTWARE_DIR__": str(SOFTWARE_DIR),
         "__UV_BIN__": "/usr/local/bin/uv",
-        "__PNPM_BIN__": pnpm_bin,
     }
 
-    required = ["sorter-backend.service", "sorter-ui.service"]
-    optional = ["sorter-backend-dev.service", "sorter-ui-dev.service"]
+    required = ["sorter-backend.service"]
+    optional = ["sorter-backend-dev.service"]
     installed: list[str] = []
     for unit in required + optional:
         src = systemd_src / unit
@@ -781,15 +784,12 @@ def stage_install_services() -> None:
         installed.append(unit)
 
     sh(["systemctl", "daemon-reload"])
-    # Prefer dev services for HMR during early setup; fall back to prod
-    # when dev templates aren't in this branch yet. Enable only: main()
-    # starts the backend, and the UI only after the progress page releases
-    # port 80, or vite-dev fights it for the port.
-    to_start = [u for u in ("sorter-backend-dev.service", "sorter-ui-dev.service") if u in installed] or \
-               [u for u in ("sorter-backend.service", "sorter-ui.service") if u in installed]
-    sh(["systemctl", "enable", *to_start])
-    Path("/var/lib/sorteros/active-services").write_text("\n".join(to_start) + "\n")
-    log.info("sorter services installed: %s", ", ".join(to_start))
+    # The dev variant when the checkout has one, as before. Enable only:
+    # main() starts it, while the progress page still has port 80.
+    unit = "sorter-backend-dev.service" if "sorter-backend-dev.service" in installed else "sorter-backend.service"
+    sh(["systemctl", "enable", unit])
+    Path("/var/lib/sorteros/active-services").write_text(unit + "\n")
+    log.info("sorter service installed: %s", unit)
 
 
 def _ensure_clock_synced() -> None:
@@ -876,7 +876,7 @@ def _sorter_services() -> list[str]:
     try:
         return Path("/var/lib/sorteros/active-services").read_text().split()
     except OSError:
-        return ["sorter-backend.service", "sorter-ui.service"]
+        return ["sorter-backend.service"]
 
 
 def _backend_answers() -> bool:
@@ -888,20 +888,17 @@ def _backend_answers() -> bool:
 
 
 def _start_sorter(keeper: threading.Thread | None, ui_ready: threading.Event) -> None:
-    """Start the Sorter. With the progress page up, the backend goes first and
-    the page keeps port 80 until the backend answers (about a minute and a half
-    on an Orange Pi 5), so the UI the page opens has a machine to show."""
+    """Start the Sorter. With the progress page up, the page keeps port 80
+    until the backend answers (about a minute and a half on an Orange Pi 5),
+    so the UI the page opens has a machine to show; the backend's supervisor
+    takes the port within a second of the page letting it go."""
     services = _sorter_services()
-    if keeper is None:
-        subprocess.run(["systemctl", "start", *services])
-        log.info("started %s", ", ".join(services))
-        return
-    backend = [u for u in services if "backend" in u]
-    rest = [u for u in services if u not in backend]
     with _state_lock:
         _runtime["starting_since"] = started = time.time()
-    subprocess.run(["systemctl", "start", *backend])
-    log.info("started %s", ", ".join(backend))
+    subprocess.run(["systemctl", "start", *services])
+    log.info("started %s", ", ".join(services))
+    if keeper is None:
+        return
     while not _backend_answers():
         if time.time() - started > BACKEND_START_TIMEOUT:
             log.warning("the backend didn't answer in %ds; opening the UI anyway", BACKEND_START_TIMEOUT)
@@ -911,8 +908,6 @@ def _start_sorter(keeper: threading.Thread | None, ui_ready: threading.Event) ->
         log.info("the backend answers after %ds", time.time() - started)
     ui_ready.set()
     keeper.join(timeout=15)
-    subprocess.run(["systemctl", "start", *rest])
-    log.info("started %s", ", ".join(rest))
 
 
 def main() -> int:
