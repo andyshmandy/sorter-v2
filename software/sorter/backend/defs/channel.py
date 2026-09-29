@@ -15,8 +15,3 @@ class PolygonChannel:
     inner_polygon: np.ndarray | None = None
 
 
-@dataclass
-class ChannelGeometry:
-    second_channel: PolygonChannel | None
-    third_channel: PolygonChannel | None
-

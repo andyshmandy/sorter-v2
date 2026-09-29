@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any, Dict, Tuple
 import numpy as np
 
@@ -452,19 +451,6 @@ def zoneSectionsForChannel(
     )
 
 
-class ChannelAction(Enum):
-    IDLE = "idle"
-    PULSE_NORMAL = "normal"
-    PULSE_PRECISE = "precise"
-
-
-def _isInChannel(point: Tuple[float, float], ch: PolygonChannel) -> bool:
-    x, y = int(point[0]), int(point[1])
-    if 0 <= y < ch.mask.shape[0] and 0 <= x < ch.mask.shape[1]:
-        return ch.mask[y, x] > 0
-    return False
-
-
 def getBboxSections(bbox: Tuple[int, int, int, int], channel: PolygonChannel) -> set[int]:
     x1, y1, x2, y2 = bbox
     mx, my = (x1 + x2) / 2.0, (y1 + y2) / 2.0
@@ -481,14 +467,6 @@ def getBboxSections(bbox: Tuple[int, int, int, int], channel: PolygonChannel) ->
         relative = (angle - channel.radius1_angle_image) % 360
         sections.add(int(relative / CHANNEL_SECTION_DEG))
     return sections
-
-
-def _sectionForPoint(px: float, py: float, channel: PolygonChannel) -> int:
-    dx = px - channel.center[0]
-    dy = py - channel.center[1]
-    angle = np.degrees(np.arctan2(dy, dx))
-    relative = (angle - channel.radius1_angle_image) % 360
-    return int(relative / CHANNEL_SECTION_DEG)
 
 
 def _orderedCircularSections(sections: set[int]) -> list[int]:
@@ -510,36 +488,5 @@ def _orderedCircularSections(sections: set[int]) -> list[int]:
 
     start = normalized[(largest_gap_index + 1) % len(normalized)]
     return sorted(normalized, key=lambda section: (section - start) % section_count)
-
-
-def bboxSectionOverlapRatio(
-    bbox: Tuple[int, int, int, int],
-    channel: PolygonChannel,
-    sections: set[int],
-    *,
-    samples_per_axis: int = 5,
-) -> float:
-    """Approximate how much of a bbox lies inside a channel section set."""
-    if not sections:
-        return 0.0
-    x1, y1, x2, y2 = bbox
-    left, right = sorted((float(x1), float(x2)))
-    top, bottom = sorted((float(y1), float(y2)))
-    if right <= left or bottom <= top or samples_per_axis <= 0:
-        return 0.0
-
-    total = 0
-    inside_sections = 0
-    for py in np.linspace(top, bottom, samples_per_axis):
-        for px in np.linspace(left, right, samples_per_axis):
-            if not _isInChannel((px, py), channel):
-                continue
-            total += 1
-            if _sectionForPoint(float(px), float(py), channel) in sections:
-                inside_sections += 1
-
-    if total <= 0:
-        return 0.0
-    return float(inside_sections) / float(total)
 
 

@@ -109,9 +109,6 @@ class CameraDevice:
     ) -> dict[str, int | float | bool]:
         return self._capture.setDeviceSettings(settings, persist=persist)
 
-    def get_device_settings(self) -> dict[str, int | float | bool]:
-        return self._capture.getDeviceSettings()
-
     def describe_device_controls(self) -> tuple[list[dict[str, Any]], dict[str, int | float | bool]]:
         return self._capture.describeDeviceControls()
 
