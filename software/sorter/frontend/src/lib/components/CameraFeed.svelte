@@ -16,10 +16,7 @@
 		showHeader = true,
 		framed = true,
 		crop = null,
-		defaultAnnotated = true,
-		defaultCropped = undefined,
 		controls = ['annotations'],
-		layer = $bindable('annotated'),
 		headerActions = null
 	}: {
 		camera: string;
@@ -27,19 +24,15 @@
 		showHeader?: boolean;
 		framed?: boolean;
 		crop?: DashboardFeedCrop | null;
-		defaultAnnotated?: boolean;
-		defaultCropped?: boolean;
 		controls?: ControlKey[];
-		layer?: 'raw' | 'annotated';
 		headerActions?: Snippet | null;
 	} = $props();
 
 	const ctx = getMachineContext();
 
-	// Persistent per-camera toggle state — survives reloads via localStorage.
-	// Keyed by camera so e.g. c_channel_2's crop toggle doesn't leak into
-	// the carousel's. Falls back to the ``default*`` props when no saved
-	// value exists.
+	// Persistent per-camera toggle state, kept across reloads in localStorage
+	// and keyed by camera, so one camera's crop toggle does not leak into
+	// another's.
 	const storageKey = (key: string) => `camera-feed:${camera}:${key}`;
 
 	function readPersisted(key: string, fallback: boolean): boolean {
@@ -62,21 +55,10 @@
 		}
 	}
 
+	let annotated = $state(readPersisted('annotated', true));
+	// A feed given a crop starts cropped.
 	/* svelte-ignore state_referenced_locally */
-	let annotated = $state(readPersisted('annotated', defaultAnnotated && layer === 'annotated'));
-	// Legacy: presence of `crop` prop defaulted cropping on. Honor that unless
-	// the caller explicitly sets `defaultCropped`.
-	/* svelte-ignore state_referenced_locally */
-	let cropped = $state(readPersisted('cropped', defaultCropped ?? crop !== null));
-
-	// Keep legacy `layer` prop synced with new `annotated` state so existing
-	// consumers (e.g. dashboard) binding to `layer` keep working.
-	$effect(() => {
-		layer = annotated ? 'annotated' : 'raw';
-	});
-	$effect(() => {
-		annotated = layer === 'annotated';
-	});
+	let cropped = $state(readPersisted('cropped', crop !== null));
 
 	// Write-back side: every toggle change writes to localStorage.
 	$effect(() => {
