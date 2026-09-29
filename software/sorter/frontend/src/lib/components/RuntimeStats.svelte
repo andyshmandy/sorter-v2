@@ -1,19 +1,10 @@
 <script lang="ts">
 	import { getMachineContext } from '$lib/machines/context';
-	import { LayoutDashboard } from 'lucide-svelte';
 
 	const ctx = getMachineContext();
 
-	type OutcomeEntry = {
-		count?: number;
-		overall_ppm?: number;
-		active_ppm?: number;
-	};
 	type ChannelThroughputEntry = {
-		exit_count?: number;
-		overall_ppm?: number;
 		active_ppm?: number;
-		outcomes?: Record<string, OutcomeEntry>;
 	};
 
 	const runtime_stats = $derived((ctx.machine?.runtimeStats ?? {}) as Record<string, unknown>);
@@ -23,12 +14,6 @@
 		(runtime_stats.channel_throughput ?? {}) as Record<string, ChannelThroughputEntry>
 	);
 	const c4 = $derived(channel_throughput.classification_channel ?? {});
-	const state_machines = $derived(
-		(runtime_stats.state_machines ?? {}) as Record<
-			string,
-			{ current_state?: string }
-		>
-	);
 
 	// Derived metrics
 	const pieces_seen = $derived(counts.pieces_seen ?? 0);
@@ -36,18 +21,6 @@
 	const distributed_n = $derived(counts.distributed ?? 0);
 	const multi_drop_n = $derived(counts.multi_drop_fail ?? 0);
 	const unknown_n = $derived((counts.unknown ?? 0) + (counts.not_found ?? 0));
-
-	// Classified-and-distributed rate — the goal-line KPI: pieces that
-	// passed Brickognize as Single (not Unknown / Not-Found / Multi-Drop
-	// Reject) AND were physically distributed. Backend publishes this as
-	// `distributed_success.overall_ppm` on the classification_channel
-	// throughput. `overall_ppm` divides by total running_time_s so it
-	// reflects steady-state throughput rather than peak active periods.
-	const goal_rate_ppm = $derived.by(() => {
-		const outcomes = c4.outcomes ?? {};
-		const v = outcomes.distributed_success?.overall_ppm;
-		return typeof v === 'number' && Number.isFinite(v) ? v : 0;
-	});
 
 	// Classification success rate (classified vs. total finished classifications).
 	const classification_success_pct = $derived.by(() => {
