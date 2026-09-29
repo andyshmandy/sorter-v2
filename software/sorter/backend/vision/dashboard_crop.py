@@ -2,8 +2,7 @@
 
 The crop is the zone's bounding box with everything outside the zone painted
 light gray, turned so the drop zone starts in the same place for every channel
-(see vision/channel_alignment.py). The camera feeds serve it, and LLM-guided
-camera calibration shows the model the same view.
+(see vision/channel_alignment.py). The camera feeds serve it.
 """
 
 from __future__ import annotations

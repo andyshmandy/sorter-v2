@@ -129,7 +129,6 @@ from server.routers.camera_feeds import router as camera_feeds_router
 from server.routers.camera_picture_settings import router as camera_picture_settings_router
 from server.routers.camera_device_settings import router as camera_device_settings_router
 from server.routers.camera_capture_modes import router as camera_capture_modes_router
-from server.routers.camera_calibration import router as camera_calibration_router
 from server.routers.detection import router as detection_router
 from server.routers.sorting_profiles import router as sorting_profiles_router
 from server.routers.bsx import router as bsx_router
@@ -164,7 +163,6 @@ app.include_router(camera_feeds_router)
 app.include_router(camera_picture_settings_router)
 app.include_router(camera_device_settings_router)
 app.include_router(camera_capture_modes_router)
-app.include_router(camera_calibration_router)
 app.include_router(detection_router)
 app.include_router(sorting_profiles_router)
 app.include_router(bsx_router)

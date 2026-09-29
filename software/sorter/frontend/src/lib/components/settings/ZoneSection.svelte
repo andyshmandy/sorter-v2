@@ -141,7 +141,6 @@
 		saved: PictureSettings;
 		draft: PictureSettings;
 	};
-	type CalibrationHighlight = [number, number, number, number];
 	type DetectionHighlight = [number, number, number, number];
 	type SidePanel = 'picture' | 'zone' | 'classification' | 'led' | null;
 	type DragState =
@@ -432,7 +431,6 @@
 	});
 	let picturePreviewByRole = $state<Partial<Record<CameraRole, PicturePreviewState>>>({});
 	let previewImageSizeByRole = $state<Partial<Record<CameraRole, PreviewImageSize>>>({});
-	let calibrationHighlightByRole = $state<Partial<Record<CameraRole, CalibrationHighlight>>>({});
 	let detectionHighlightByRole = $state<Partial<Record<CameraRole, DetectionHighlight[]>>>({});
 	let reassignConfirm = $state<{
 		source: CameraSource;
@@ -850,20 +848,6 @@
 		return picturePreviewByRole[role] ?? null;
 	}
 
-	function setCalibrationHighlight(role: CameraRole, bbox: CalibrationHighlight | null) {
-		const next = { ...calibrationHighlightByRole };
-		if (bbox) {
-			next[role] = bbox;
-		} else {
-			delete next[role];
-		}
-		calibrationHighlightByRole = next;
-	}
-
-	function getCalibrationHighlight(role: CameraRole = currentRole()): CalibrationHighlight | null {
-		return calibrationHighlightByRole[role] ?? null;
-	}
-
 	function setDetectionHighlights(role: CameraRole, bboxes: DetectionHighlight[] | null) {
 		const next = { ...detectionHighlightByRole };
 		if (bboxes && bboxes.length > 0) {
@@ -1028,7 +1012,6 @@
 		if (!supportsDetectionSidebar(currentChannel)) return;
 		if (activeSidebar === 'picture') {
 			clearPicturePreview(currentRole());
-			setCalibrationHighlight(currentRole(), null);
 		}
 		if (activeSidebar === 'classification') {
 			setDetectionHighlights(currentRole(), null);
@@ -1042,7 +1025,6 @@
 		if (!supportsLedSidebar(currentChannel)) return;
 		if (activeSidebar === 'picture') {
 			clearPicturePreview(currentRole());
-			setCalibrationHighlight(currentRole(), null);
 		}
 		if (activeSidebar === 'classification') {
 			setDetectionHighlights(currentRole(), null);
@@ -3974,19 +3956,6 @@
 								class="pointer-events-none absolute"
 								style={previewOverlayStyle(currentChannel)}
 							>
-								{#if getCalibrationHighlight(currentRole())}
-									{@const highlight = getCalibrationHighlight(currentRole())!}
-									<div
-										class="absolute border-2 border-sky-400 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_0_24px_rgba(56,189,248,0.35)]"
-										style={`left:${highlight[0] * 100}%;top:${highlight[1] * 100}%;width:${(highlight[2] - highlight[0]) * 100}%;height:${(highlight[3] - highlight[1]) * 100}%;`}
-									>
-										<div
-											class="absolute -top-7 left-0 rounded bg-sky-400 px-2 py-1 text-xs font-medium text-slate-950 shadow-md"
-										>
-											Calibration Target
-										</div>
-									</div>
-								{/if}
 								{#each getDetectionHighlights(currentRole()) as highlight, index}
 									<div
 										class={`absolute border-2 shadow-[0_0_0_1px_rgba(255,255,255,0.35)] ${
@@ -4210,17 +4179,12 @@
 						onPreviewChange={(role, savedSettings, draftSettings) => {
 							setPicturePreview(role, savedSettings, draftSettings);
 						}}
-						onCalibrationHighlightChange={(bbox) => {
-							setCalibrationHighlight(currentRole(), bbox);
-						}}
 						onClose={() => {
 							clearPicturePreview(currentRole());
-							setCalibrationHighlight(currentRole(), null);
 							activeSidebar = null;
 						}}
 						onSaved={() => {
 							clearPicturePreview(currentRole());
-							setCalibrationHighlight(currentRole(), null);
 							activeSidebar = null;
 							statusMsg = 'Picture settings updated.';
 						}}

@@ -2,9 +2,6 @@
 Read them, preview a change live, save them, reset them to automatic, and
 compare what is saved with what the camera reports. A camera whose source is
 a stream URL has no controls to adjust.
-
-Camera calibration (server/routers/camera_calibration.py) drives a camera
-through the read, preview and save routes here.
 """
 
 from __future__ import annotations

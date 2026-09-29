@@ -38,8 +38,6 @@ camera_service: Optional[Any] = None
 pulse_locks: Dict[str, threading.Lock] = {}
 distribution_no_bin_passthrough_approvals: set[str] = set()
 distribution_no_bin_passthrough_lock = threading.RLock()
-camera_calibration_tasks: Dict[str, Dict[str, Any]] = {}
-camera_calibration_tasks_lock = threading.Lock()
 # Both set by the broadcaster thread (main.py): the full snapshot behind
 # GET /runtime-stats, and the live part last pushed to the dashboard.
 runtime_stats_snapshot: Optional[dict[str, Any]] = None

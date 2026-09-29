@@ -1,15 +1,9 @@
-import tempfile
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import numpy as np
-from fastapi import HTTPException
-
 from irl.config import mkCameraConfig
-from server import camera_calibration_search
-from server.routers import camera_calibration, camera_device_settings
+from server.routers import camera_device_settings
 from vision.camera import (
     CaptureThread,
     _bool_from_capture_value,
@@ -22,13 +16,6 @@ from vision.camera import (
 
 
 class CameraDeviceControlsTests(unittest.TestCase):
-    def test_a_calibration_frame_comes_from_the_running_capture_thread(self) -> None:
-        live = np.zeros((4, 4, 3), dtype=np.uint8)
-        with patch.object(camera_calibration_search, "_grab_live_frame", return_value=live):
-            with patch.object(camera_calibration_search.cv2, "VideoCapture", side_effect=AssertionError("opened the device")):
-                frame = camera_calibration_search._capture_frame_for_calibration("c_channel_2", 0)
-        self.assertIs(live, frame)
-
     def test_macos_probe_reports_live_settings_without_applying_saved_values(self) -> None:
         controls = [{"key": "brightness", "kind": "number"}]
         live_settings = {"brightness": 12.0}
@@ -197,127 +184,6 @@ class CameraDeviceControlsTests(unittest.TestCase):
             )
             camera_device_settings.reset_camera_device_settings_to_defaults("carousel")
             self.assertEqual({}, raw_config["camera_device_settings"])
-
-    def test_calibration_start_route_defaults_to_target_plate(self) -> None:
-        fake_thread = SimpleNamespace(start=lambda: None)
-
-        with patch.dict("os.environ", {}, clear=False):
-            with patch("server.routers.camera_calibration.get_camera_device_settings", return_value={
-                "source": 1,
-                "provider": "usb-opencv",
-                "supported": True,
-            }):
-                with patch("server.routers.camera_calibration._create_camera_calibration_task", return_value="task-1") as create_task:
-                    with patch("server.routers.camera_calibration._get_camera_calibration_task", return_value={
-                        "status": "queued",
-                        "stage": "queued",
-                        "progress": 0.0,
-                        "message": "Queued",
-                        "method": "target_plate",
-                        "openrouter_model": None,
-                    }):
-                        with patch("server.routers.camera_calibration.threading.Thread", return_value=fake_thread) as thread_cls:
-                            response = camera_calibration.start_camera_device_settings_calibration_from_target(
-                                "c_channel_2"
-                            )
-
-        create_task.assert_called_once_with(
-            "c_channel_2",
-            "usb-opencv",
-            1,
-            method="target_plate",
-            openrouter_model=None,
-        )
-        thread_cls.assert_called_once()
-        self.assertEqual("target_plate", response["method"])
-
-    def test_calibration_start_route_accepts_llm_guided_method(self) -> None:
-        fake_thread = SimpleNamespace(start=lambda: None)
-        payload = camera_calibration.CameraCalibrationStartPayload(
-            method="llm_guided",
-            openrouter_model="google/gemini-3.1-pro-preview",
-            max_iterations=5,
-        )
-
-        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}, clear=False):
-            with patch("server.routers.camera_calibration.get_camera_device_settings", return_value={
-                "source": 1,
-                "provider": "usb-opencv",
-                "supported": True,
-            }):
-                with patch("server.routers.camera_calibration._create_camera_calibration_task", return_value="task-2") as create_task:
-                    with patch("server.routers.camera_calibration._get_camera_calibration_task", return_value={
-                        "status": "queued",
-                        "stage": "queued",
-                        "progress": 0.0,
-                        "message": "Queued",
-                        "method": "llm_guided",
-                        "openrouter_model": "google/gemini-3.1-pro-preview",
-                    }):
-                        with patch("server.routers.camera_calibration.threading.Thread", return_value=fake_thread) as thread_cls:
-                            response = camera_calibration.start_camera_device_settings_calibration_from_target(
-                                "c_channel_2",
-                                payload,
-                            )
-
-        create_task.assert_called_once_with(
-            "c_channel_2",
-            "usb-opencv",
-            1,
-            method="llm_guided",
-            openrouter_model="google/gemini-3.1-pro-preview",
-        )
-        thread_kwargs = thread_cls.call_args.kwargs
-        self.assertEqual("llm_guided", thread_kwargs["kwargs"]["method"])
-        self.assertEqual("google/gemini-3.1-pro-preview", thread_kwargs["kwargs"]["openrouter_model"])
-        self.assertEqual(5, thread_kwargs["kwargs"]["max_iterations"])
-        self.assertEqual("llm_guided", response["method"])
-        self.assertEqual("google/gemini-3.1-pro-preview", response["openrouter_model"])
-
-    def test_hardware_calibration_modes_still_save_device_controls(self) -> None:
-        tuned_settings = {"exposure": 120.0, "auto_exposure": False}
-        analysis = {"score": 0.9, "final_luma": 128}
-        current = {"source": 1, "provider": "usb-opencv", "supported": True, "controls": [], "settings": {}}
-        saved = {"ok": True, "settings": tuned_settings}
-        frame = np.zeros((4, 4, 3), dtype=np.uint8)
-        for method in ("target_plate", "llm_guided", "exposure_histogram"):
-            with (
-                self.subTest(method=method),
-                patch.object(camera_calibration, "get_camera_device_settings", return_value=current),
-                patch.object(camera_calibration.machine_toml, "read", return_value={}),
-                patch.object(camera_calibration, "_cleanup_old_gallery_dirs"),
-                patch.object(camera_calibration, "Path"),
-                patch.object(camera_calibration.time, "sleep"),
-                patch.object(camera_calibration, "_calibrate_usb_camera_device_settings", return_value=(tuned_settings, analysis)),
-                patch.object(camera_calibration, "_calibrate_camera_device_settings_with_llm", return_value=(tuned_settings, analysis, {})),
-                patch.object(camera_calibration, "_calibrate_exposure_via_histogram", return_value=(tuned_settings, analysis)),
-                patch.object(camera_calibration, "save_camera_device_settings", return_value=saved) as save,
-                patch.object(camera_calibration, "_capture_frame_for_calibration", return_value=frame),
-                patch.object(camera_calibration, "analyze_color_plate_target", return_value=SimpleNamespace(to_dict=lambda: analysis)),
-                patch.object(camera_calibration, "_run_llm_final_review", return_value={"status": "approved"}),
-            ):
-                result = camera_calibration._run_camera_calibration_sync("c_channel_2", method=method)
-            save.assert_called_once_with("c_channel_2", tuned_settings)
-            self.assertTrue(result["ok"])
-            self.assertEqual(method, result["method"])
-            self.assertEqual(analysis, result["analysis"])
-            self.assertNotIn("color_profile", result)
-
-    def test_calibration_gallery_stays_in_its_folder(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "gallery").mkdir()
-            (root / "frame.jpg").write_bytes(b"not a gallery frame")
-            (root / "frame.json").write_text("{}")
-            with patch.object(camera_calibration, "CALIBRATION_GALLERY_DIR", str(root / "gallery")):
-                for route, args in (
-                    (camera_calibration.get_calibration_gallery, ("c_channel_2", "..")),
-                    (camera_calibration.get_calibration_gallery_image, ("c_channel_2", "..", "frame.jpg")),
-                ):
-                    with self.subTest(route=route.__name__):
-                        with self.assertRaises(HTTPException) as raised:
-                            route(*args)
-                        self.assertEqual(404, raised.exception.status_code)
 
     def test_capture_failure_backoff_caps(self) -> None:
         self.assertEqual(0.0, _capture_failure_backoff_s(0))

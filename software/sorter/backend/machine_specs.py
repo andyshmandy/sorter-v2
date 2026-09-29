@@ -27,8 +27,7 @@ from typing import Any
 
 import machine_toml
 
-# 2: per-camera `calibration` block (color profile summary + device/picture
-# settings + capture mode).
+# 2: per-camera `calibration` block (device and picture settings, capture mode).
 SCHEMA_VERSION = 2
 
 BOOT_ID = str(uuid.uuid4())

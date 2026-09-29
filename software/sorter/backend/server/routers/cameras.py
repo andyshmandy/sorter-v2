@@ -2,8 +2,7 @@
 cameras this machine can see to choose from, and assigning them.
 
 The other camera routers (camera_feeds, camera_picture_settings,
-camera_device_settings, camera_capture_modes and camera_calibration) share the
-role helpers here.
+camera_device_settings and camera_capture_modes) share the role helpers here.
 """
 
 from __future__ import annotations
