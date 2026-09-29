@@ -106,6 +106,8 @@
 				? `Updated ${data.old_sha} → ${data.new_sha}. Restarting backend...`
 				: 'Already at this version. Restarting backend...';
 			await waitForBackend(httpBase());
+			// The update rebuilt the UI as well: load the new one.
+			if (data.changed) location.reload();
 			updateNotice = updateNotice.replace('Restarting backend...', 'Backend is back up.');
 			await load(false);
 		} catch (e: any) {
@@ -245,8 +247,8 @@
 	{/if}
 
 	<p class="text-sm text-text-muted">
-		Updating checks out the selected version on this machine and restarts the backend. Machine
-		config (machine.toml, .env, sorting data) is never touched; local code edits are stashed, not
-		lost.
+		Updating checks out the selected version on this machine, builds its UI and restarts the
+		backend. Machine config (machine.toml, .env, sorting data) is never touched; local code edits
+		are stashed, not lost.
 	</p>
 </div>

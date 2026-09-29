@@ -1,182 +1,67 @@
 <script lang="ts">
-	import { invalidateAll } from '$app/navigation';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import {
-		getBackendWsBase,
+		backendHealthy,
 		getBackendHttpBase,
 		machineHttpBaseUrlFromWsUrl,
-		machineWsUrlFromHttpBaseUrl,
-		probeBackendConnection,
 		requestBackendRestart,
 		waitForBackend
 	} from '$lib/backend';
 	import { getMachinesContext } from '$lib/machines/context';
 	import { machineDowntime } from '$lib/stores/machineDowntime.svelte';
 	import Modal from '$lib/components/Modal.svelte';
-	import { AlertTriangle, RefreshCw, Power, WifiOff } from 'lucide-svelte';
+	import { RefreshCw, Power, WifiOff } from 'lucide-svelte';
 	import { onMount } from 'svelte';
 
+	// Says so when the backend has been unreachable for a while. Reconnecting
+	// the websocket is the MachineManager's job; recovering touches nothing.
 	const manager = getMachinesContext();
 
 	const HEALTH_INTERVAL_MS = 3000;
+	const OUTAGE_GRACE_MS = 6000;
 	const RECOVERY_POLL_MS = 1500;
-	const FAILURE_THRESHOLD = 3;
-	const TRANSIENT_OUTAGE_GRACE_MS = 12000;
-	const HARD_OUTAGE_GRACE_MS = 6000;
-	const HEARTBEAT_STALE_MS = 15000;
 
 	let healthy = $state(true);
 	let checking = $state(false);
 	let restarting = $state(false);
-	let crashLooping = $state(false);
-	let lastCrashOutput = $state<string | null>(null);
-	let consecutiveFailures = $state(0);
-	let firstFailureAt = $state<number | null>(null);
-	let lastRecoveryRefreshAt = $state(0);
-
-	type HealthCheckResult = {
-		backendOk: boolean;
-		showUnavailable: boolean;
-	};
+	let firstFailureAt: number | null = null;
 
 	function baseUrl(): string {
 		return machineHttpBaseUrlFromWsUrl(manager.selectedMachine?.url) ?? getBackendHttpBase();
 	}
 
-	function wsUrl(): string {
-		return machineWsUrlFromHttpBaseUrl(baseUrl()) ?? `${getBackendWsBase()}/ws`;
-	}
-
-	async function refreshFrontendAfterRecovery() {
-		const url = wsUrl();
-		manager.reconnectStaleConnections({ fallbackUrl: url, heartbeatStaleMs: HEARTBEAT_STALE_MS });
-		manager.ensureConnected(url);
-		manager.refreshSelectedCameraFeeds();
-
-		const now = Date.now();
-		if (now - lastRecoveryRefreshAt < 1500) return;
-		lastRecoveryRefreshAt = now;
-		try {
-			await invalidateAll();
-		} catch {
-			// SvelteKit invalidation is best-effort; the WebSocket snapshot is the main recovery path.
-		}
-	}
-
-	function selectedMachineLooksAlive(): boolean {
-		const machine = manager.selectedMachine;
-		if (!machine || machine.status !== 'connected') return false;
-		if (machine.connection.readyState !== WebSocket.OPEN) return false;
-		if (machine.lastHeartbeat === null) return true;
-		return Date.now() - machine.lastHeartbeat * 1000 < HEARTBEAT_STALE_MS;
-	}
-
-	async function checkHealth(): Promise<HealthCheckResult> {
-		const status = await probeBackendConnection(baseUrl());
-		if (status.backendOk) {
-			const url = wsUrl();
-			manager.reconnectStaleConnections({ fallbackUrl: url, heartbeatStaleMs: HEARTBEAT_STALE_MS });
-			manager.ensureConnected(url);
-			firstFailureAt = null;
-			restarting = false;
-			crashLooping = false;
-			lastCrashOutput = null;
-			return { backendOk: true, showUnavailable: false };
-		}
-		if (selectedMachineLooksAlive()) {
-			firstFailureAt = null;
-			restarting = false;
-			return { backendOk: true, showUnavailable: false };
-		}
-		crashLooping = status.crashLooping;
-		if (status.lastCrashOutput) {
-			lastCrashOutput = status.lastCrashOutput;
-		}
-
-		consecutiveFailures++;
-		if (firstFailureAt === null) {
-			firstFailureAt = Date.now();
-		}
-
-		const outageMs = Date.now() - firstFailureAt;
-		const supervisorRecovering =
-			status.supervisorOk &&
-			(status.restartRequested ||
-				status.supervisorState === 'restarting' ||
-				!status.backendRunning);
-
-		restarting =
-			status.restartRequested ||
-			status.supervisorState === 'restarting' ||
-			(status.supervisorOk && !status.backendRunning && outageMs >= HARD_OUTAGE_GRACE_MS);
-
-		const graceMs = supervisorRecovering ? TRANSIENT_OUTAGE_GRACE_MS : HARD_OUTAGE_GRACE_MS;
-		return {
-			backendOk: false,
-			showUnavailable: outageMs >= graceMs && consecutiveFailures >= FAILURE_THRESHOLD
-		};
-	}
-
 	async function poll() {
-		const result = await checkHealth();
-		if (result.backendOk) {
-			const recovered = !healthy || consecutiveFailures > 0 || firstFailureAt !== null;
-			consecutiveFailures = 0;
-			if (!healthy) {
-				healthy = true;
-				restarting = false;
-			}
-			if (recovered) {
-				await refreshFrontendAfterRecovery();
-			}
-		} else if (result.showUnavailable) {
-			healthy = false;
+		// A live websocket proves the backend is up without another request.
+		if (manager.isLive(manager.selectedMachine) || (await backendHealthy(baseUrl()))) {
+			firstFailureAt = null;
+			healthy = true;
+			restarting = false;
+			return;
 		}
+		firstFailureAt ??= Date.now();
+		if (Date.now() - firstFailureAt >= OUTAGE_GRACE_MS) healthy = false;
 	}
 
 	async function retryNow() {
 		checking = true;
-		const result = await checkHealth();
+		await poll();
 		checking = false;
-		if (result.backendOk) {
-			healthy = true;
-			consecutiveFailures = 0;
-			firstFailureAt = null;
-			restarting = false;
-			await refreshFrontendAfterRecovery();
-		}
 	}
 
 	async function restartBackend() {
 		restarting = true;
-		const currentBaseUrl = baseUrl();
-		const restart = await requestBackendRestart(currentBaseUrl);
-		if (!restart.ok) {
-			restarting = false;
-			return;
-		}
-
-		const recovered = await waitForBackend(currentBaseUrl, {
-			initialDelayMs: RECOVERY_POLL_MS,
-			intervalMs: RECOVERY_POLL_MS
-		});
-		if (recovered) {
-			await refreshFrontendAfterRecovery();
+		const url = baseUrl();
+		if (
+			(await requestBackendRestart(url)) &&
+			(await waitForBackend(url, { initialDelayMs: RECOVERY_POLL_MS, intervalMs: RECOVERY_POLL_MS }))
+		) {
 			healthy = true;
-			consecutiveFailures = 0;
 			firstFailureAt = null;
 		}
 		restarting = false;
 	}
 
 	onMount(() => {
-		console.info('[backend] resolved endpoints', {
-			location: window.location.href,
-			baseUrl: baseUrl(),
-			wsUrl: wsUrl(),
-			defaultHttpBase: getBackendHttpBase(),
-			defaultWsBase: getBackendWsBase()
-		});
 		void poll();
 		const interval = setInterval(() => void poll(), HEALTH_INTERVAL_MS);
 		return () => clearInterval(interval);
@@ -192,16 +77,7 @@
 				<WifiOff size={18} />
 			</div>
 			<div class="min-w-0 flex-1">
-				{#if crashLooping}
-					<div class="text-sm text-text">
-						The backend keeps crashing during startup. It is being restarted automatically, but it
-						has failed several times in a row.
-					</div>
-					{#if lastCrashOutput}
-						<pre
-							class="mt-3 max-h-48 overflow-auto whitespace-pre-wrap border border-border bg-bg p-2 font-mono text-xs text-text-muted">{lastCrashOutput}</pre>
-					{/if}
-				{:else if restarting}
+				{#if restarting}
 					<div class="text-sm text-text">
 						The backend is restarting. Waiting for it to come back online...
 					</div>
@@ -221,7 +97,7 @@
 			</div>
 		</div>
 
-		{#if !restarting || crashLooping}
+		{#if !restarting}
 			<div class="flex items-center justify-end gap-2 border-t border-border pt-3">
 				<button
 					type="button"

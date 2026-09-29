@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getBackendHttpBase } from '$lib/backend';
 	import CameraSourcePreview from '$lib/components/CameraSourcePreview.svelte';
+	import LiveImage from '$lib/components/LiveImage.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import ChannelLedSection from '$lib/components/settings/ChannelLedSection.svelte';
 	import DetectionSettingsSidebar from '$lib/components/settings/DetectionSettingsSidebar.svelte';
@@ -28,6 +29,7 @@
 	} from 'lucide-svelte';
 	import StreamControlsOverlay from '$lib/components/StreamControlsOverlay.svelte';
 	import { createEventDispatcher, onMount } from 'svelte';
+	import { roleView } from '$lib/video';
 
 	type Channel =
 		| 'second'
@@ -58,20 +60,6 @@
 		height: number;
 		name?: string;
 		preview_available?: boolean;
-	};
-	type NetworkCameraInfo = {
-		kind: 'network';
-		id: string;
-		name: string;
-		source: string;
-		preview_url: string;
-		health_url: string;
-		host: string;
-		port: number;
-		model?: string | null;
-		lens_facing?: string | null;
-		transport: string;
-		last_seen_ms: number;
 	};
 	type CameraSource = number | string | null;
 	type ArcParams = {
@@ -153,7 +141,6 @@
 		saved: PictureSettings;
 		draft: PictureSettings;
 	};
-	type CalibrationHighlight = [number, number, number, number];
 	type DetectionHighlight = [number, number, number, number];
 	type SidePanel = 'picture' | 'zone' | 'classification' | 'led' | null;
 	type DragState =
@@ -284,13 +271,6 @@
 		c_channel_3: 'C Channel 3',
 		carousel: 'Carousel',
 		classification_channel: 'Classification C-Channel (C4)',
-	};
-
-	const ROLE_SUPPORTS_URL: Record<CameraRole, boolean> = {
-		c_channel_2: false,
-		c_channel_3: false,
-		carousel: true,
-		classification_channel: true,
 	};
 
 	const LEGACY_ZONE_SECTION_RANGES: Record<
@@ -443,7 +423,6 @@
 	let cameraError = $state<string | null>(null);
 	let cameraConfigLoaded = $state(false);
 	let usbCameras = $state<UsbCameraInfo[]>([]);
-	let networkCameras = $state<NetworkCameraInfo[]>([]);
 	let assignments = $state<Record<CameraRole, CameraSource>>({
 		c_channel_2: null,
 		c_channel_3: null,
@@ -452,9 +431,7 @@
 	});
 	let picturePreviewByRole = $state<Partial<Record<CameraRole, PicturePreviewState>>>({});
 	let previewImageSizeByRole = $state<Partial<Record<CameraRole, PreviewImageSize>>>({});
-	let calibrationHighlightByRole = $state<Partial<Record<CameraRole, CalibrationHighlight>>>({});
 	let detectionHighlightByRole = $state<Partial<Record<CameraRole, DetectionHighlight[]>>>({});
-	let feedRevision = $state(0);
 	let reassignConfirm = $state<{
 		source: CameraSource;
 		targetRole: CameraRole;
@@ -871,20 +848,6 @@
 		return picturePreviewByRole[role] ?? null;
 	}
 
-	function setCalibrationHighlight(role: CameraRole, bbox: CalibrationHighlight | null) {
-		const next = { ...calibrationHighlightByRole };
-		if (bbox) {
-			next[role] = bbox;
-		} else {
-			delete next[role];
-		}
-		calibrationHighlightByRole = next;
-	}
-
-	function getCalibrationHighlight(role: CameraRole = currentRole()): CalibrationHighlight | null {
-		return calibrationHighlightByRole[role] ?? null;
-	}
-
 	function setDetectionHighlights(role: CameraRole, bboxes: DetectionHighlight[] | null) {
 		const next = { ...detectionHighlightByRole };
 		if (bboxes && bboxes.length > 0) {
@@ -1049,7 +1012,6 @@
 		if (!supportsDetectionSidebar(currentChannel)) return;
 		if (activeSidebar === 'picture') {
 			clearPicturePreview(currentRole());
-			setCalibrationHighlight(currentRole(), null);
 		}
 		if (activeSidebar === 'classification') {
 			setDetectionHighlights(currentRole(), null);
@@ -1063,7 +1025,6 @@
 		if (!supportsLedSidebar(currentChannel)) return;
 		if (activeSidebar === 'picture') {
 			clearPicturePreview(currentRole());
-			setCalibrationHighlight(currentRole(), null);
 		}
 		if (activeSidebar === 'classification') {
 			setDetectionHighlights(currentRole(), null);
@@ -1102,22 +1063,7 @@
 			if (camera?.name) return `${camera.name} (Camera ${source})`;
 			return `Camera ${source}`;
 		}
-		const discovered = discoveredCameraBySource(source);
-		if (discovered) return discovered.name;
 		return source;
-	}
-
-	function cameraIndexPreviewUrl(index: number): string {
-		return `${getBackendHttpBase()}/api/cameras/stream/${index}`;
-	}
-
-	function discoveredCameraBySource(source: CameraSource): NetworkCameraInfo | null {
-		if (typeof source !== 'string') return null;
-		return networkCameras.find((camera) => camera.source === source) ?? null;
-	}
-
-	function discoveredPreviewUrl(camera: NetworkCameraInfo): string {
-		return `${camera.preview_url}?t=${camera.last_seen_ms}`;
 	}
 
 	function angleFromCenter(point: Point, center: Point): number {
@@ -1816,36 +1762,6 @@
 		setArc(channel, { ...params, preciseZone: next });
 	}
 
-	function streamSrc(channel: Channel): string {
-		const role = CAMERA_FOR_CHANNEL[channel];
-		// The feed URL is intentionally independent of `editingZone`: entering or
-		// leaving zone-edit mode must not change the stream, so the single MJPEG
-		// connection (and its `<img>`) survives the toggle. A fresh connection
-		// opened during a camera hiccup has no frame to show and goes black; a
-		// persistent one rides the hiccup on its last frame. `beginEditing()`
-		// forces crop off so the editor canvas always maps to the full frame.
-		const annotated = previewAnnotated;
-		const dashboard = previewCropped;
-		const showRegions = previewCropped && previewZones;
-		const params = new URLSearchParams({
-			annotated: annotated ? '1' : '0',
-			layer: annotated ? 'annotated' : 'raw',
-			dashboard: dashboard ? '1' : '0',
-			show_regions: showRegions ? '1' : '0'
-		});
-		return `${getBackendHttpBase()}/api/cameras/feed/${encodeURIComponent(role)}?${params.toString()}`;
-	}
-
-	function feedInstanceKey(channel: Channel): string {
-		const assignment = currentAssignment(channel);
-		const zonesMode = previewCropped ? (previewZones ? 'z' : 'nz') : 'local-zones';
-		// No `editingZone` term here — the `{#key}` block must not remount the
-		// feed `<img>` when zone editing toggles. Remounting tears down a working
-		// MJPEG connection; see streamSrc() for why that causes the black screen.
-		const mode = `${previewAnnotated ? 'annot' : 'raw'}-${previewCropped ? 'crop' : 'full'}-${zonesMode}`;
-		return `${currentRole(channel)}::${assignment === null ? 'none' : String(assignment)}::${mode}::${feedRevision}`;
-	}
-
 	function channelStorageKey(channel: Channel): string {
 		if (channel === 'second') return 'second_channel';
 		if (channel === 'third') return 'third_channel';
@@ -2015,15 +1931,9 @@
 			const res = await fetch(`${getBackendHttpBase()}/api/cameras/list`, { signal: abort.signal });
 			if (!res.ok) throw new Error(await res.text());
 			const payload = await res.json();
-			if (Array.isArray(payload)) {
-				usbCameras = payload.filter((camera: UsbCameraInfo) => camera.index >= 0);
-				networkCameras = [];
-				return;
-			}
 			usbCameras = Array.isArray(payload.usb)
 				? payload.usb.filter((camera: UsbCameraInfo) => camera.index >= 0)
 				: [];
-			networkCameras = Array.isArray(payload.network) ? payload.network : [];
 		} catch (e: any) {
 			if (e.name === 'AbortError') return;
 			cameraError = e.message ?? 'Failed to scan cameras';
@@ -2049,7 +1959,6 @@
 			});
 			if (!res.ok) throw new Error(await res.text());
 			assignments[role] = source;
-			feedRevision += 1;
 			statusMsg = source === null ? 'Camera cleared.' : 'Camera updated.';
 		} catch (e: any) {
 			cameraError = e.message ?? 'Failed to save camera';
@@ -4026,68 +3935,53 @@
 						style={previewViewportStyle(currentChannel)}
 						bind:this={previewViewportEl}
 					>
-						{#key feedInstanceKey(currentChannel)}
-							{#if !cameraConfigLoaded}
-								<div
-									class="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-white/80"
-								>
-									<div class="max-w-sm rounded-md bg-black/55 px-4 py-3">
-										Loading camera source for {CHANNEL_LABELS[currentChannel]}...
-									</div>
+						{#if !cameraConfigLoaded}
+							<div
+								class="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-white/80"
+							>
+								<div class="max-w-sm rounded-md bg-black/55 px-4 py-3">
+									Loading camera source for {CHANNEL_LABELS[currentChannel]}...
 								</div>
-							{:else if currentAssignment() !== null}
-								<img
-									src={streamSrc(currentChannel)}
-									alt={CHANNEL_LABELS[currentChannel]}
-									class="absolute inset-0 h-full w-full object-contain"
-									style={feedImageStyle(currentChannel)}
-									onload={(event) =>
-										rememberPreviewImageSize(currentRole(currentChannel), event.currentTarget)}
-								/>
-								<div
-									class="pointer-events-none absolute"
-									style={previewOverlayStyle(currentChannel)}
-								>
-									{#if getCalibrationHighlight(currentRole())}
-										{@const highlight = getCalibrationHighlight(currentRole())!}
+							</div>
+						{:else if currentAssignment() !== null}
+							<LiveImage
+								view={roleView(currentRole(currentChannel), previewAnnotated, previewCropped)}
+								baseUrl={getBackendHttpBase()}
+								alt={CHANNEL_LABELS[currentChannel]}
+								class="absolute inset-0 h-full w-full object-contain"
+								style={feedImageStyle(currentChannel)}
+								onframe={(img) => rememberPreviewImageSize(currentRole(currentChannel), img)}
+							/>
+							<div
+								class="pointer-events-none absolute"
+								style={previewOverlayStyle(currentChannel)}
+							>
+								{#each getDetectionHighlights(currentRole()) as highlight, index}
+									<div
+										class={`absolute border-2 shadow-[0_0_0_1px_rgba(255,255,255,0.35)] ${
+											index === 0
+												? 'border-violet-400 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_0_24px_rgba(167,139,250,0.35)]'
+												: 'border-violet-300/80'
+										}`}
+										style={`left:${highlight[0] * 100}%;top:${highlight[1] * 100}%;width:${(highlight[2] - highlight[0]) * 100}%;height:${(highlight[3] - highlight[1]) * 100}%;`}
+									>
 										<div
-											class="absolute border-2 border-sky-400 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_0_24px_rgba(56,189,248,0.35)]"
-											style={`left:${highlight[0] * 100}%;top:${highlight[1] * 100}%;width:${(highlight[2] - highlight[0]) * 100}%;height:${(highlight[3] - highlight[1]) * 100}%;`}
+											class="absolute top-1 right-1 rounded border border-white/20 bg-violet-500/60 px-1.5 py-0.5 text-xs leading-none font-semibold text-white shadow-md backdrop-blur-sm"
 										>
-											<div
-												class="absolute -top-7 left-0 rounded bg-sky-400 px-2 py-1 text-xs font-medium text-slate-950 shadow-md"
-											>
-												Calibration Target
-											</div>
+											{index + 1}
 										</div>
-									{/if}
-									{#each getDetectionHighlights(currentRole()) as highlight, index}
-										<div
-											class={`absolute border-2 shadow-[0_0_0_1px_rgba(255,255,255,0.35)] ${
-												index === 0
-													? 'border-violet-400 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_0_24px_rgba(167,139,250,0.35)]'
-													: 'border-violet-300/80'
-											}`}
-											style={`left:${highlight[0] * 100}%;top:${highlight[1] * 100}%;width:${(highlight[2] - highlight[0]) * 100}%;height:${(highlight[3] - highlight[1]) * 100}%;`}
-										>
-											<div
-												class="absolute top-1 right-1 rounded border border-white/20 bg-violet-500/60 px-1.5 py-0.5 text-xs leading-none font-semibold text-white shadow-md backdrop-blur-sm"
-											>
-												{index + 1}
-											</div>
-										</div>
-									{/each}
-								</div>
-							{:else}
-								<div
-									class="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-white/80"
-								>
-									<div class="max-w-sm rounded-md bg-black/55 px-4 py-3">
-										No camera source configured for {CHANNEL_LABELS[currentChannel]} yet.
 									</div>
+								{/each}
+							</div>
+						{:else}
+							<div
+								class="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-white/80"
+							>
+								<div class="max-w-sm rounded-md bg-black/55 px-4 py-3">
+									No camera source configured for {CHANNEL_LABELS[currentChannel]} yet.
 								</div>
-							{/if}
-						{/key}
+							</div>
+						{/if}
 
 						<canvas
 							bind:this={canvasEl}
@@ -4285,19 +4179,13 @@
 						onPreviewChange={(role, savedSettings, draftSettings) => {
 							setPicturePreview(role, savedSettings, draftSettings);
 						}}
-						onCalibrationHighlightChange={(bbox) => {
-							setCalibrationHighlight(currentRole(), bbox);
-						}}
 						onClose={() => {
 							clearPicturePreview(currentRole());
-							setCalibrationHighlight(currentRole(), null);
 							activeSidebar = null;
 						}}
 						onSaved={() => {
 							clearPicturePreview(currentRole());
-							setCalibrationHighlight(currentRole(), null);
 							activeSidebar = null;
-							feedRevision += 1;
 							statusMsg = 'Picture settings updated.';
 						}}
 					/>
@@ -4377,10 +4265,7 @@
 						Scanning cameras...
 					</div>
 				{:else}
-					{@const hasAnyCameras =
-						usbCameras.length > 0 ||
-						(ROLE_SUPPORTS_URL[currentRole()] && networkCameras.length > 0)}
-					{#if hasAnyCameras}
+					{#if usbCameras.length > 0}
 						<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
 							{#each usbCameras as cam}
 								{@const role = currentRole()}
@@ -4407,7 +4292,8 @@
 										</div>
 									{:else}
 										<CameraSourcePreview
-											src={cameraIndexPreviewUrl(cam.index)}
+											source={cam.index}
+											baseUrl={getBackendHttpBase()}
 											label={cam.name ?? `Camera ${cam.index}`}
 											fit="cover"
 											block
@@ -4442,70 +4328,6 @@
 									{/if}
 								</button>
 							{/each}
-
-							{#if ROLE_SUPPORTS_URL[currentRole()]}
-								{#each networkCameras as cam}
-									{@const role = currentRole()}
-									{@const isSelected = assignments[role] === cam.source}
-									{@const usedByOther =
-										!isSelected &&
-										ALL_CAMERA_ROLES.some(
-											(otherRole) => otherRole !== role && assignments[otherRole] === cam.source
-										)}
-									<button
-										onclick={() => {
-											const otherRole = findRoleUsing(cam.source, role);
-											if (otherRole) {
-												reassignConfirm = {
-													source: cam.source,
-													targetRole: role,
-													currentRole: otherRole,
-													cameraLabel: cam.name
-												};
-												reassignModalOpen = true;
-												return;
-											}
-											saveCameraRole(role, cam.source);
-										}}
-										disabled={cameraSaving}
-										class="group relative overflow-hidden text-left transition-all {isSelected
-											? 'ring-2 ring-primary'
-											: usedByOther
-												? 'opacity-60 hover:opacity-100 hover:ring-2 hover:ring-[#FFD500] dark:hover:ring-[#FFD500]'
-												: 'hover:ring-2 hover:ring-primary/50'}"
-									>
-										<CameraSourcePreview
-											src={discoveredPreviewUrl(cam)}
-											label={cam.name}
-											fit="cover"
-											block
-										/>
-										<div
-											class="absolute right-0 bottom-0 left-0 bg-gradient-to-t from-black/80 to-transparent px-2 pt-4 pb-1.5 text-xs text-white"
-										>
-											<div class="font-medium">{cam.name}</div>
-											<div class="text-white/70">
-												{cam.host}:{cam.port}{#if cam.lens_facing}
-													· {cam.lens_facing}{/if}
-											</div>
-										</div>
-										{#if isSelected}
-											<div
-												class="absolute top-1.5 right-1.5 rounded-sm bg-primary px-1.5 py-0.5 text-xs font-medium text-primary-contrast"
-											>
-												Active
-											</div>
-										{:else if usedByOther}
-											{@const otherRole = findRoleUsing(cam.source, role)}
-											<div
-												class="absolute top-1.5 right-1.5 rounded-sm bg-[#FFD500] px-1.5 py-0.5 text-xs font-medium text-[#1A1A1A]"
-											>
-												{otherRole ? ROLE_LABELS[otherRole] : 'In use'}
-											</div>
-										{/if}
-									</button>
-								{/each}
-							{/if}
 						</div>
 					{:else}
 						<div

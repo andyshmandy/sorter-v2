@@ -48,9 +48,8 @@
 	}
 
 	const hardwareState = $derived(machine.machine?.systemStatus?.hardware_state ?? 'standby');
-	const hardwareError = $derived(
-		startSystemError ?? machine.machine?.systemStatus?.hardware_error ?? null
-	);
+	const hardwareFault = $derived(machine.machine?.systemStatus?.hardware_error ?? null);
+	const hardwareError = $derived(startSystemError ?? hardwareFault?.message ?? null);
 	const homingStep = $derived(machine.machine?.systemStatus?.homing_step ?? null);
 	const noPowerDevelopmentMode = $derived(
 		machine.machine?.systemStatus?.no_power_development_mode ?? false
@@ -544,7 +543,7 @@
 								camera="c_channel_2"
 								label={cameraLabel('c_channel_2')}
 								crop={cropFor('c_channel_2')}
-								controls={['annotations', 'zones', 'crop', 'fullscreen']}
+								controls={['annotations', 'crop', 'fullscreen']}
 							>
 								{#snippet headerActions()}
 									<CameraChannelControls stepperKey="c_channel_2" />
@@ -556,7 +555,7 @@
 								camera="c_channel_3"
 								label={cameraLabel('c_channel_3')}
 								crop={cropFor('c_channel_3')}
-								controls={['annotations', 'zones', 'crop', 'fullscreen']}
+								controls={['annotations', 'crop', 'fullscreen']}
 							>
 								{#snippet headerActions()}
 									<CameraChannelControls stepperKey="c_channel_3" />
@@ -570,7 +569,7 @@
 								camera="classification_channel"
 								label={cameraLabel('classification_channel')}
 								crop={cropFor('classification_channel')}
-								controls={['annotations', 'zones', 'crop', 'fullscreen']}
+								controls={['annotations', 'crop', 'fullscreen']}
 							>
 								{#snippet headerActions()}
 									<CameraChannelControls stepperKey="c_channel_4" />
@@ -635,7 +634,9 @@
 								</div>
 							{:else if hardwareState === 'error'}
 								<div class="flex flex-col gap-2">
-									<div class="text-sm font-medium text-danger">Hardware Error</div>
+									<div class="text-sm font-medium text-danger">
+										{hardwareFault?.title ?? 'Hardware Error'}
+									</div>
 									{#if hardwareError}
 										<div class="text-xs text-text-muted">{hardwareError}</div>
 									{/if}

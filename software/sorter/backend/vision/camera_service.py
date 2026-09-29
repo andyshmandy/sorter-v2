@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import threading
-import time
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from defs.events import CameraName
 from irl.config import (
@@ -44,7 +43,7 @@ def _apply_default_capture_mode(config: CameraConfig) -> bool:
     return True
 
 
-# Health poll interval. Video is streamed through the MJPEG endpoint only; this
+# Health poll interval. Video goes to the UI over the video websocket only; this
 # lightweight loop just surfaces camera status changes over the control socket.
 _HEALTH_POLL_INTERVAL_S = 0.5
 
@@ -144,21 +143,6 @@ class CameraService:
             return None
         return device.capture_thread
 
-    def get_device_settings_for_role(self, role: str) -> dict[str, int | float | bool] | None:
-        device = self._device_for_role(role)
-        if device is None:
-            return None
-        return device.get_device_settings()
-
-    def describe_device_controls_for_role(
-        self,
-        role: str,
-    ) -> tuple[list[dict[str, Any]], dict[str, int | float | bool]] | None:
-        device = self._device_for_role(role)
-        if device is None:
-            return None
-        return device.describe_device_controls()
-
     def inspect_device_controls_for_role(
         self,
         role: str,
@@ -175,16 +159,6 @@ class CameraService:
         return [], dict(saved_settings)
 
     # ---- Health ----
-
-    def get_health_status(self) -> dict[str, dict]:
-        result: dict[str, dict] = {}
-        for role, feed in self._feeds.items():
-            device = feed.device
-            result[role] = {
-                "status": device.health.value,
-                "last_frame_at": device.last_frame_at,
-            }
-        return result
 
     def get_health_map(self) -> dict[str, str]:
         return {role: feed.device.health.value for role, feed in self._feeds.items()}
@@ -328,12 +302,9 @@ class CameraService:
 
     def _health_poll_loop(self) -> None:
         while not self._health_stop.is_set():
-            prof = self._gc.profiler
-            prof.hit("camera_service.health_thread.calls")
-            with prof.timer("camera_service.health_thread.total_ms"):
-                # Health is derived from the capture thread's latest frame age.
-                # No JPEG encoding happens on this thread.
-                self._check_health_changes()
+            # Health is derived from the capture thread's latest frame age.
+            # No JPEG encoding happens on this thread.
+            self._check_health_changes()
 
             self._health_stop.wait(_HEALTH_POLL_INTERVAL_S)
 

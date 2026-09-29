@@ -36,7 +36,6 @@
 		parseCameraSource,
 		sourceKey,
 		type CameraChoice,
-		type NetworkCamera,
 		type UsbCamera
 	} from '$lib/setup/camera-choices';
 	import type {
@@ -180,7 +179,6 @@
 	let nameStatus = $state('');
 
 	let usbCameras = $state<UsbCamera[]>([]);
-	let networkCameras = $state<NetworkCamera[]>([]);
 	let loadingCameras = $state(false);
 	let cameraError = $state<string | null>(null);
 	let cameraStatus = $state('');
@@ -344,7 +342,7 @@
 	}
 
 	function cameraChoices(): CameraChoice[] {
-		return buildCameraChoices(usbCameras, networkCameras, roleSelections, currentBackendBaseUrl());
+		return buildCameraChoices(usbCameras, roleSelections);
 	}
 
 	function selectedCameraLabel(key: string | undefined): string {
@@ -577,7 +575,7 @@
 			if (seq !== wizardLoadSeq) return;
 			wizard = payload;
 			hardwareState = payload.hardware.state;
-			hardwareError = payload.hardware.error;
+			hardwareError = payload.hardware.error?.message ?? null;
 			homingStep = payload.hardware.homing_step;
 			// The wizard reloads on its own (hardware state changes, machine
 			// switches), and it used to overwrite the name field every time —
@@ -695,7 +693,6 @@
 			usbCameras = Array.isArray(payload?.usb)
 				? payload.usb.filter((camera: UsbCamera) => camera.index >= 0)
 				: [];
-			networkCameras = Array.isArray(payload?.network) ? payload.network : [];
 		} catch (e: any) {
 			if (seq === cameraLoadSeq) cameraError = e.message ?? 'Failed to load camera inventory';
 		} finally {
@@ -709,7 +706,7 @@
 		const nextState = ws.hardware_state ?? 'standby';
 		const previousState = hardwareState;
 		hardwareState = nextState;
-		hardwareError = ws.hardware_error ?? null;
+		hardwareError = ws.hardware_error?.message ?? null;
 		homingStep = ws.homing_step ?? null;
 		if (nextState !== previousState) {
 			void loadWizard();
@@ -897,14 +894,6 @@
 	});
 
 	$effect(() => {
-		if (activeStepId !== 'motion' && activeStepId !== 'calibration') return;
-		if (homingSystem || !wizard?.readiness.boards_detected) return;
-		if (hardwareState === 'standby') {
-			void initializeSteppers();
-		}
-	});
-
-	$effect(() => {
 		if (activeStepId !== 'hive') return;
 		untrack(() => {
 			void loadSorthiveConfig();
@@ -1038,7 +1027,7 @@
 							onRecordObservedDirection={recordObservedDirection}
 						/>
 					{:else if activeStepId === 'calibration'}
-						<CalibrationStep bind:this={calibrationStepRef} />
+						<CalibrationStep bind:this={calibrationStepRef} onInitialize={initializeSteppers} />
 					{:else if activeStepId === 'servos'}
 						<SetupServoOnboardingSection
 							servoSource={effectiveServoSource}
@@ -1103,7 +1092,6 @@
 					label={ROLE_LABELS[pictureSettingsRole] ?? pictureSettingsRole}
 					hasCamera={roleHasCamera(pictureSettingsRole)}
 					source={parseCameraSource(roleSelections[pictureSettingsRole] ?? '__none__')}
-					backendBaseUrl={currentBackendBaseUrl()}
 					on:saved={() => {
 						const role = pictureSettingsRole;
 						if (!role) return;

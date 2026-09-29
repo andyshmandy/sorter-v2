@@ -5,7 +5,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from blob_manager import getChannelPolygons
+from local_state import get_channel_polygons
 from subsystems.classification_channel.five_sector_platter import C4FiveSectorPlatter
 
 SPOKE_COUNT = 5
@@ -102,7 +102,7 @@ def computeForwardAlignmentDeltaDeg(
 def loadSpokeHomeGeometry(
     frame_shape: tuple[int, int],
 ) -> tuple[Annulus, tuple[float, float]] | None:
-    saved = getChannelPolygons()
+    saved = get_channel_polygons()
     if not isinstance(saved, dict):
         return None
     arc_params = saved.get("arc_params")

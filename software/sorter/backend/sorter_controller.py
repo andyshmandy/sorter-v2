@@ -1,7 +1,6 @@
 from defs.sorter_controller import SorterLifecycle
 from irl.config import IRLInterface, IRLConfig
 from global_config import GlobalConfig
-from runtime_variables import RuntimeVariables
 from coordinator import Coordinator
 from vision import VisionManager
 import queue
@@ -23,7 +22,6 @@ class SorterController:
         gc: GlobalConfig,
         vision: VisionManager,
         event_queue: queue.Queue,
-        rv: RuntimeVariables,
     ):
         self.state = SorterLifecycle.INITIALIZING
         self.irl = irl
@@ -31,7 +29,7 @@ class SorterController:
         self.vision = vision
         self.event_queue = event_queue
         self.coordinator = Coordinator(
-            irl, irl_config, gc, vision, event_queue, rv
+            irl, irl_config, gc, vision, event_queue
         )
         _broadcastSorterState(self.state.value)
 

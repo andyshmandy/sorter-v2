@@ -11,36 +11,10 @@ from subsystems.bus import TickBus
 from subsystems.distribution.sending import (
     CHUTE_SETTLE_MS,
     MISSING_DROP_PIECE_GRACE_MS,
-    SAMPLE_COLLECTION_CHUTE_SETTLE_MS,
     Sending,
 )
 from subsystems.distribution.states import DistributionState
 from subsystems.shared_variables import SharedVariables
-
-
-class _NullTimer:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        return None
-
-
-class _Profiler:
-    def hit(self, *args, **kwargs) -> None:
-        pass
-
-    def mark(self, *args, **kwargs) -> None:
-        pass
-
-    def timer(self, *args, **kwargs):
-        return _NullTimer()
-
-    def enterState(self, *args, **kwargs) -> None:
-        pass
-
-    def exitState(self, *args, **kwargs) -> None:
-        pass
 
 
 class _Logger:
@@ -65,7 +39,6 @@ class _RunRecorder:
 class _GlobalConfig:
     def __init__(self) -> None:
         self.logger = _Logger()
-        self.profiler = _Profiler()
         self.runtime_stats = RuntimeStatsCollector()
         self.run_recorder = _RunRecorder()
         self.set_progress_tracker = None
@@ -159,29 +132,6 @@ class SendingChuteReopenGateTests(unittest.TestCase):
 
         # Jump past the settle timer — now it commits AND reopens.
         sending.start_time = time.time() - (CHUTE_SETTLE_MS / 1000.0) - 0.01
-        next_state = sending.step()
-        self.assertEqual(DistributionState.IDLE, next_state)
-        self.assertTrue(shared.get_distribution_ready())
-
-    def test_sample_collection_reopens_after_short_passthrough_settle(self) -> None:
-        transport = self._mkTransportWithDrop(tracked_global_id=24)
-        shared = self._mkSharedWithTransport(transport)
-        shared.sample_collection_mode = True
-        gc = _GlobalConfig()
-        event_queue: queue.Queue = queue.Queue()
-
-        sending = _mkSending(
-            cooldown_s=5.0,
-            shared=shared,
-            event_queue=event_queue,
-            gc=gc,
-        )
-        self.assertIsNone(sending.step())
-
-        sending.start_time = (
-            time.time() - (SAMPLE_COLLECTION_CHUTE_SETTLE_MS / 1000.0) - 0.01
-        )
-
         next_state = sending.step()
         self.assertEqual(DistributionState.IDLE, next_state)
         self.assertTrue(shared.get_distribution_ready())

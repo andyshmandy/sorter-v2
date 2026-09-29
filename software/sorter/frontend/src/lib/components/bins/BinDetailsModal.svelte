@@ -3,7 +3,6 @@
 	import PieceStatusBadge from '$lib/components/PieceStatusBadge.svelte';
 	import PieceThumb from '$lib/components/PieceThumb.svelte';
 	import { Button, SelectMenu } from '$lib/components/primitives';
-	import { bricklinkParts } from '$lib/stores/bricklinkParts.svelte';
 	import { sortingProfileStore } from '$lib/stores/sortingProfile.svelte';
 	import { Plus, Tag, X } from 'lucide-svelte';
 	import { categoryLabel, formatCategoryName, itemDisplayName, itemSecondaryText, pieceTooltip, previewUrl } from './pieces';
@@ -47,9 +46,6 @@
 		assignSelected = [...detailsBin.bin.category_ids];
 		assignSearch = '';
 		assignDropdownOpen = false;
-		for (const item of detailsBin.contents?.items ?? []) {
-			if (item.part_id) void bricklinkParts.fetch(baseUrl, item.part_id);
-		}
 	});
 
 	const setMeta = $derived.by((): SetMeta | null => {

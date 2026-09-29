@@ -537,45 +537,6 @@ def orderedPieceObservations(
     return out
 
 
-def holdingSlotSections(
-    channel: ChannelDef, count: int
-) -> list[frozenset[int]]:
-    """Subdivide the drawn precise (holding) band into ``count`` contiguous
-    holding slots, ordered ENTRY-FIRST in the travel direction: slot 0 is the
-    edge a piece reaches FIRST coming from the drop zone; the last slot is the
-    edge adjacent to the fall-off (the piece's final hold before discharge).
-
-    ``count == 1`` returns the whole precise band as one slot — exactly today's
-    single holding region. ``count`` is clamped to ``[1, len(band sections)]`` so
-    a slot is never empty (an empty section-set could never read as occupied and
-    would wedge the scheduler); callers should treat ``len(result)`` as the
-    effective slot count rather than assuming their requested ``count``. Returns
-    ``[]`` when the channel has no precise band.
-
-    The UI exposes ONE draggable precise/holding band (width + position); this is
-    where ``Rev01Config.holding_region_count`` turns that single band into N
-    slots, so adding holding regions needs no UI change.
-    """
-    ordered = _orderedCircularSections(channel.precise_sections)
-    if not ordered:
-        return []
-    # Entry-first: the edge the piece reaches first. _orderedCircularSections
-    # returns rear-edge-first (forward-travel entry); reverse travel (C4) enters
-    # at the far edge, so flip to keep slot 0 == entry in both directions.
-    if bool(getattr(channel, "reverse", False)):
-        ordered = list(reversed(ordered))
-    n = len(ordered)
-    count = max(1, min(int(count), n))
-    base, rem = divmod(n, count)
-    slots: list[frozenset[int]] = []
-    i = 0
-    for s in range(count):
-        size = base + (1 if s < rem else 0)
-        slots.append(frozenset(ordered[i : i + size]))
-        i += size
-    return slots
-
-
 def attributeBboxes(
     bboxes: Iterable[Bbox], channel: ChannelDef
 ) -> tuple[bool, bool, bool, bool, int, list[tuple[int, int, int, int, Bbox]]]:

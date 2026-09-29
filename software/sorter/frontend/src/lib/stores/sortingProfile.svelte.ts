@@ -1,3 +1,5 @@
+import { getBackendHttpBase } from '$lib/backend';
+
 export interface SortingProfileCategory {
 	name: string;
 }
@@ -68,7 +70,7 @@ let cached = $state<SortingProfileMetadata | null>(null);
 let in_flight: Promise<SortingProfileMetadata> | null = null;
 let cachedBaseUrl = '';
 
-async function load(baseUrl = ''): Promise<SortingProfileMetadata> {
+async function load(baseUrl = getBackendHttpBase()): Promise<SortingProfileMetadata> {
 	if (cached && cachedBaseUrl === baseUrl) return cached;
 	if (cachedBaseUrl !== baseUrl) {
 		cached = null;
@@ -93,7 +95,7 @@ async function load(baseUrl = ''): Promise<SortingProfileMetadata> {
 	return in_flight;
 }
 
-async function reload(baseUrl = ''): Promise<SortingProfileMetadata> {
+async function reload(baseUrl = getBackendHttpBase()): Promise<SortingProfileMetadata> {
 	cached = null;
 	in_flight = null;
 	cachedBaseUrl = baseUrl;

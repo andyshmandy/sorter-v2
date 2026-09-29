@@ -14,7 +14,6 @@
 	import { Skeleton, ToggleSwitch } from '$lib/components/primitives';
 	import StatusBanner from '$lib/components/StatusBanner.svelte';
 	import { getMachinesContext } from '$lib/machines/context';
-	import { bricklinkParts } from '$lib/stores/bricklinkParts.svelte';
 	import { sortingProfileStore } from '$lib/stores/sortingProfile.svelte';
 	import { onMount } from 'svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
@@ -81,8 +80,6 @@
 		for (const item of contents.items) {
 			if (item.part_id && item.part_id.toLowerCase().includes(query)) return true;
 			if (item.color_name && item.color_name.toLowerCase().includes(query)) return true;
-			const partName = bricklinkParts.get(item.part_id)?.name;
-			if (partName && partName.toLowerCase().includes(query)) return true;
 		}
 		return false;
 	}
@@ -259,13 +256,6 @@
 			next[entry.bin_key] = entry as BinContents;
 		}
 		contentsByKey = next;
-		// bricklinkParts is cached per part, so re-applying the full snapshot only
-		// hits the (slow) BrickLink API for parts we haven't seen yet.
-		for (const bin of Object.values(next)) {
-			for (const item of bin.items) {
-				if (item.part_id) void bricklinkParts.fetch(baseUrl(), item.part_id);
-			}
-		}
 	}
 
 	// Change token from /api/bins/contents/version. The heavy contents payload is

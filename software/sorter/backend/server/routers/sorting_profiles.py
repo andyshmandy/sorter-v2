@@ -14,10 +14,11 @@ import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from blob_manager import getHiveConfig, getSortingProfileSyncState, setSortingProfileSyncState
-from local_state import start_new_sorting_session
+from bin_contents import start_new_sorting_session
+from local_state import get_hive_config, get_sorting_profile_sync_state, set_sorting_profile_sync_state
 from server import shared_state
-from server.routers.hardware import (
+from sorting_profile import profileSummary
+from server.routers.bins import (
     clear_bin_category_assignments,
     _current_bin_categories,
     _apply_and_persist_bin_categories,
@@ -44,7 +45,7 @@ class ApplySortingProfilePayload(BaseModel):
 
 
 def _load_targets() -> list[dict[str, Any]]:
-    config = getHiveConfig() or {}
+    config = get_hive_config() or {}
     targets = config.get("targets")
     if not isinstance(targets, list):
         return []
@@ -225,24 +226,9 @@ def _unique_local_path(base: str) -> Path:
     return candidate
 
 
-# Sorting-profile JSON files carry the full compiled part map and routinely run
-# tens of MB, so json.load costs ~1-2s (worse under CPU contention). Cache the
-# small metadata we surface, keyed by (mtime, size), so repeated reads — the 10s
-# poll, re-renders, the bundled /library — don't re-parse.
-_profile_meta_cache: dict[str, tuple[float, int, dict[str, Any]]] = {}
-
-
 def _profile_file_meta(path: Path) -> dict[str, Any]:
-    stat = path.stat()
-    key = str(path)
-    cached = _profile_meta_cache.get(key)
-    if cached is not None and cached[0] == stat.st_mtime and cached[1] == stat.st_size:
-        return cached[2]
-    with open(path, "r") as handle:
-        data = json.load(handle)
-    if not isinstance(data, dict):
-        raise ValueError("profile file is not a JSON object")
-    meta: dict[str, Any] = {
+    data = profileSummary(path)
+    return {
         "name": data.get("name"),
         "description": data.get("description"),
         "profile_type": data.get("profile_type"),
@@ -251,10 +237,8 @@ def _profile_file_meta(path: Path) -> dict[str, Any]:
         "updated_at": data.get("updated_at"),
         "rule_count": len(data.get("rules", []) or []),
         "category_count": len(data.get("categories", {}) or {}),
-        "part_count": len(data.get("part_to_category", {}) or {}),
+        "part_count": data["part_count"],
     }
-    _profile_meta_cache[key] = (stat.st_mtime, stat.st_size, meta)
-    return meta
 
 
 def _mtime_iso(path: Path) -> str | None:
@@ -327,7 +311,7 @@ def _local_profile_entry(
 
 
 def _list_local_profiles() -> list[dict[str, Any]]:
-    sync_state = getSortingProfileSyncState() or {}
+    sync_state = get_sorting_profile_sync_state() or {}
     active_filename = (
         sync_state.get("local_filename") if sync_state.get("source") == "local" else None
     )
@@ -343,7 +327,7 @@ def _active_profile_path() -> str | None:
 
 
 def _current_local_profile_status() -> dict[str, Any]:
-    sync_state = getSortingProfileSyncState() or {}
+    sync_state = get_sorting_profile_sync_state() or {}
     path = _active_profile_path()
     metadata: dict[str, Any] = {}
     if path and os.path.exists(path):
@@ -370,7 +354,7 @@ def _current_local_profile_status() -> dict[str, Any]:
 def _current_local_profile_status_light() -> dict[str, Any]:
     # No parse: name comes from sync_state; counts are omitted (the /profiles
     # page only needs the active name here, and even that is a rare fallback).
-    sync_state = getSortingProfileSyncState() or {}
+    sync_state = get_sorting_profile_sync_state() or {}
     path = _active_profile_path()
     metadata: dict[str, Any] = {}
     if path and os.path.exists(path):
@@ -387,7 +371,7 @@ def _current_local_profile_status_light() -> dict[str, Any]:
 
 
 def _list_local_profiles_light() -> list[dict[str, Any]]:
-    sync_state = getSortingProfileSyncState() or {}
+    sync_state = get_sorting_profile_sync_state() or {}
     active_filename = (
         sync_state.get("local_filename") if sync_state.get("source") == "local" else None
     )
@@ -409,11 +393,6 @@ def _reload_runtime_profile() -> bool:
     except Exception:
         pass
     return True
-
-
-@router.get("/api/sorting-profiles/status")
-def get_sorting_profile_status() -> dict[str, Any]:
-    return _current_local_profile_status()
 
 
 @router.get("/api/sorting-profiles/library")
@@ -595,7 +574,7 @@ def apply_sorting_profile(payload: ApplySortingProfilePayload) -> dict[str, Any]
     if activation_error:
         sync_state["last_error"] = activation_error
 
-    setSortingProfileSyncState(sync_state)
+    set_sorting_profile_sync_state(sync_state)
     start_new_sorting_session(reason="profile_activated")
     try:
         from server.set_progress_sync import getSetProgressSyncWorker
@@ -684,7 +663,7 @@ def apply_local_sorting_profile(payload: ApplyLocalSortingProfilePayload) -> dic
         "activated_at": now,
         "last_error": None,
     }
-    setSortingProfileSyncState(sync_state)
+    set_sorting_profile_sync_state(sync_state)
     start_new_sorting_session(reason="profile_activated")
     try:
         from server.set_progress_sync import getSetProgressSyncWorker
@@ -737,47 +716,3 @@ def delete_local_sorting_profile(filename: str) -> dict[str, Any]:
             raise HTTPException(status_code=500, detail=f"Could not delete profile: {exc}")
     return {"ok": True, "local_profiles": _list_local_profiles()}
 
-
-class RenameLocalSortingProfilePayload(BaseModel):
-    filename: str
-    name: str
-
-
-@router.post("/api/sorting-profiles/local/rename")
-def rename_local_sorting_profile(payload: RenameLocalSortingProfilePayload) -> dict[str, Any]:
-    new_name = (payload.name or "").strip()
-    if not new_name:
-        raise HTTPException(status_code=400, detail="New profile name is required.")
-
-    path = _safe_local_path(payload.filename)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Local profile not found.")
-
-    artifact = _load_local_artifact(path)
-    _atomic_write_json(str(path), {**artifact, "name": new_name})
-
-    # Only the display name changes; routing is untouched, so there's no need to
-    # reload the runtime profile. But if this is the active profile, keep the live
-    # artifact copy and the sync-state name in step so the UI doesn't show stale.
-    sync_state = getSortingProfileSyncState() or {}
-    is_active = (
-        sync_state.get("source") == "local"
-        and sync_state.get("local_filename") == path.name
-    )
-    if is_active and shared_state.gc_ref is not None:
-        runtime_path = shared_state.gc_ref.sorting_profile_path
-        if runtime_path and os.path.exists(runtime_path):
-            runtime_artifact = _load_local_artifact(Path(runtime_path))
-            _atomic_write_json(runtime_path, {**runtime_artifact, "name": new_name})
-        setSortingProfileSyncState({**sync_state, "profile_name": new_name})
-
-    status = _current_local_profile_status()
-    shared_state.publishSortingProfileStatus(status)
-    return {
-        "ok": True,
-        "renamed": True,
-        "is_active": is_active,
-        "name": new_name,
-        "local_profiles": _list_local_profiles(),
-        **status,
-    }

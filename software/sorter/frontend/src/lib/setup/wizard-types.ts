@@ -1,3 +1,4 @@
+import type { HardwareErrorData } from '$lib/api/events';
 export type DiscoveredBoard = {
 	family: string;
 	role: string;
@@ -47,7 +48,7 @@ export type WizardSummary = {
 	};
 	hardware: {
 		state: string;
-		error: string | null;
+		error: HardwareErrorData | null;
 		homing_step: string | null;
 	};
 	config: {

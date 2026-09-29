@@ -475,13 +475,6 @@ class GeminiSamDetector:
         self._openrouter_model: str = normalize_openrouter_model(openrouter_model)
         self._zone: str = zone
 
-    def setZone(self, zone: str) -> None:
-        if zone == self._zone:
-            return
-        self._zone = zone
-        self._last_result = None
-        self._last_call_time = 0.0
-
     def setOpenRouterModel(self, model: str) -> None:
         normalized = normalize_openrouter_model(model)
         if normalized == self._openrouter_model:
@@ -489,9 +482,6 @@ class GeminiSamDetector:
         self._openrouter_model = normalized
         self._last_result = None
         self._last_call_time = 0.0
-
-    def getOpenRouterModel(self) -> str:
-        return self._openrouter_model
 
     def detect(self, frame: np.ndarray, force: bool = False) -> GeminiDetectionResult | None:
         """Detect pieces in a BGR frame. Returns cached result if called too frequently.

@@ -1,9 +1,7 @@
 import base64
-import json
 import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -103,24 +101,6 @@ class Rev01BaseState(BaseState):
         except Exception as exc:
             self.logger.warning(f"{LOG_TAG} stepper stop failed: {exc}")
 
-    def startRotation(self, speed_usteps_per_s: int) -> bool:
-        stepper = getattr(self.irl, "carousel_stepper", None)
-        if stepper is None:
-            self.logger.error(f"{LOG_TAG} carousel_stepper missing — cannot rotate")
-            return False
-        try:
-            stepper.set_speed_limits(16, max(16, speed_usteps_per_s))
-        except Exception as exc:
-            self.logger.warning(f"{LOG_TAG} set_speed_limits failed: {exc}")
-        try:
-            ok = bool(stepper.move_at_speed(int(speed_usteps_per_s)))
-        except Exception as exc:
-            self.logger.error(f"{LOG_TAG} move_at_speed failed: {exc}")
-            return False
-        if not ok:
-            self.logger.error(f"{LOG_TAG} move_at_speed not acknowledged")
-        return ok
-
     def startOutputMove(self, output_degrees: float, speed_usteps_per_s: int) -> bool:
         stepper = getattr(self.irl, "carousel_stepper", None)
         if stepper is None:
@@ -140,9 +120,6 @@ class Rev01BaseState(BaseState):
         if not ok:
             self.logger.error(f"{LOG_TAG} move not acknowledged")
         return ok
-
-    def startCaptureSweepMove(self, output_degrees: float, speed_usteps_per_s: int) -> bool:
-        return self.startOutputMove(output_degrees, speed_usteps_per_s)
 
     def emitKnownObject(self) -> None:
         obj = self.ctx.known_object
@@ -644,6 +621,8 @@ class Rev01BaseState(BaseState):
             requests[0].strategy if requests else ClassificationAttemptStrategy.combined
         )
         winner_result = applied[1] if applied is not None else None
+        if isinstance(winner_result, dict):
+            self._prefetchHiveMetadata(winner_result)
         with self.ctx.classify_lock:
             self.ctx.classification_attempts = list(attempts)
             self.ctx.classification_strategy = strategy
@@ -838,22 +817,47 @@ class Rev01BaseState(BaseState):
         )
         return rec, bgr
 
+    def _prefetchHiveMetadata(self, result: dict) -> None:
+        # Runs on the classify thread, which already waits on the network, with
+        # the part and color updateKnownObjectWithResult is about to apply. The
+        # control loop then finds the metadata in memory: it used to fetch from
+        # Hive itself and froze every channel for seconds when Hive was slow.
+        items = result.get("items") or []
+        if not items or not items[0].get("id"):
+            return
+        colors = result.get("colors") or []
+        if self.ctx.hosted_color is not None:
+            color_id = self.ctx.hosted_color[0]
+        elif colors:
+            color_id = str(max(colors, key=lambda c: c.get("score", 0)).get("id", "any_color"))
+        else:
+            color_id = None
+        try:
+            from hive_metadata import getPieceMetadata
+
+            getPieceMetadata(self.gc, items[0]["id"], color_id)
+        except Exception as exc:
+            self.logger.warning(f"{LOG_TAG} hive metadata prefetch failed: {exc}")
+
     def _applyHivePieceMetadata(self, obj) -> None:
-        # One fetch from Hive (via the persistent metadata cache) resolves this
-        # piece's metadata + BrickLink pricing AND its physical dimensions: stash
-        # the full blob + moving-average price, and flag too_big when any single
-        # axis exceeds the oversize limit. Hive being unreachable (and the cache
-        # cold) must never block classification — best effort only.
+        # Stash this piece's metadata + BrickLink pricing and flag too_big when
+        # any single axis exceeds the oversize limit. On the control loop, so
+        # memory only: _prefetchHiveMetadata filled it, and a miss (Hive was
+        # unreachable) warms the cache in the background instead of waiting.
         self._applyBsxInventoryFlag(obj)
         try:
             from hive_metadata import (
                 OVERSIZE_MAX_DIMENSION_MM,
-                getPieceMetadata,
+                cachedPieceMetadata,
                 isOversize,
                 maxDimensionMm,
+                warmPieceMetadata,
             )
 
-            metadata = getPieceMetadata(self.gc, obj.part_id, obj.color_id)
+            known, metadata = cachedPieceMetadata(obj.part_id, obj.color_id)
+            if not known:
+                warmPieceMetadata(self.gc, obj.part_id, obj.color_id)
+                return
             if metadata is None:
                 return
             obj.piece_metadata = metadata
@@ -888,103 +892,3 @@ class Rev01BaseState(BaseState):
         except Exception as exc:
             self.gc.logger.warn(f"bsx inventory check failed: {exc}")
 
-    def dumpBurstCaptureArtifacts(
-        self,
-        all_captures: list[np.ndarray],
-        selected_captures: list[np.ndarray],
-        *,
-        result: object | None,
-        error: str | None,
-    ) -> None:
-        root = getattr(self.gc, "classification_burst_dump_root", None)
-        piece = self.ctx.known_object
-        if root is None or piece is None:
-            return
-        piece_uuid = getattr(piece, "uuid", None)
-        if not isinstance(piece_uuid, str) or not piece_uuid:
-            return
-        piece_dir = Path(root) / piece_uuid
-        captures_dir = piece_dir / "captures"
-        selected_dir = piece_dir / "selected"
-        try:
-            captures_dir.mkdir(parents=True, exist_ok=True)
-            selected_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as exc:
-            self.logger.warning(f"{LOG_TAG} could not create burst dump dir: {exc}")
-            return
-
-        all_paths: list[str] = []
-        for idx, image in enumerate(all_captures):
-            path = captures_dir / f"burst_{idx:03d}.jpg"
-            if self._writeJpeg(path, image):
-                all_paths.append(str(path))
-
-        selected_paths: list[str] = []
-        for idx, image in enumerate(selected_captures):
-            path = selected_dir / f"selected_{idx:03d}.jpg"
-            if self._writeJpeg(path, image):
-                selected_paths.append(str(path))
-
-        manifest = {
-            "piece_uuid": piece_uuid,
-            "captured_count": len(all_captures),
-            "selected_count": len(selected_captures),
-            "capture_timestamps": list(self.ctx.captured_crop_timestamps[: len(all_captures)]),
-            "capture_paths": all_paths,
-            "selected_paths": selected_paths,
-            "classification_error": error,
-            "classification_result": result if isinstance(result, dict) else None,
-            "brickognize_result": self._knownObjectResultSnapshot(),
-        }
-        try:
-            (piece_dir / "brickognize_result.json").write_text(
-                json.dumps(
-                    {
-                        "piece_uuid": piece_uuid,
-                        "classification_error": error,
-                        "classification_result": result if isinstance(result, dict) else None,
-                        "brickognize_result": self._knownObjectResultSnapshot(),
-                    },
-                    indent=2,
-                    sort_keys=True,
-                )
-            )
-            (piece_dir / "burst_manifest.json").write_text(
-                json.dumps(manifest, indent=2, sort_keys=True)
-            )
-        except Exception as exc:
-            self.logger.warning(f"{LOG_TAG} could not write burst manifest: {exc}")
-
-    def _knownObjectResultSnapshot(self) -> dict[str, object]:
-        obj = self.ctx.known_object
-        if obj is None:
-            return {}
-        return {
-            "status": str(obj.classification_status.value)
-            if hasattr(obj.classification_status, "value")
-            else str(obj.classification_status),
-            "part_id": obj.part_id,
-            "part_name": obj.part_name,
-            "part_category": obj.part_category,
-            "color_id": obj.color_id,
-            "color_name": obj.color_name,
-            "confidence": obj.confidence,
-            "brickognize_preview_url": obj.brickognize_preview_url,
-            "brickognize_source_view": obj.brickognize_source_view,
-        }
-
-    @staticmethod
-    def _writeJpeg(path: Path, image: np.ndarray) -> bool:
-        if image is None or image.size == 0:
-            return False
-        try:
-            ok = bool(
-                cv2.imwrite(
-                    str(path),
-                    image,
-                    [cv2.IMWRITE_JPEG_QUALITY, 80],
-                )
-            )
-        except Exception:
-            return False
-        return ok

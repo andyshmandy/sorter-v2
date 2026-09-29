@@ -101,11 +101,6 @@ class CameraDevice:
     def set_picture_settings(self, settings: CameraPictureSettings) -> None:
         self._capture.setPictureSettings(settings)
 
-    def get_picture_settings(self) -> CameraPictureSettings:
-        return self._capture.getPictureSettings()
-
-
-
     def set_device_settings(
         self,
         settings: dict[str, int | float | bool] | None,
@@ -113,9 +108,6 @@ class CameraDevice:
         persist: bool = False,
     ) -> dict[str, int | float | bool]:
         return self._capture.setDeviceSettings(settings, persist=persist)
-
-    def get_device_settings(self) -> dict[str, int | float | bool]:
-        return self._capture.getDeviceSettings()
 
     def describe_device_controls(self) -> tuple[list[dict[str, Any]], dict[str, int | float | bool]]:
         return self._capture.describeDeviceControls()

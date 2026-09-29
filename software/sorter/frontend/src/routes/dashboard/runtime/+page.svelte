@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getMachinesContext, getMachineContext } from '$lib/machines/context';
+	import { getMachineContext } from '$lib/machines/context';
 	import MachineDropdown from '$lib/components/MachineDropdown.svelte';
-	import { getBackendHttpBase, getBackendWsBase } from '$lib/backend';
+	import { getBackendHttpBase } from '$lib/backend';
 	import { settings } from '$lib/stores/settings';
 	import { ArrowLeft } from 'lucide-svelte';
 
@@ -37,18 +37,13 @@
 	};
 
 	const WINDOW_S = 180;
-	const OCCUPANCY_LANE_PREFERRED_ORDER = [
-		'feeder.ch1',
-		'feeder.ch2',
-		'feeder.ch3',
-		'classification.occupancy',
-		'distribution.occupancy'
-	];
+	// The classification channel reports its phase as "classification".
+	const OCCUPANCY_LANE_PREFERRED_ORDER = ['classification', 'distribution.occupancy'];
 
-	const manager = getMachinesContext();
 	const machine_ctx = getMachineContext();
 
 	let loaded_runtime_stats = $state<Record<string, unknown> | null>(null);
+	let live_runtime_stats = $state<Record<string, unknown> | null>(null);
 	let records = $state<RuntimeStatsRecordItem[]>([]);
 	let selected_record_id = $state<string>('live');
 	let selected_group = $state<string>('all');
@@ -140,7 +135,7 @@
 	}
 
 	const runtime_stats = $derived(
-		(loaded_runtime_stats ?? machine_ctx.machine?.runtimeStats ?? {}) as Record<string, unknown>
+		(loaded_runtime_stats ?? live_runtime_stats ?? {}) as Record<string, unknown>
 	);
 	const state_machines = $derived(
 		(runtime_stats.state_machines ?? {}) as Record<string, MachineStateStats>
@@ -148,7 +143,10 @@
 	const timeline_recent = $derived(
 		(runtime_stats.timeline_recent ?? []) as TimelineEvent[]
 	);
-	const now_s = $derived.by(() => Date.now() / 1000.0);
+	const now_s = $derived.by(() => {
+		void runtime_stats; // the window ends at the latest snapshot
+		return Date.now() / 1000.0;
+	});
 	const window_start = $derived.by(() => now_s - WINDOW_S);
 
 	function loadScript(src: string): Promise<void> {
@@ -187,16 +185,12 @@
 	}
 
 	function machineGroup(machine_name: string): string {
-		if (machine_name.startsWith('feeder.')) return 'feeder';
-		if (machine_name.startsWith('classification.')) return 'classification';
-		if (machine_name.startsWith('distribution.')) return 'distribution';
-		return 'other';
+		const group = machine_name.split('.')[0];
+		return ['feeder', 'classification', 'distribution'].includes(group) ? group : 'other';
 	}
 
 	function isOccupancyMachine(machine_name: string): boolean {
-		if (machine_name.startsWith('feeder.ch')) return true;
-		if (machine_name.endsWith('.occupancy')) return true;
-		return false;
+		return machine_name === 'classification' || machine_name.endsWith('.occupancy');
 	}
 
 	function orderedOccupancyMachines(machine_names: string[]): string[] {
@@ -278,6 +272,18 @@
 		} catch (error) {
 			records = [];
 			records_error = error instanceof Error ? error.message : 'failed loading records';
+		}
+	}
+
+	// The full snapshot (with the state timeline) is not pushed; poll it while
+	// this page shows the live run.
+	async function loadLive() {
+		if (selected_record_id !== 'live' || document.hidden) return;
+		try {
+			const response = await fetch(`${getBackendHttpBase()}/runtime-stats`);
+			if (response.ok) live_runtime_stats = (await response.json()).payload ?? null;
+		} catch {
+			// The next poll retries.
 		}
 	}
 
@@ -411,10 +417,9 @@
 	onMount(() => {
 		let disposed = false;
 		let initialized = false;
-		if (manager.connectedMachines.length === 0) {
-			manager.connect(`${getBackendWsBase()}/ws`);
-		}
 		loadRecords();
+		void loadLive();
+		const live_timer = setInterval(loadLive, 2000);
 
 		loadScript('https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js').then(() => {
 			if (disposed) {
@@ -504,6 +509,7 @@
 
 		return () => {
 			disposed = true;
+			clearInterval(live_timer);
 			if (initialized) {
 				composition_chart?.destroy();
 				gantt_chart?.destroy();

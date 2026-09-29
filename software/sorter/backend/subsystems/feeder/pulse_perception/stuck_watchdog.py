@@ -158,6 +158,10 @@ class FeederStuckWatchdog:
             cfg.stuck_max_nudge_attempts
         ):
             moved = self._nudge_upstream(upstream_stepper, upstream_channel_id, cfg)
+            if moved is None:
+                # Upstream still finishing its own pulse: nudge on a later tick
+                # instead of spending an attempt on a move the board would refuse.
+                return
             if tracker.nudge_attempts == 0:
                 # First nudge of this stall: remember when it started (monotonic)
                 # so an auto-freed jam records its real duration.
@@ -226,9 +230,13 @@ class FeederStuckWatchdog:
 
     def _nudge_upstream(
         self, upstream_stepper: Any, upstream_channel_id: int, cfg: PulsePerceptionConfig
-    ) -> bool:
+    ) -> bool | None:
+        """Whether the board accepted the nudge; None when the upstream axis is
+        still moving, so no nudge was sent."""
         if upstream_stepper is None:
             return False
+        if not upstream_stepper.stopped:
+            return None
         sign = 1 if cfg.forward_direction_sign >= 0 else -1
         motor_deg = sign * abs(float(cfg.stuck_nudge_output_deg)) * CHANNEL_OUTPUT_GEAR_RATIO
         # The nudge turns the UPSTREAM rotor, so it runs at that channel's speed,

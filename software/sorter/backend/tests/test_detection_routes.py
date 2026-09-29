@@ -51,25 +51,6 @@ class DetectionRouteTests(unittest.TestCase):
 
         self.assertEqual(503, error.exception.status_code)
 
-    def test_classification_channel_wall_phase_uses_live_frame(self) -> None:
-        class FakeVision:
-            def getCaptureThreadForRole(self, role: str):
-                if role == "carousel":
-                    return SimpleNamespace(
-                        latest_frame=SimpleNamespace(raw=_synthetic_rotor_frame())
-                    )
-                return None
-
-        shared_state.vision_manager = FakeVision()
-
-        payload = detection.classification_channel_wall_phase()
-
-        self.assertTrue(payload["ok"])
-        self.assertGreaterEqual(payload["wall_count"], 4)
-        self.assertAlmostEqual(22.0, payload["sector_offset_deg"], delta=3.0)
-        self.assertGreater(payload["frame_luma"]["mean"], 100.0)
-        self.assertGreater(payload["frame_luma"]["nonblack_gt25_ratio"], 0.5)
-
     def test_classification_channel_sector_occupancy_rolls_candidates_into_sectors(self) -> None:
         frame = _synthetic_rotor_frame(phase_deg=22.0)
         center = (360.0, 360.0)

@@ -18,11 +18,9 @@
 	import { getMachineContext } from '$lib/machines/context';
 	import { getBackendHttpBase, machineHttpBaseUrlFromWsUrl } from '$lib/backend';
 	import type { KnownObjectData, ClassificationAttempt } from '$lib/api/events';
-	import type { components } from '$lib/api/rest';
 	import { pieceStore, type PieceDetailEnvelope, type PieceSummary } from '$lib/pieces';
 	import { sortingProfileStore } from '$lib/stores/sortingProfile.svelte';
 
-	type BricklinkPartResponse = components['schemas']['BricklinkPartResponse'];
 
 	const ctx = getMachineContext();
 	onMount(() => {
@@ -156,29 +154,8 @@
 		}, 750);
 	});
 
-	let bricklink = $state<BricklinkPartResponse | null>(null);
-
 	let showRawJson = $state(false);
 	let zoomImage = $state<{ src: string; label: string } | null>(null);
-
-	// Refetch Bricklink only when the part_id actually changes — otherwise every
-	// WS event (updated_at tick etc.) would reset `bricklink` to null and
-	// re-fetch, which flickers the "Name" row. If Bricklink returns !ok we
-	// quietly leave `bricklink` null — the name falls back to Brickognize's
-	// own `part_name` or an em-dash.
-	let _lastFetchedPartId: string | null = null;
-	$effect(() => {
-		const pid = piece?.part_id ?? null;
-		if (pid === _lastFetchedPartId) return;
-		_lastFetchedPartId = pid;
-		bricklink = null;
-		if (!pid) return;
-		void fetch(`/bricklink/part/${pid}`)
-			.then(async (res) => {
-				if (res.ok) bricklink = (await res.json()) as BricklinkPartResponse;
-			})
-			.catch(() => {});
-	});
 
 	// Tick so relative timestamps refresh.
 	let now_tick = $state(0);
@@ -648,14 +625,10 @@
 		return rows;
 	}
 
-	// Catalog reference shot for the identified part — BrickLink's photo when the
-	// Hive catalog has one, else whatever Brickognize returned. Shown once, in
-	// the Classification card, the same way the disk view shows `preview_url`.
-	const refImageSrc = $derived<string | null>(
-		bricklink?.thumbnail_url
-			? `https:${bricklink.thumbnail_url}`
-			: (piece?.brickognize_preview_url ?? null)
-	);
+	// Catalog reference shot for the identified part, as Brickognize returned
+	// it. Shown once, in the Classification card, the same way the disk view
+	// shows `preview_url`.
+	const refImageSrc = $derived<string | null>(piece?.brickognize_preview_url ?? null);
 
 	// Destination bin reads as the discard bin for pieces that were never
 	// identified — they still get routed, just not to a part-specific bin.
@@ -826,7 +799,7 @@
 					title="Classification"
 					rows={classificationRows({
 						part_id: piece.part_id,
-						part_name: piece.part_name ?? bricklink?.name ?? null,
+						part_name: piece.part_name ?? null,
 						color_name: piece.color_name,
 						color_provider: piece.color_provider,
 						mold_provider: piece.mold_provider,
@@ -1282,39 +1255,6 @@
 					{/if}
 				</div>
 			</section>
-
-			<!-- Brickognize response / part reference -->
-			{#if bricklink}
-				<section class="border border-border bg-surface">
-					<div class="border-b border-border bg-bg px-3 py-2 text-sm font-medium text-text">
-						Brickognize match
-					</div>
-					<div class="flex flex-wrap items-start gap-3 p-3">
-						{#if bricklink.thumbnail_url}
-							<img
-								src={`https:${bricklink.thumbnail_url}`}
-								alt={bricklink.name ?? piece.part_id ?? ''}
-								class="h-20 w-20 flex-shrink-0 border border-border bg-white object-contain"
-								loading="lazy"
-							/>
-						{/if}
-						<div class="flex min-w-0 flex-1 flex-col gap-1 text-sm">
-							<div class="font-mono text-base font-semibold text-text">
-								{piece.part_id ?? '—'}
-							</div>
-							<div class="text-text">{piece.part_name ?? bricklink.name ?? '—'}</div>
-							{#if bricklink.type}
-								<div class="text-text-muted">{bricklink.type}</div>
-							{/if}
-							{#if typeof piece.confidence === 'number'}
-								<div class={`tabular-nums ${confidenceClass(piece.confidence)}`}>
-									Mold confidence {(piece.confidence * 100).toFixed(0)}%
-								</div>
-							{/if}
-						</div>
-					</div>
-				</section>
-			{/if}
 
 			<!-- Raw JSON toggle -->
 			<section class="border border-border bg-surface">

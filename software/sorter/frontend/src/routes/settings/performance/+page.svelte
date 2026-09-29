@@ -3,7 +3,7 @@
 	import { getBackendHttpBase, machineHttpBaseUrlFromWsUrl } from '$lib/backend';
 	import { getMachineContext } from '$lib/machines/context';
 	import SectionCard from '$lib/components/settings/SectionCard.svelte';
-	import { Button, Alert } from '$lib/components/primitives';
+	import { Button } from '$lib/components/primitives';
 
 	const ctx = getMachineContext();
 
@@ -105,8 +105,9 @@
 		};
 	}
 
-	// Live snapshot from the websocket (updates every ~1s).
-	const liveProfile = $derived(deriveProfile(ctx.machine?.runtimeStats as Snapshot));
+	// The full snapshot is not pushed; loadHistory fetches it with the history.
+	let liveSnapshot = $state<Snapshot | null>(null);
+	const liveProfile = $derived(deriveProfile(liveSnapshot));
 	const machineName = $derived(
 		ctx.machine?.identity?.nickname || ctx.machine?.identity?.machine_id || 'this machine'
 	);
@@ -128,8 +129,12 @@
 
 	async function loadHistory() {
 		try {
-			const res = await fetch(`${backendBase()}/runtime-stats/perf-history?window_s=${windowS}`);
+			const [res, live] = await Promise.all([
+				fetch(`${backendBase()}/runtime-stats/perf-history?window_s=${windowS}`),
+				fetch(`${backendBase()}/runtime-stats`)
+			]);
 			if (!res.ok) throw new Error(await res.text());
+			if (live.ok) liveSnapshot = (await live.json()).payload ?? null;
 			const body = await res.json();
 			rows = Array.isArray(body.rows) ? body.rows : [];
 			windowRates = body.rates ?? { hz: {}, cameras_hz: {}, current: {} };
@@ -207,43 +212,8 @@
 		}
 	}
 
-	// ── Profiler toggle (toml-backed, default on) ───────────────────────────
-	let profilerEnabled = $state<boolean | null>(null);
-	let profilerSaving = $state(false);
-	let profilerError = $state<string | null>(null);
-
-	async function loadProfiler() {
-		try {
-			const res = await fetch(`${backendBase()}/api/system/profiler-config`);
-			if (!res.ok) throw new Error(await res.text());
-			const body = await res.json();
-			profilerEnabled = Boolean(body.enabled);
-		} catch (e: any) {
-			profilerError = e?.message ?? 'Failed to load profiler setting';
-		}
-	}
-	async function saveProfiler(next: boolean) {
-		profilerSaving = true;
-		profilerError = null;
-		try {
-			const res = await fetch(`${backendBase()}/api/system/profiler-config`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ enabled: next })
-			});
-			if (!res.ok) throw new Error(await res.text());
-			const body = await res.json();
-			profilerEnabled = Boolean(body.enabled);
-		} catch (e: any) {
-			profilerError = e?.message ?? 'Failed to save profiler setting';
-		} finally {
-			profilerSaving = false;
-		}
-	}
-
 	onMount(() => {
 		void loadRecords();
-		void loadProfiler();
 	});
 
 	function unionCameras(a: Profile, b: Profile): string[] {
@@ -290,7 +260,7 @@
 <div class="flex flex-col gap-6">
 	<SectionCard
 		title="Performance"
-		description="How fast this machine is thinking and how fresh the data behind each decision is. Core rates are always collected; the detailed profiler can be toggled below."
+		description="How fast this machine is thinking and how fresh the data behind each decision is."
 	>
 		<!-- Range + machine -->
 		<div class="flex flex-wrap items-center justify-between gap-3">
@@ -474,37 +444,6 @@
 		{/if}
 	</SectionCard>
 
-	<!-- ── Profiler toggle ────────────────────────────────────────────────── -->
-	<SectionCard
-		title="Detailed profiler"
-		description="The detailed code profiler adds per-block timers and a periodic report. Headline rates above are always collected regardless of this setting; this only controls the extra fine-grained instrumentation. Persisted to this machine's config and applied live."
-	>
-		<Alert variant="warning">
-			Leave this <strong>off</strong> for normal sorting. The profiler adds per-call timing
-			overhead across hot loops — it can noticeably slow things like the live camera feed — and
-			writes telemetry to disk. It's a diagnostic for comparing one machine against another, not
-			something to run continuously.
-		</Alert>
-		<label class="mt-3 flex items-start gap-3 border border-border bg-bg px-3 py-2.5 text-sm text-text">
-			<input
-				type="checkbox"
-				checked={profilerEnabled ?? false}
-				disabled={profilerEnabled == null || profilerSaving}
-				onchange={(e) => void saveProfiler(e.currentTarget.checked)}
-				class="mt-0.5 h-4 w-4 accent-sky-500"
-			/>
-			<span class="min-w-0">
-				<span class="block text-sm font-medium text-text">Enable detailed profiler</span>
-				<span class="mt-0.5 block text-sm text-text-muted">
-					Off by default. The Performance numbers above keep working either way — only turn this
-					on temporarily when you need fine-grained per-block timings.
-				</span>
-			</span>
-		</label>
-		{#if profilerError}
-			<div class="mt-2 text-sm text-danger">{profilerError}</div>
-		{/if}
-	</SectionCard>
 </div>
 
 <!-- ── Snippets ───────────────────────────────────────────────────────────── -->

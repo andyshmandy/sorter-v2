@@ -8,6 +8,7 @@ from defs.known_object import (
     PieceStage,
     RecognitionImage,
 )
+from runtime_stats import C4_WAITING_FOR_PIECE
 
 from .. import crop_quality
 from .base import Rev01BaseState
@@ -228,6 +229,11 @@ class TwoPieceClassificationChannel(Rev01BaseState):
         self.logger.info(f"{LOG_TAG} bucket hold released ({reason}) — normal routing resumes")
 
     def phaseName(self) -> str:
+        # WAITING with the drop zone clear is the channel waiting on the feeder
+        # for its next piece, which the runtime stats leave out of C4's active
+        # time; named apart, a stall there also says what it waited on.
+        if self._phase == _Phase.WAITING and self.shared.classification_ready:
+            return C4_WAITING_FOR_PIECE
         return self._phase.value
 
     def attemptStallAutoClear(self, *, max_output_deg: float) -> ChannelClearResult:
@@ -255,8 +261,7 @@ class TwoPieceClassificationChannel(Rev01BaseState):
                 )
                 obj.destination_bin = None
                 obj.updated_at = time.time()
-            self.transport.advanceTransport()
-            placed.ejected = True
+            self._commitToDistribution(placed)
             self.logger.info(
                 f"{LOG_TAG} stall auto-clear: committed placed head "
                 f"track={placed.track_id} to distribution"
@@ -649,8 +654,7 @@ class TwoPieceClassificationChannel(Rev01BaseState):
         if gone_for >= _EJECT_GONE_CONFIRM_S or timed_out:
             # Track id gone (debounced) == the piece dropped off the fall-off ==
             # ejected. Commit it to distribution; the chute was already aimed.
-            self.transport.advanceTransport()
-            target.ejected = True
+            self._commitToDistribution(target)
             if self._bucket_hold_cycles > 0:
                 self._bucket_hold_cycles -= 1
                 if self._bucket_hold_cycles == 0:
@@ -715,6 +719,13 @@ class TwoPieceClassificationChannel(Rev01BaseState):
         self.startOutputMove(
             C4_TRAVEL_SIGN * move, self.ctx.config.precise_converge_speed_usteps_per_s
         )
+
+    def _commitToDistribution(self, tp: _TrackedPiece) -> None:
+        # The placed piece leaves the platter into the chute: move it to
+        # distribution's drop slot and count it as a C4 exit.
+        self.transport.advanceTransport()
+        tp.ejected = True
+        self.gc.runtime_stats.observeC4Exit()
 
     def _enterPhase(self, phase: _Phase) -> None:
         # Deliberately NOT a watchdog progress credit: the eject/stage timeouts

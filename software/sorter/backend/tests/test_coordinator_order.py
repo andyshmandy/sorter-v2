@@ -8,25 +8,6 @@ from coordinator import Coordinator
 from runtime_stats import RuntimeStatsCollector
 
 
-class _NullTimer:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        return None
-
-
-class _Profiler:
-    def hit(self, *args, **kwargs) -> None:
-        pass
-
-    def mark(self, *args, **kwargs) -> None:
-        pass
-
-    def timer(self, *args, **kwargs):
-        return _NullTimer()
-
-
 class _Logger:
     def info(self, *args, **kwargs) -> None:
         pass
@@ -52,7 +33,7 @@ def _patched_subsystems(calls: list[str]) -> ExitStack:
             fake("classification"),
         )
     )
-    stack.enter_context(patch("subsystems.feeder.state_machine.FeederStateMachine", fake("feeder")))
+    stack.enter_context(patch("subsystems.feeder.pulse_perception.flow.PulsePerceptionFeeding", fake("feeder")))
     return stack
 
 
@@ -61,7 +42,6 @@ class CoordinatorOrderTests(unittest.TestCase):
         calls: list[str] = []
         gc = SimpleNamespace(
             logger=_Logger(),
-            profiler=_Profiler(),
             runtime_stats=RuntimeStatsCollector(),
             set_progress_tracker=None,
         )
@@ -80,7 +60,6 @@ class CoordinatorOrderTests(unittest.TestCase):
                 gc=gc,
                 vision=SimpleNamespace(),
                 event_queue=queue.Queue(),
-                rv=SimpleNamespace(),
             )
 
         coordinator.step()
@@ -100,7 +79,6 @@ class CoordinatorOrderTests(unittest.TestCase):
         )
         gc = SimpleNamespace(
             logger=_Logger(),
-            profiler=_Profiler(),
             runtime_stats=runtime_stats,
             set_progress_tracker=None,
         )
@@ -119,7 +97,6 @@ class CoordinatorOrderTests(unittest.TestCase):
                 gc=gc,
                 vision=SimpleNamespace(),
                 event_queue=queue.Queue(),
-                rv=SimpleNamespace(),
             )
 
         coordinator.step()
@@ -139,7 +116,6 @@ class CoordinatorOrderTests(unittest.TestCase):
         )
         gc = SimpleNamespace(
             logger=_Logger(),
-            profiler=_Profiler(),
             runtime_stats=runtime_stats,
             set_progress_tracker=None,
         )
@@ -158,7 +134,6 @@ class CoordinatorOrderTests(unittest.TestCase):
                 gc=gc,
                 vision=SimpleNamespace(),
                 event_queue=queue.Queue(),
-                rv=SimpleNamespace(),
             )
 
         coordinator.step()

@@ -132,6 +132,18 @@
 		</div>
 	{/if}
 
+	{#if hardwareState === 'standby' && !hardwareError && !steppersInitializing}
+		<div class="setup-panel flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
+			<span class="text-text-muted">The steppers are off.</span>
+			<button
+				onclick={onInitialize}
+				class="setup-button-secondary inline-flex items-center gap-2 px-3 py-1.5 text-sm text-text transition-colors"
+			>
+				Power on steppers
+			</button>
+		</div>
+	{/if}
+
 	{#if steppersInitializing}
 		<div
 			class="flex items-center gap-3 border border-warning bg-warning/10 px-4 py-3 text-sm text-warning-dark"

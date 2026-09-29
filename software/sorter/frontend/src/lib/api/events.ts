@@ -6,7 +6,6 @@
 */
 
 export type ClassificationAttemptStrategy = "combined" | "single_burst";
-export type CameraName = "c_channel_2" | "c_channel_3" | "carousel";
 export type PieceStage = "created" | "distributing" | "distributed";
 export type ClassificationStatus =
   | "pending"
@@ -51,22 +50,12 @@ export interface ClassificationAttempt {
   duration_s?: number | null;
   image_ts?: number[];
 }
-export interface FrameData {
-  camera: CameraName;
-  timestamp: number;
-  raw: string;
-  annotated: string | null;
-  results: FrameResultData[];
-}
-export interface FrameResultData {
-  class_id: number | null;
-  class_name: string | null;
-  confidence: number;
-  bbox: [unknown, unknown, unknown, unknown] | null;
-}
-export interface FrameEvent {
-  tag: "frame";
-  data: FrameData;
+/**
+ * What stopped the machine or needs the operator (hardware/fault.py).
+ */
+export interface HardwareErrorData {
+  title: string;
+  message: string;
 }
 export interface HeartbeatData {
   timestamp: number;
@@ -82,6 +71,7 @@ export interface IdentityEvent {
 export interface MachineIdentityData {
   machine_id: string;
   nickname: string | null;
+  run_id?: string | null;
 }
 export interface KnownObjectData {
   uuid: string;
@@ -186,13 +176,6 @@ export interface RuntimeStatsEvent {
   tag: "runtime_stats";
   data: RuntimeStatsData;
 }
-export interface SetProfilerEnabledData {
-  enabled: boolean;
-}
-export interface SetProfilerEnabledEvent {
-  tag: "set_profiler_enabled";
-  data: SetProfilerEnabledData;
-}
 export interface SorterStateData {
   state: string;
 }
@@ -214,7 +197,7 @@ export interface SortingProfileStatusEvent {
 }
 export interface SystemStatusData {
   hardware_state: string;
-  hardware_error?: string | null;
+  hardware_error?: HardwareErrorData | null;
   homing_step?: string | null;
   no_power_development_mode?: boolean;
 }
@@ -223,4 +206,4 @@ export interface SystemStatusEvent {
   data: SystemStatusData;
 }
 
-export type SocketEvent = HeartbeatEvent | FrameEvent | IdentityEvent | KnownObjectEvent | CameraHealthEvent | SystemStatusEvent | SorterStateEvent | CamerasConfigEvent | SortingProfileStatusEvent | RuntimeStatsEvent;
+export type SocketEvent = HeartbeatEvent | IdentityEvent | KnownObjectEvent | CameraHealthEvent | SystemStatusEvent | SorterStateEvent | CamerasConfigEvent | SortingProfileStatusEvent | RuntimeStatsEvent;

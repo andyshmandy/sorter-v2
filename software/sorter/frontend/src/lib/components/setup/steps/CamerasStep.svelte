@@ -6,8 +6,6 @@
 		key: string;
 		source: number | string | null;
 		label: string;
-		previewSrc: string | null;
-		previewKind: 'mjpeg' | 'image';
 	};
 
 	let {

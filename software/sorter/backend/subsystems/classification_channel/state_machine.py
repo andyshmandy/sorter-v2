@@ -3,7 +3,6 @@ import time
 from global_config import GlobalConfig
 from irl.config import IRLConfig, IRLInterface
 from piece_transport import ClassificationChannelTransport
-from subsystems.base_subsystem import BaseSubsystem
 from subsystems.classification_channel.incidents import (
     C4_EXIT_STUCK_INCIDENT_KIND,
     c4_stall_incident_active,
@@ -27,11 +26,10 @@ from subsystems.classification_channel.incidents import (
 # dwell (rotate/classify/discharge all transition within a few seconds).
 _STALL_INCIDENT_MS = 30000.0
 _STALL_AUTO_CLEAR_MAX_TURNS = 2
-from subsystems.classification_channel.states import ClassificationChannelState
 from subsystems.shared_variables import SharedVariables
 
 
-class ClassificationChannelStateMachine(BaseSubsystem):
+class ClassificationChannelStateMachine:
     def __init__(
         self,
         *,
@@ -43,7 +41,6 @@ class ClassificationChannelStateMachine(BaseSubsystem):
         event_queue,
         transport: ClassificationChannelTransport,
     ):
-        super().__init__()
         self.irl = irl
         self.gc = gc
         self.logger = gc.logger
@@ -59,7 +56,6 @@ class ClassificationChannelStateMachine(BaseSubsystem):
             SimpleStateMachineRev01Context,
         )
 
-        self.current_state = ClassificationChannelState.IDLE
         self._two_piece = TwoPieceClassificationChannel(
             irl,
             irl_config,
@@ -70,11 +66,11 @@ class ClassificationChannelStateMachine(BaseSubsystem):
             event_queue,
             SimpleStateMachineRev01Context(),
         )
-        self.gc.profiler.enterState("classification", self.current_state.value)
+        # The flow's phase (waiting_for_piece, waiting, ejecting, staging) is
+        # what the runtime stats show as the classification channel's state.
+        self._phase = self._two_piece.phaseName()
         if hasattr(self.gc, "runtime_stats"):
-            self.gc.runtime_stats.observeStateTransition(
-                "classification", None, self.current_state.value
-            )
+            self.gc.runtime_stats.observeStateTransition("classification", None, self._phase)
         # No-progress watchdog state: last time the SM made a transition (its
         # "progress" signal) and whether we've raised the stall incident.
         self._last_progress_at = time.monotonic()
@@ -95,6 +91,10 @@ class ClassificationChannelStateMachine(BaseSubsystem):
             stall_hold = self._stall_incident_raised and c4_stall_incident_active(self.gc)
         if not stall_hold:
             self._two_piece.step()
+            phase = self._two_piece.phaseName()
+            if phase != self._phase and hasattr(self.gc, "runtime_stats"):
+                self.gc.runtime_stats.observeStateTransition("classification", self._phase, phase)
+            self._phase = phase
         self._checkStall(time.monotonic())
 
     def _watchdogStateLabel(self) -> str:
@@ -263,7 +263,6 @@ class ClassificationChannelStateMachine(BaseSubsystem):
         runtime_stats.setActiveIncident(failed)
 
     def cleanup(self) -> None:
-        self.gc.profiler.exitState("classification")
         # Fresh watchdog window on the next start — a pause/standby stretch must
         # not count toward "stalled".
         self._last_progress_at = time.monotonic()

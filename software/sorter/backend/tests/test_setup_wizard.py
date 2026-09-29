@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.api import app
-from server.routers import cameras, setup
+from server.routers import camera_picture_settings, cameras, setup
 
 
 class SetupWizardConfigTests(unittest.TestCase):
@@ -77,8 +77,8 @@ class SetupWizardConfigTests(unittest.TestCase):
                     self.assertEqual(1280, camera.width)
                     self.assertEqual(90, camera.picture_settings.rotation)
                     self.assertEqual(7, camera.device_settings["brightness"])
-                    self.assertEqual(90, cameras.get_camera_picture_settings("carousel")["settings"]["rotation"])
-                    self.assertEqual(90, cameras.get_camera_picture_settings("classification_channel")["settings"]["rotation"])
+                    self.assertEqual(90, camera_picture_settings.get_camera_picture_settings("carousel")["settings"]["rotation"])
+                    self.assertEqual(90, camera_picture_settings.get_camera_picture_settings("classification_channel")["settings"]["rotation"])
                     with self.machine_params_path.open("a", encoding="utf-8") as file:
                         other_role = "carousel" if settings_role == "classification_channel" else "classification_channel"
                         file.write(f'[camera_picture_settings.{other_role}]\nrotation = 180\n')

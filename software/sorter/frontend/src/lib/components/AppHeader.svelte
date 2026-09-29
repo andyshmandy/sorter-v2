@@ -22,7 +22,6 @@
 		Play,
 		Power,
 		PowerOff,
-		RefreshCw,
 		RotateCcw,
 		RotateCw,
 		X
@@ -168,18 +167,6 @@
 		}
 	}
 
-	async function resetHardwareSystem() {
-		const baseUrl = currentBackendBaseUrl();
-		try {
-			const response = await fetch(`${baseUrl}/api/system/reset`, { method: 'POST' });
-			const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-			applySystemActionResponse(payload, 'standby', null);
-			keepSystemStatusFresh(baseUrl);
-		} catch {
-			keepSystemStatusFresh(baseUrl);
-		}
-	}
-
 	async function togglePauseResume() {
 		const resuming = machineState === 'paused' || hardwareState === 'initialized';
 		if (resuming && resumeBlockedByFault) return;
@@ -200,18 +187,14 @@
 		restartConfirmOpen = false;
 		restartingBackend = true;
 		const baseUrl = currentBackendBaseUrl();
-		const restart = await requestBackendRestart(baseUrl);
-		if (!restart.ok) {
+		if (!(await requestBackendRestart(baseUrl))) {
 			restartingBackend = false;
 			return;
 		}
 		await waitForBackend(baseUrl, { maxAttempts: 60 });
-		const wsUrl = currentBackendWsUrl();
-		manager.connect(wsUrl, { force: true });
-		manager.refreshSelectedCameraFeeds();
+		// The new process's identity reopens the camera feeds (see MachineManager).
+		manager.connect(currentBackendWsUrl(), { force: true });
 		restartingBackend = false;
-		// Ws will reconnect and push fresh snapshots automatically; the feed
-		// epoch forces existing MJPEG <img> streams to reconnect without a page reload.
 	}
 
 	function requestPowerDown() {
@@ -296,7 +279,6 @@
 			return;
 		}
 		manager.connect(currentBackendWsUrl(), { force: true });
-		manager.refreshSelectedCameraFeeds();
 	}
 
 	function handlePowerMenuClickOutside(event: MouseEvent) {
@@ -306,102 +288,23 @@
 		}
 	}
 
-	async function retryHardwareAction() {
-		if (isControlBoardConnectionError(hardwareError)) {
-			await homeSystem();
-			return;
-		}
-		if (isFeederTransportBlocked(hardwareError)) {
-			// Nothing to refetch — WS pushes new status automatically.
-			return;
-		}
-		if (hardwareState === 'standby' || hardwareState === 'error') {
-			await homeSystem();
-			return;
-		}
-	}
-
 	function dismissHardwareBanner() {
-		dismissedHardwareError = hardwareError;
+		dismissedHardwareError = hardwareError?.message ?? null;
 		hardwareAlertOpen = false;
 	}
 
-	function isFeederTransportBlocked(message: string | null): boolean {
-		return Boolean(
-			message &&
-			(message.startsWith('Feeder transport blocked') ||
-				message.startsWith('Feeder stalled before C-Channel 2'))
-		);
-	}
-
-	function isFeederDetectionUnavailable(message: string | null): boolean {
-		return Boolean(message && message.startsWith('Feeder camera detection unavailable'));
-	}
-
-	function isControlBoardConnectionError(message: string | null): boolean {
-		return Boolean(message && message.startsWith('No SorterInterface devices found on buses'));
-	}
-
-	function isChuteJam(message: string | null): boolean {
-		return Boolean(message && message.startsWith('Chute jam'));
-	}
-
-	function hardwareAlertBody(message: string | null): string {
-		if (!message) return '';
-		if (isFeederTransportBlocked(message)) {
-			const separator = message.indexOf(': ');
-			return separator >= 0 ? message.slice(separator + 2) : message;
-		}
-		if (isFeederDetectionUnavailable(message)) {
-			return 'The feeder cameras are currently not delivering reliable live data. Please check the C-Channel camera connections and make sure the live feeds are updating.';
-		}
-		if (isControlBoardConnectionError(message)) {
-			return 'The machine could not connect to its control boards. Please check that the control boards are powered and the USB cables are connected properly.';
-		}
-		const separator = message.indexOf(': ');
-		return separator >= 0 ? message.slice(separator + 2) : message;
-	}
-
-	function hardwareAlertHelp(message: string | null): string | null {
-		if (!message) return null;
-		if (isFeederTransportBlocked(message)) {
-			return 'After checking the feeder, close this dialog and press play to continue.';
-		}
-		if (isFeederDetectionUnavailable(message)) {
-			return 'After fixing the camera connection, reset the hardware runtime and home the machine again.';
-		}
-		if (isControlBoardConnectionError(message)) {
-			return 'If everything is connected, reset the hardware runtime and try homing again.';
-		}
-		return null;
-	}
-
 	const showHardwareBanner = $derived(
-		Boolean(hardwareError && hardwareError !== dismissedHardwareError && hardwareState !== 'error')
-	);
-	const hardwareBannerActionLabel = $derived(
-		isFeederDetectionUnavailable(hardwareError)
-			? 'Reset Hardware'
-			: isFeederTransportBlocked(hardwareError)
-				? 'Refresh Status'
-				: hardwareState === 'standby' || hardwareState === 'error'
-					? 'Retry Home'
-					: 'Refresh Status'
+		Boolean(
+			hardwareError &&
+				hardwareError.message !== dismissedHardwareError &&
+				hardwareState !== 'error'
+		)
 	);
 	const homingHeadline = $derived(homingStep ?? 'Homing all hardware...');
-	const hardwareAlertTitle = $derived(
-		isFeederTransportBlocked(hardwareError)
-			? 'Feeder Check Required'
-			: isFeederDetectionUnavailable(hardwareError)
-				? 'Feeder Cameras Not Ready'
-				: isControlBoardConnectionError(hardwareError)
-					? 'Control Boards Not Reachable'
-					: isChuteJam(hardwareError)
-						? 'Chute Jammed'
-						: 'Machine Alert'
-	);
 	const blockingHardwareAlert = $derived(
-		Boolean(hardwareState === 'error' && hardwareError && hardwareError !== dismissedHardwareError)
+		Boolean(
+			hardwareState === 'error' && hardwareError && hardwareError.message !== dismissedHardwareError
+		)
 	);
 
 	$effect(() => {
@@ -418,9 +321,6 @@
 	});
 
 	onMount(() => {
-		if (manager.machines.size === 0) {
-			manager.connect(`${getBackendWsBase()}/ws`);
-		}
 		document.addEventListener('click', handlePowerMenuClickOutside);
 		return () => {
 			document.removeEventListener('click', handlePowerMenuClickOutside);
@@ -665,7 +565,7 @@
 		</div>
 	{/if}
 
-	{#if showHardwareBanner}
+	{#if showHardwareBanner && hardwareError}
 		<div class="border-t border-danger/30 bg-danger/[0.06] px-4 py-3 sm:px-6">
 			<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 				<div class="flex min-w-0 gap-3">
@@ -676,25 +576,23 @@
 					</div>
 					<div class="min-w-0">
 						<div class="text-xs font-semibold tracking-wider text-[#B11618] uppercase">
-							Machine Alert
+							{hardwareError.title}
 						</div>
-						<div class="mt-1 text-sm text-text">{hardwareAlertBody(hardwareError)}</div>
+						<div class="mt-1 text-sm break-words text-text">{hardwareError.message}</div>
 					</div>
 				</div>
 
 				<div class="flex items-center gap-2 sm:shrink-0">
-					<button
-						type="button"
-						onclick={() => void retryHardwareAction()}
-						class="inline-flex items-center gap-1.5 border border-danger/30 bg-white/75 px-3 py-1.5 text-sm font-medium text-text transition-colors hover:bg-white"
-					>
-						{#if hardwareState === 'standby' || hardwareState === 'error'}
+					{#if needsHoming}
+						<button
+							type="button"
+							onclick={() => void homeSystem()}
+							class="inline-flex items-center gap-1.5 border border-danger/30 bg-white/75 px-3 py-1.5 text-sm font-medium text-text transition-colors hover:bg-white"
+						>
 							<Home size={14} />
-						{:else}
-							<RefreshCw size={14} />
-						{/if}
-						{hardwareBannerActionLabel}
-					</button>
+							Home
+						</button>
+					{/if}
 					<button
 						type="button"
 						onclick={dismissHardwareBanner}
@@ -708,7 +606,7 @@
 		</div>
 	{/if}
 
-	<Modal bind:open={hardwareAlertOpen} title={hardwareAlertTitle}>
+	<Modal bind:open={hardwareAlertOpen} title={hardwareError?.title ?? 'Machine stopped'}>
 		<div class="flex flex-col gap-4">
 			<div class="flex items-start gap-3">
 				<div
@@ -716,46 +614,17 @@
 				>
 					<AlertTriangle size={18} />
 				</div>
-				<div>
-					<div class="text-sm text-text">{hardwareAlertBody(hardwareError)}</div>
-					{#if hardwareAlertHelp(hardwareError)}
-						<div class="mt-2 text-sm text-text-muted">
-							{hardwareAlertHelp(hardwareError)}
-						</div>
-					{/if}
-					{#if hardwareError && (isControlBoardConnectionError(hardwareError) || isFeederDetectionUnavailable(hardwareError) || (!isFeederTransportBlocked(hardwareError) && hardwareAlertBody(hardwareError) !== hardwareError))}
-						<details class="mt-3 border border-border bg-bg px-3 py-2 text-xs text-text-muted">
-							<summary class="cursor-pointer font-medium text-text select-none"
-								>Technical details</summary
-							>
-							<div class="mt-2 break-words">{hardwareError}</div>
-						</details>
-					{/if}
-				</div>
+				<div class="text-sm break-words text-text">{hardwareError?.message}</div>
 			</div>
 
 			<div class="flex items-center justify-end gap-2 border-t border-border pt-3">
-				{#if isControlBoardConnectionError(hardwareError) || isFeederDetectionUnavailable(hardwareError)}
-					<button
-						type="button"
-						onclick={() => void resetHardwareSystem()}
-						class="inline-flex items-center gap-1.5 border border-danger/25 bg-white px-3 py-1.5 text-sm font-medium text-text transition-colors hover:bg-bg"
-					>
-						<RefreshCw size={14} />
-						Reset Hardware
-					</button>
-				{/if}
 				<button
 					type="button"
-					onclick={() => void retryHardwareAction()}
+					onclick={() => void homeSystem()}
 					class="inline-flex items-center gap-1.5 border border-danger/25 bg-white px-3 py-1.5 text-sm font-medium text-text transition-colors hover:bg-bg"
 				>
-					{#if hardwareBannerActionLabel === 'Retry Home'}
-						<Home size={14} />
-					{:else}
-						<RefreshCw size={14} />
-					{/if}
-					{hardwareBannerActionLabel}
+					<Home size={14} />
+					Home Again
 				</button>
 				<button
 					type="button"

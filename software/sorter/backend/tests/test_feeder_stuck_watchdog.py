@@ -45,6 +45,7 @@ class _FakeStepper:
     def __init__(self) -> None:
         self.moves: list[float] = []
         self.enabled = False
+        self.stopped = True
 
     def set_speed_limits(self, _lo, _hi) -> None:
         pass
@@ -101,6 +102,23 @@ class FeederStuckWatchdogTests(unittest.TestCase):
         self.assertIsNotNone(active)
         self.assertEqual(active["kind"], FEEDER_JAM_INCIDENT_KIND)
         self.assertEqual(active["channel_label"], "C2")
+
+    def test_a_moving_upstream_is_not_nudged_and_costs_no_attempt(self) -> None:
+        gc = _FakeGC()
+        up = _FakeStepper()
+        wd = FeederStuckWatchdog(gc)
+        cfg = _cfg()
+
+        self._observe(wd, gc, up, cfg, pos=40.0, wants=True, now=0.0)
+        up.stopped = False
+        for i in range(5):
+            self._observe(wd, gc, up, cfg, pos=40.0, wants=True, now=(i + 1) * 2.0)
+        self.assertEqual(up.moves, [], "a nudge the board would refuse is never sent")
+        self.assertIsNone(gc.runtime_stats.activeIncident())
+
+        up.stopped = True
+        self._observe(wd, gc, up, cfg, pos=40.0, wants=True, now=12.0)
+        self.assertEqual(len(up.moves), 1, "the first real nudge is attempt one")
 
     def test_forward_progress_resets_and_never_nudges(self) -> None:
         gc = _FakeGC()

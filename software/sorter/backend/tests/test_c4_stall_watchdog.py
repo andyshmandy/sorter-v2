@@ -25,6 +25,9 @@ class FakeRuntimeStats:
     def setActiveIncident(self, incident: dict) -> None:
         self._active = dict(incident)
 
+    def observeStateTransition(self, machine: str, from_state, to_state) -> None:
+        pass
+
     def activeIncident(self):
         return dict(self._active) if self._active else None
 
@@ -92,6 +95,7 @@ def mkWatchdogSm(n_pieces: int = 1) -> ClassificationChannelStateMachine:
     )
     sm.logger = logging.getLogger("test_c4_stall_watchdog")
     sm._two_piece = FakeTwoPiece()
+    sm._phase = sm._two_piece.phaseName()
     sm._last_progress_at = time.monotonic()
     sm._stall_incident_raised = False
     sm._stall_resolve_requested = False
