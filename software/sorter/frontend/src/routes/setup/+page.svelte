@@ -342,7 +342,7 @@
 	}
 
 	function cameraChoices(): CameraChoice[] {
-		return buildCameraChoices(usbCameras, roleSelections, currentBackendBaseUrl());
+		return buildCameraChoices(usbCameras, roleSelections);
 	}
 
 	function selectedCameraLabel(key: string | undefined): string {

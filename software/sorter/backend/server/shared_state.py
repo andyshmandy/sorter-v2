@@ -192,12 +192,12 @@ class WsClient:
                     text = self.pending.pop(next(iter(self.pending)))
                     started = time.perf_counter()
                     await asyncio.wait_for(self.websocket.send_text(text), WS_SLOW_CLIENT_LIMIT_S)
-                    _observePerfMs("socket.client_send_ms", (time.perf_counter() - started) * 1000.0)
+                    observePerfMs("socket.client_send_ms", (time.perf_counter() - started) * 1000.0)
                 self.wake.clear()
                 await self.wake.wait()
         except TimeoutError:
             ws_slow_clients_closed += 1
-            _observePerfMs("socket.slow_client_closed_ms", WS_SLOW_CLIENT_LIMIT_S * 1000.0)
+            observePerfMs("socket.slow_client_closed_ms", WS_SLOW_CLIENT_LIMIT_S * 1000.0)
             if gc_ref is not None:
                 host = self.websocket.client.host if self.websocket.client else "?"
                 gc_ref.logger.warning(
@@ -208,7 +208,7 @@ class WsClient:
             pass  # the socket is gone; the endpoint's reader sees the disconnect
 
 
-def _observePerfMs(name: str, value_ms: float) -> None:
+def observePerfMs(name: str, value_ms: float) -> None:
     if gc_ref is not None and getattr(gc_ref, "runtime_stats", None) is not None:
         gc_ref.runtime_stats.observePerfMs(name, value_ms)
 

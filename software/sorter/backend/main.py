@@ -487,7 +487,7 @@ def main() -> None:
 
     # Broadcast-liveness watchdog. The WS live feed (recent pieces, stall banner)
     # is pushed only by the broadcaster on the single asyncio loop. If that loop
-    # wedges (MJPEG saturation or a blocking call), broadcasts stop silently and
+    # wedges (a blocking call), broadcasts stop silently and
     # the feed freezes until restart — with no error anywhere in the logs. This
     # runs on its own thread (so it survives a wedged loop) and turns that
     # invisible freeze into one loud, timestamped WARN.
@@ -510,7 +510,7 @@ def main() -> None:
                     gc.logger.warning(
                         f"[broadcast-watchdog] no websocket broadcast for {stale_s:.1f}s "
                         f"with {n_clients} client(s) connected — asyncio loop likely wedged "
-                        "(MJPEG saturation or a blocking call); live feed frozen until it clears"
+                        "(a blocking call); live feed frozen until it clears"
                     )
                     warned = True
                 elif stale_s <= STALE_WARN_S and warned:
@@ -864,9 +864,9 @@ def main() -> None:
             current_time = time.time()
             marks.append(("events", time.perf_counter()))
 
-            # Video reaches the frontend only through MJPEG camera feeds. Keep
-            # this loop for heatmap/video-recorder frame capture, without
-            # broadcasting Base64 image payloads over the control WebSocket.
+            # Video reaches the frontend only through the video websocket
+            # (/ws/video). Keep this loop for heatmap/video-recorder frame
+            # capture, without sending images over the control WebSocket.
             if (
                 current_time - last_frame_record
                 >= FRAME_RECORD_INTERVAL_MS / 1000.0

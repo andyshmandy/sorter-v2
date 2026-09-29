@@ -43,7 +43,7 @@ def _apply_default_capture_mode(config: CameraConfig) -> bool:
     return True
 
 
-# Health poll interval. Video is streamed through the MJPEG endpoint only; this
+# Health poll interval. Video goes to the UI over the video websocket only; this
 # lightweight loop just surfaces camera status changes over the control socket.
 _HEALTH_POLL_INTERVAL_S = 0.5
 

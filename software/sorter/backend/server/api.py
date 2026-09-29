@@ -197,7 +197,7 @@ async def _loop_lag_probe() -> None:
     """Measure how late the uvicorn asyncio loop wakes a fixed-interval sleep.
 
     A high socket.loop_lag_ms means the event loop is blocked/starved (a sync
-    call on the loop, GIL contention, MJPEG streaming) and CAN'T promptly run
+    call on the loop, GIL contention, camera video) and CAN'T promptly run
     the websocket broadcast coroutines — which is the real frontend-latency
     lever. Near-zero lag with high client_send_ms instead means a slow client.
     """

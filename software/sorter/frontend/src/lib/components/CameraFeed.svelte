@@ -1,23 +1,21 @@
 <script lang="ts">
 	import { getMachineContext } from '$lib/machines/context';
-	import { getBackendHttpBase, machineHttpBaseUrlFromWsUrl } from '$lib/backend';
 	import type { DashboardFeedCrop } from '$lib/dashboard/crops';
+	import LiveImage from '$lib/components/LiveImage.svelte';
 	import StreamControlsOverlay from '$lib/components/StreamControlsOverlay.svelte';
 	import { WifiOff, VideoOff } from 'lucide-svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
-	import { onDestroy } from 'svelte';
 	import type { Snippet } from 'svelte';
+	import { roleView } from '$lib/video';
 
 	type ControlKey = 'annotations' | 'crop' | 'zones' | 'fullscreen';
 
 	let {
 		camera,
 		label = '',
-		baseUrl = '',
 		showHeader = true,
 		framed = true,
 		crop = null,
-		showOverlay = false,
 		defaultAnnotated = true,
 		defaultCropped = undefined,
 		defaultZones = true,
@@ -27,11 +25,9 @@
 	}: {
 		camera: string;
 		label?: string;
-		baseUrl?: string;
 		showHeader?: boolean;
 		framed?: boolean;
 		crop?: DashboardFeedCrop | null;
-		showOverlay?: boolean;
 		defaultAnnotated?: boolean;
 		defaultCropped?: boolean;
 		defaultZones?: boolean;
@@ -41,11 +37,6 @@
 	} = $props();
 
 	const ctx = getMachineContext();
-
-	function effectiveBaseUrl(): string {
-		if (baseUrl) return baseUrl;
-		return machineHttpBaseUrlFromWsUrl(ctx.machine?.url) ?? getBackendHttpBase();
-	}
 
 	// Persistent per-camera toggle state — survives reloads via localStorage.
 	// Keyed by camera so e.g. c_channel_2's crop toggle doesn't leak into
@@ -106,11 +97,9 @@
 	const showCrop = $derived(controls.includes('crop'));
 	const showZones = $derived(controls.includes('zones'));
 	const showFullscreen = $derived(controls.includes('fullscreen'));
-	const effectiveZones = $derived(showZones ? zones : defaultZones);
 
 	let fullscreenOpen = $state(false);
-	let streamRetry = $state(0);
-	let retryTimer: ReturnType<typeof setTimeout> | null = null;
+	let stale = $state(false);
 
 	function handleFullscreenKey(event: KeyboardEvent) {
 		if (event.key === 'Escape' && fullscreenOpen) {
@@ -118,38 +107,18 @@
 		}
 	}
 
-	function scheduleStreamRetry() {
-		if (retryTimer !== null) return;
-		const delayMs = health === 'online' || health === 'unknown' ? 1000 : 2500;
-		retryTimer = setTimeout(() => {
-			retryTimer = null;
-			streamRetry += 1;
-		}, delayMs);
-	}
-
-	onDestroy(() => {
-		if (retryTimer !== null) {
-			clearTimeout(retryTimer);
-		}
-	});
-
-	const mjpegSrc = $derived.by(() => {
-		const params = new URLSearchParams({
-			annotated: annotated ? '1' : '0',
-			layer,
-			dashboard: cropped ? '1' : '0',
-			show_regions: effectiveZones ? '1' : '0',
-			stream_epoch: String(ctx.machine?.cameraFeedEpoch ?? 0),
-			stream_retry: String(streamRetry)
-		});
-		return `${effectiveBaseUrl()}/api/cameras/feed/${encodeURIComponent(camera)}?${params.toString()}`;
-	});
-
 	const configuredSource = $derived(ctx.machine?.camerasConfig?.cameras?.[camera]);
 	const hasCameraConfig = $derived(Boolean(ctx.machine?.camerasConfig?.cameras));
-	const health = $derived(
+	const reportedHealth = $derived(
 		ctx.cameraHealth.get(camera) ??
 			(hasCameraConfig && configuredSource == null ? 'unassigned' : 'unknown')
+	);
+	// A camera that reports in but whose frames stopped coming looks like one
+	// reconnecting.
+	const health = $derived(
+		stale && (reportedHealth === 'online' || reportedHealth === 'unknown')
+			? 'reconnecting'
+			: reportedHealth
 	);
 	const is_healthy = $derived(health === 'online' || health === 'unknown');
 	const is_configured = $derived(health !== 'unassigned');
@@ -178,16 +147,13 @@
 			{/if}
 		</div>
 	{/if}
-	<div
-		class={`relative flex-1 overflow-hidden ${showOverlay ? 'bg-[#04070B]' : 'setup-card-body'}`}
-	>
+	<div class="setup-card-body relative flex-1 overflow-hidden">
 		{#if is_configured}
-			<img
-				src={mjpegSrc}
+			<LiveImage
+				view={roleView(camera, annotated, cropped)}
 				alt={display_label}
-				class="absolute inset-0 h-full w-full object-contain"
-				class:opacity-30={!is_healthy}
-				onerror={scheduleStreamRetry}
+				class="absolute inset-0 h-full w-full object-contain {is_healthy ? '' : 'opacity-30'}"
+				bind:stale
 			/>
 		{/if}
 
@@ -218,35 +184,6 @@
 			{showZones}
 			{showFullscreen}
 		/>
-
-		{#if showOverlay}
-			<div
-				class="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/55 via-black/12 to-transparent"
-			></div>
-			<div
-				class="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/72 via-black/14 to-transparent"
-			></div>
-
-			<div
-				class="pointer-events-none absolute inset-x-3 top-3 flex items-start justify-between gap-3"
-			>
-				<div
-					class="rounded-full border border-white/12 bg-black/55 px-3 py-1 text-xs font-semibold tracking-[0.16em] text-white/90 uppercase backdrop-blur-sm"
-				>
-					{display_label}
-				</div>
-			</div>
-
-			<div
-				class="pointer-events-none absolute inset-x-3 bottom-3 flex items-end justify-between gap-3"
-			>
-				<div
-					class="rounded-full border border-white/12 bg-black/50 px-3 py-1 text-xs font-medium text-white/75 backdrop-blur-sm"
-				>
-					{annotated ? 'Annotated' : 'Raw'} — MJPEG
-				</div>
-			</div>
-		{/if}
 
 		{#if fullscreenOpen}
 			<div

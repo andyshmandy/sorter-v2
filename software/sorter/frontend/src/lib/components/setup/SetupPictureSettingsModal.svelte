@@ -1,7 +1,9 @@
 <script lang="ts">
+	import LiveImage from '$lib/components/LiveImage.svelte';
 	import PictureSettingsSidebar from '$lib/components/settings/PictureSettingsSidebar.svelte';
 	import { pictureSettingsEqual, type PictureSettings } from '$lib/settings/picture-settings';
 	import type { CameraRole } from '$lib/settings/stations';
+	import { roleView } from '$lib/video';
 	import { createEventDispatcher } from 'svelte';
 
 	type CalibrationHighlight = [number, number, number, number];
@@ -37,7 +39,6 @@
 	let previewViewportEl: HTMLDivElement | null = null;
 	let previewViewportSize = $state<PreviewImageSize>({ width: 0, height: 0 });
 	let previewImageSize = $state<PreviewImageSize>({ width: 0, height: 0 });
-	let feedRevision = $state(0);
 	let previewKey = $state('');
 
 	$effect(() => {
@@ -47,7 +48,6 @@
 		picturePreview = null;
 		calibrationHighlight = null;
 		previewImageSize = { width: 0, height: 0 };
-		feedRevision += 1;
 	});
 
 	function updatePreviewViewportSize() {
@@ -179,19 +179,8 @@
 		return `left:${fitted.left}px;top:${fitted.top}px;width:${fitted.width}px;height:${fitted.height}px;${transformStyle}`;
 	}
 
-	const mjpegSrc = $derived.by(() => {
-		const params = new URLSearchParams({
-			annotated: '0',
-			layer: 'raw',
-			dashboard: '0',
-			show_regions: '0'
-		});
-		return `${backendBaseUrl}/api/cameras/feed/${encodeURIComponent(role)}?${params.toString()}`;
-	});
-
 	function handleSidebarSaved() {
 		picturePreview = null;
-		feedRevision += 1;
 		dispatch('saved');
 	}
 </script>
@@ -204,30 +193,28 @@
 				bind:this={previewViewportEl}
 			>
 				{#if hasCamera}
-					{#key `${role}::${typeof source === 'string' ? source : source === null ? 'none' : source}::${feedRevision}`}
-						<img
-							src={mjpegSrc}
-							alt={label}
-							class="absolute inset-0 h-full w-full object-contain"
-							style={previewTransformStyle()}
-							onload={(event) =>
-								rememberPreviewImageSize(event.currentTarget as HTMLImageElement)}
-						/>
-						<div class="pointer-events-none absolute" style={previewOverlayStyle()}>
-							{#if calibrationHighlight}
+					<LiveImage
+						view={roleView(role, false, false)}
+						baseUrl={backendBaseUrl}
+						alt={label}
+						class="absolute inset-0 h-full w-full object-contain"
+						style={previewTransformStyle()}
+						onframe={rememberPreviewImageSize}
+					/>
+					<div class="pointer-events-none absolute" style={previewOverlayStyle()}>
+						{#if calibrationHighlight}
+							<div
+								class="absolute border-2 border-sky-400 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_0_24px_rgba(56,189,248,0.35)]"
+								style={`left:${calibrationHighlight[0] * 100}%;top:${calibrationHighlight[1] * 100}%;width:${(calibrationHighlight[2] - calibrationHighlight[0]) * 100}%;height:${(calibrationHighlight[3] - calibrationHighlight[1]) * 100}%;`}
+							>
 								<div
-									class="absolute border-2 border-sky-400 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_0_24px_rgba(56,189,248,0.35)]"
-									style={`left:${calibrationHighlight[0] * 100}%;top:${calibrationHighlight[1] * 100}%;width:${(calibrationHighlight[2] - calibrationHighlight[0]) * 100}%;height:${(calibrationHighlight[3] - calibrationHighlight[1]) * 100}%;`}
+									class="absolute -top-7 left-0 rounded bg-sky-400 px-2 py-1 text-xs font-medium text-slate-950 shadow-md"
 								>
-									<div
-										class="absolute -top-7 left-0 rounded bg-sky-400 px-2 py-1 text-xs font-medium text-slate-950 shadow-md"
-									>
-										Color Check
-									</div>
+									Color Check
 								</div>
-							{/if}
-						</div>
-					{/key}
+							</div>
+						{/if}
+					</div>
 				{:else}
 					<div
 						class="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-white/80"
