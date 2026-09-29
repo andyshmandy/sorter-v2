@@ -284,6 +284,10 @@ def _ui_handler(supervisor: BackendSupervisor, build_dir: Path) -> type[BaseHTTP
         def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
             return  # not a journal line per file; errors are still logged
 
+        def log_error(self, format: str, *args: Any) -> None:
+            if not format.startswith("Request timed out"):  # an idle kept-alive connection closing
+                super().log_error(format, *args)
+
         def _send_json(self, status: int, payload: dict[str, Any]) -> None:
             self._send(status, json.dumps(payload).encode(), {"Content-Type": "application/json"})
 
