@@ -8,6 +8,7 @@ import os
 import time
 from pathlib import Path
 
+import db
 import machine_toml
 from sorting_profile import profileSummary
 
@@ -212,6 +213,7 @@ async def onStartup() -> None:
     from status_ping import getStatusPinger
 
     getStatusPinger().start()
+    db.watch_realtime_thread()
 
 
 @app.on_event("shutdown")

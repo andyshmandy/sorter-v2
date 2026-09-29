@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from local_state import local_state_db_path
+from db import local_state_db_path
 
 # Per-second diagnostic metric snapshots, split out of local_state.sqlite so
 # they can never bloat the live state DB again (they reached 1.9GB / 6.8M rows

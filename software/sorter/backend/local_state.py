@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
-import os
 import sqlite3
 import threading
 import time
@@ -10,40 +8,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import db
 import machine_toml
-
-SOFTWARE_DIR = Path(__file__).resolve().parent
 
 _STATE_INIT_LOCK = threading.Lock()
 _SCHEMA_VERSION = 5
-
-# This module opens a fresh connection per operation (thread-safe, simple). The
-# catch: SQLite runs a WAL checkpoint whenever the LAST connection to a WAL DB
-# closes. With connection-per-op every close IS the last connection, so a
-# write-per-second workload checkpoints (and fsyncs the multi-GB DB) on every
-# op — on the eMMC each fsync stalls the whole process via iowait, which froze
-# the API event loop and made the frontend lag seconds behind. Holding one idle
-# "keeper" connection open for the process lifetime keeps the connection count
-# above zero, so per-op closes no longer checkpoint. WAL truncation then happens
-# via the normal wal_autocheckpoint threshold instead of once per close.
-_KEEPER_LOCK = threading.Lock()
-_keeper_conn: "sqlite3.Connection | None" = None
-
-
-def _ensure_keeper_connection() -> None:
-    global _keeper_conn
-    with _KEEPER_LOCK:
-        if _keeper_conn is not None:
-            return
-        try:
-            # Held open and idle (never runs queries); check_same_thread=False
-            # only because it's created on whichever thread inits state first.
-            _keeper_conn = sqlite3.connect(
-                local_state_db_path(), timeout=5.0, check_same_thread=False
-            )
-            _keeper_conn.execute("PRAGMA journal_mode = WAL")
-        except Exception:
-            _keeper_conn = None
 
 _STATE_KEY_MACHINE_ID = "machine_id"
 _STATE_KEY_STEPPER_POSITIONS = "stepper_positions"
@@ -73,14 +42,6 @@ _META_KEY_ACTIVE_SORTING_SESSION_ID = "active_sorting_session_id"
 _META_KEY_OPEN_BIN_SNAPSHOT_ID = "open_bin_snapshot_id"
 
 
-def local_state_db_path() -> Path:
-    env_path = os.getenv("LOCAL_STATE_DB_PATH")
-    if isinstance(env_path, str) and env_path.strip():
-        return Path(env_path).expanduser()
-
-    return SOFTWARE_DIR / "local_state.sqlite"
-
-
 def _legacy_state_dir() -> Path:
     return machine_toml.machine_toml_path().parent
 
@@ -101,33 +62,8 @@ def _legacy_set_progress_path() -> Path:
     return _legacy_state_dir() / "blob" / "set_progress.json"
 
 
-def _connect() -> sqlite3.Connection:
-    db_path = local_state_db_path()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=5.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
-    # synchronous=NORMAL is the recommended setting for WAL: commits no longer
-    # fsync individually (only checkpoints sync), which is safe against crashes
-    # for everything except a power loss mid-checkpoint. On the eMMC this is the
-    # difference between an fsync per commit and a handful per minute.
-    conn.execute("PRAGMA synchronous = NORMAL")
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 5000")
-    try:
-        os.chmod(db_path, 0o600)
-    except OSError:
-        pass
-    return conn
-
-
-@contextmanager
-def _connection() -> sqlite3.Connection:
-    conn = _connect()
-    try:
-        yield conn
-    finally:
-        conn.close()
+def _connection(op: str | None = None):
+    return db.connect(op=op, sync_normal=True)
 
 
 def _read_json_file(path: Path) -> Any | None:
@@ -720,20 +656,16 @@ def initialize_local_state() -> None:
             _migrate_servo_channels_and_bin_layouts(conn)
             conn.commit()
 
-        # Keep one connection open so subsequent per-op closes don't checkpoint
-        # the (large) WAL DB and stall the process on fsync.
-        _ensure_keeper_connection()
-
 
 def _read_state(key: str) -> Any | None:
     initialize_local_state()
-    with _connection() as conn:
+    with _connection(f"local_state._read_state({key})") as conn:
         return _get_json(conn, key)
 
 
 def _write_state(key: str, value: Any | None) -> None:
     initialize_local_state()
-    with _connection() as conn:
+    with _connection(f"local_state._write_state({key})") as conn:
         if value is None:
             _delete_key(conn, key)
         else:

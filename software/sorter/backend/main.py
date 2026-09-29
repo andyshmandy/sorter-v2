@@ -40,6 +40,7 @@ from sorter_controller import SorterController
 from stepper_stall_monitor import StepperStallMonitor
 from run_recorder import RunRecorder
 from lifetime_stats import LifetimeStatsTracker
+import db
 from message_queue.handler import handleServerToMainEvent
 from defs.consts import BACKEND_PORT
 from defs.events import HeartbeatEvent, HeartbeatData, MainThreadToServerCommand
@@ -74,6 +75,7 @@ def _mkIRLInterfaceStandby(config, gc):
 FRAME_RECORD_INTERVAL_MS = 100
 RUNTIME_STATS_BROADCAST_INTERVAL_MS = 1000
 LIFETIME_FLUSH_INTERVAL_MS = 10000
+LOOP_STALL_WARN_MS = 250.0
 
 SERVO_BUS_ALERT_PREFIX = "Servo bus offline"
 CAMERA_SHUTDOWN_SETTLE_S = float(os.getenv("SORTER_CAMERA_SHUTDOWN_SETTLE_S", "1.0"))
@@ -132,6 +134,24 @@ def _parkAfterLinkFailure(gc: GlobalConfig, controller, exc: MCUBusError) -> Non
         shared_state.setHardwareStatus(
             state="error", error=f"Control board link failed: {exc}. Run Safe Home to reconnect."
         )
+
+
+def _warnIfLoopStalled(gc: GlobalConfig, marks: list[tuple[str, float]]) -> None:
+    """One WARN per control-loop iteration slower than LOOP_STALL_WARN_MS,
+    naming the phases that took the time. `marks` are (phase, end time) pairs
+    after a ("start", iteration start) pair."""
+    total_ms = (marks[-1][1] - marks[0][1]) * 1000.0
+    if total_ms < LOOP_STALL_WARN_MS:
+        return
+    phases = sorted(
+        ((name, (end - start) * 1000.0) for (_, start), (name, end) in zip(marks, marks[1:])),
+        key=lambda phase: phase[1],
+        reverse=True,
+    )
+    gc.logger.warning(
+        f"main loop stall {total_ms:.0f}ms: "
+        + ", ".join(f"{name} {ms:.0f}ms" for name, ms in phases if ms >= 1.0)
+    )
 
 
 def _noPowerModeActive(gc: GlobalConfig) -> bool:
@@ -421,6 +441,7 @@ def main() -> None:
         sys.exit(1)
 
     gc = mkGlobalConfig()
+    db.configure(gc.logger)
     gc.run_recorder = RunRecorder(gc)
     gc.lifetime_stats = LifetimeStatsTracker(gc)
     setGlobalConfig(gc)
@@ -830,10 +851,12 @@ def main() -> None:
     last_runtime_perf_snapshot = time.time()
     last_profiler_snapshot = time.time()
     last_main_loop_started = time.perf_counter()
+    db.watch_realtime_thread()
 
     try:
         while not shutdown_requested.is_set():
             loop_started = time.perf_counter()
+            marks = [("start", loop_started)]
             gc.profiler.hit("main.loop.calls")
             gc.profiler.mark("main.loop.interval_ms")
             gc.runtime_stats.observePerfMs(
@@ -863,6 +886,7 @@ def main() -> None:
                 )
                 main_to_server_queue.put(heartbeat)
                 last_heartbeat = current_time
+            marks.append(("events", time.perf_counter()))
 
             # Video reaches the frontend only through MJPEG camera feeds. Keep
             # this loop for heatmap/video-recorder frame capture, without
@@ -874,6 +898,7 @@ def main() -> None:
                 with gc.profiler.timer("main.loop.record_frames_ms"):
                     vision.recordFrames()
                 last_frame_record = current_time
+            marks.append(("frames", time.perf_counter()))
 
             if (
                 current_time - last_runtime_stats_broadcast
@@ -885,12 +910,14 @@ def main() -> None:
                 )
                 main_to_server_queue.put(runtime_stats)
                 last_runtime_stats_broadcast = current_time
+            marks.append(("stats", time.perf_counter()))
 
             # Durable lifetime accumulator — periodic flush so powered/sorted
             # time survives the soft-restart (os._exit) that skips save().
             if current_time - last_lifetime_flush >= LIFETIME_FLUSH_INTERVAL_MS / 1000.0:
                 gc.lifetime_stats.flush()
                 last_lifetime_flush = current_time
+            marks.append(("lifetime", time.perf_counter()))
 
             if (
                 current_time - last_runtime_perf_snapshot
@@ -913,6 +940,7 @@ def main() -> None:
                     gc.profiler.snapshotRows(),
                 )
                 last_profiler_snapshot = current_time
+            marks.append(("metrics", time.perf_counter()))
 
             with controller_lock:
                 current_controller = controller
@@ -927,8 +955,11 @@ def main() -> None:
                         "main.loop.controller_step_ms",
                         (time.perf_counter() - controller_step_started) * 1000.0,
                     )
+            marks.append(("step", time.perf_counter()))
 
             time.sleep(gc.timeouts.main_loop_sleep_ms / 1000.0)
+            marks.append(("sleep", time.perf_counter()))
+            _warnIfLoopStalled(gc, marks)
     except KeyboardInterrupt:
         shutdown_reason["value"] = "KeyboardInterrupt"
     finally:

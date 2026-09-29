@@ -33,7 +33,6 @@ class PieceImageStoreTests(unittest.TestCase):
         self._old_db = os.environ.get("LOCAL_STATE_DB_PATH")
         self._tmpdir = tempfile.TemporaryDirectory()
         os.environ["LOCAL_STATE_DB_PATH"] = os.path.join(self._tmpdir.name, "state.sqlite")
-        piece_image_store._initialized = False
         # Keep the background worker out of tests: mark it started so enqueue
         # never spawns it, then drain the queue synchronously via drainQueue().
         piece_image_store._worker_started.set()
@@ -47,7 +46,6 @@ class PieceImageStoreTests(unittest.TestCase):
             os.environ.pop("LOCAL_STATE_DB_PATH", None)
         else:
             os.environ["LOCAL_STATE_DB_PATH"] = self._old_db
-        piece_image_store._initialized = False
         self._tmpdir.cleanup()
 
     def drainQueue(self) -> None:
