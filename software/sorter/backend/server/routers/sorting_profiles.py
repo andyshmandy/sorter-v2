@@ -18,7 +18,7 @@ from blob_manager import getHiveConfig, getSortingProfileSyncState, setSortingPr
 from local_state import start_new_sorting_session
 from server import shared_state
 from sorting_profile import profileSummary
-from server.routers.hardware import (
+from server.routers.bins import (
     clear_bin_category_assignments,
     _current_bin_categories,
     _apply_and_persist_bin_categories,
