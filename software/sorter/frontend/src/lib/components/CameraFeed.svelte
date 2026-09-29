@@ -8,7 +8,7 @@
 	import type { Snippet } from 'svelte';
 	import { roleView } from '$lib/video';
 
-	type ControlKey = 'annotations' | 'crop' | 'zones' | 'fullscreen';
+	type ControlKey = 'annotations' | 'crop' | 'fullscreen';
 
 	let {
 		camera,
@@ -18,7 +18,6 @@
 		crop = null,
 		defaultAnnotated = true,
 		defaultCropped = undefined,
-		defaultZones = true,
 		controls = ['annotations'],
 		layer = $bindable('annotated'),
 		headerActions = null
@@ -30,7 +29,6 @@
 		crop?: DashboardFeedCrop | null;
 		defaultAnnotated?: boolean;
 		defaultCropped?: boolean;
-		defaultZones?: boolean;
 		controls?: ControlKey[];
 		layer?: 'raw' | 'annotated';
 		headerActions?: Snippet | null;
@@ -70,8 +68,6 @@
 	// the caller explicitly sets `defaultCropped`.
 	/* svelte-ignore state_referenced_locally */
 	let cropped = $state(readPersisted('cropped', defaultCropped ?? crop !== null));
-	/* svelte-ignore state_referenced_locally */
-	let zones = $state(readPersisted('zones', defaultZones));
 
 	// Keep legacy `layer` prop synced with new `annotated` state so existing
 	// consumers (e.g. dashboard) binding to `layer` keep working.
@@ -89,13 +85,9 @@
 	$effect(() => {
 		writePersisted('cropped', cropped);
 	});
-	$effect(() => {
-		writePersisted('zones', zones);
-	});
 
 	const showAnnotations = $derived(controls.includes('annotations'));
 	const showCrop = $derived(controls.includes('crop'));
-	const showZones = $derived(controls.includes('zones'));
 	const showFullscreen = $derived(controls.includes('fullscreen'));
 
 	let fullscreenOpen = $state(false);
@@ -177,11 +169,9 @@
 		<StreamControlsOverlay
 			bind:annotated
 			bind:cropped
-			bind:zones
 			bind:fullscreen={fullscreenOpen}
 			{showAnnotations}
 			{showCrop}
-			{showZones}
 			{showFullscreen}
 		/>
 
