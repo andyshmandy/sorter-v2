@@ -126,16 +126,6 @@ The wizard's Controller Discovery step lists no controllers, and the issue banne
 
 ---
 
-## Feeder camera sees a part but the MOG2 detector never triggers
-
-**Cause:** Bootstrap window — each channel needs 24 frames of background before reporting detections, and the counter resets on any image-shape change. Or: the channel was rotating when the part landed (motion blur is suppressed on purpose).
-
-**Fix:** Wait ~2 seconds after homing or any camera setting change before dropping a part. If detections come in late but never fire, raise `var_threshold` in `mog2_diff_configs`.
-
-**Verify:** A part landing in the dropzone produces `feeder: idle -> feeding` in the log within ~500 ms.
-
----
-
 ## Carousel keeps rotating past the part — classification never completes
 
 **Cause:** The classification detector returns `found=false` every attempt. Two real causes: OpenRouter API key missing or rate-limited, or the classification region polygon is misaligned with where the carousel actually presents parts.
