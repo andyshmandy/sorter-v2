@@ -111,12 +111,16 @@ def test_two_pages_on_one_view_share_each_encoded_frame(renders: list[str]) -> N
         ) as second:
             first.send_json({"views": [C2]})
             second.send_json({"views": [C2]})
-            seen = [{ts: jpeg for _, ts, jpeg in (_next(ws) for _ in range(8))} for ws in (first, second)]
+            later = {ts: jpeg for _, ts, jpeg in (_next(second) for _ in range(5))}
+            earlier: dict[float, bytes] = {}
+            while max(earlier, default=0.0) < max(later):
+                _, ts, jpeg = _next(first)
+                earlier[ts] = jpeg
         feed = camera_feeds._feeds[("c_channel_2", False, False)]
         _wait_until(lambda: feed.producer.done())
-    shared = seen[0].keys() & seen[1].keys()
+    shared = earlier.keys() & later.keys()
     assert shared
-    assert all(seen[0][ts] == seen[1][ts] for ts in shared)
+    assert all(earlier[ts] == later[ts] for ts in shared)
     # One render for each frame published, not one for each page.
     assert len(camera_feeds._feeds) == 1
     assert len(renders) <= feed.seq + 1
@@ -163,7 +167,10 @@ def test_a_page_that_takes_nothing_skips_frames_instead_of_queueing_them(
         writer = asyncio.ensure_future(viewer.write())
         await viewer.show(json.dumps({"views": [C2]}))
         feed = viewer.views[C2]
-        while feed.seq < 10:
+        while not socket.sent:
+            await asyncio.sleep(0.01)
+        # One view, so a frame's capture time is its number.
+        while feed.seq < _unpack(socket.sent[0])[1] + 10:
             await asyncio.sleep(0.01)
         stuck_for = feed.seq
         socket.released.set()
@@ -177,7 +184,7 @@ def test_a_page_that_takes_nothing_skips_frames_instead_of_queueing_them(
     (first, second), stuck_for = asyncio.run(run())
     # The first frame, then the newest one once the page took it: the frames
     # made meanwhile were never sent.
-    assert second >= stuck_for >= first + 8
+    assert second >= stuck_for >= first + 10
 
 
 def test_a_thumbnail_lets_go_of_its_camera_once_a_role_claims_it(monkeypatch: pytest.MonkeyPatch) -> None:
