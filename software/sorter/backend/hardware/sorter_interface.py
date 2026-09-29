@@ -191,6 +191,10 @@ class StepperMotor:
         # Moves the firmware refused because the axis was still running. Callers
         # that wait for `stopped` never see one; a rising count is a caller bug.
         self.refused_moves = 0
+        # Last speed limits sent. The firmware keeps them until INIT (which only
+        # discovery sends, to fresh StepperMotor objects) and jitter restores its
+        # own, so an unchanged pair is not sent again before every pulse.
+        self._applied_speed_limits: tuple[int, int] | None = None
 
     def _logical_to_physical_steps(self, value: int) -> int:
         return -value if self._direction_inverted else value
@@ -226,6 +230,7 @@ class StepperMotor:
             f"inverted={self._direction_inverted}"
         )
         payload = struct.pack("<i", physical_steps) # 4 bytes, little-endian signed integer
+        sent_mono = time.monotonic()
         res = self._dev.send_command(InterfaceCommandCode.STEPPER_MOVE_STEPS, self._channel, payload)
         success = len(res.payload) > 0 and bool(res.payload[0])
         if success:
@@ -244,6 +249,7 @@ class StepperMotor:
                 "deg": round(self.degrees_for_microsteps(steps), 3),
                 "accel": self._applied_acceleration,
                 "success": success,
+                "sent_mono": sent_mono,
             }
         )
         return success
@@ -333,9 +339,12 @@ class StepperMotor:
 
     def set_speed_limits(self, min_speed: int, max_speed: int) -> None:
         """Set the minimum and maximum speed for the stepper in microsteps per second."""
+        if (min_speed, max_speed) == self._applied_speed_limits:
+            return
         self._gc.logger.debug(f"Stepper '{self._name}' ch{self._channel}: set_speed_limits min={min_speed} max={max_speed} µsteps/s")
         payload = struct.pack("<II", min_speed, max_speed) # 8 bytes, two little-endian unsigned integers
         self._dev.send_command(InterfaceCommandCode.STEPPER_SET_SPEED_LIMITS, self._channel, payload)
+        self._applied_speed_limits = (min_speed, max_speed)
         _controlDataRecordCommand(
             {
                 "cmd": "set_speed_limits",
