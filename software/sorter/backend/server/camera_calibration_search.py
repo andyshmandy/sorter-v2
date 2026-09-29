@@ -140,6 +140,13 @@ def _capture_frame_for_calibration(
     if not isinstance(source, int):
         return None
 
+    # A USB camera the running capture thread holds can't be opened a second
+    # time, so take its next frame (already oriented by the thread); open the
+    # device only when nothing runs.
+    frame = _grab_live_frame(role, after_timestamp=after_timestamp if after_timestamp is not None else time.time())
+    if frame is not None:
+        return frame
+
     cap = cv2.VideoCapture(source, cv2.CAP_AVFOUNDATION) if platform.system() == "Darwin" else cv2.VideoCapture(source)
     if not cap.isOpened():
         cap.release()
@@ -201,11 +208,7 @@ def _analyze_candidate_settings(
     else:
         applied_settings = cameraDeviceSettingsToDict(parseCameraDeviceSettings(preview_settings))
         time.sleep(0.25)
-        # Grab from live CaptureThread — no second camera open needed
-        frame = _grab_live_frame(role, after_timestamp=preview_started_at)
-        if frame is None:
-            # Fallback: direct capture (CaptureThread might not be running)
-            frame = _capture_frame_for_calibration(role, source, after_timestamp=preview_started_at, fallback_settings=applied_settings)
+        frame = _capture_frame_for_calibration(role, source, after_timestamp=preview_started_at, fallback_settings=applied_settings)
 
     if frame is None:
         return applied_settings, None, None

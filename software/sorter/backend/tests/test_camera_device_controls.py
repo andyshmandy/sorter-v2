@@ -8,6 +8,7 @@ import numpy as np
 from fastapi import HTTPException
 
 from irl.config import mkCameraConfig
+from server import camera_calibration_search
 from server.routers import camera_calibration, camera_device_settings
 from vision.camera import (
     CaptureThread,
@@ -21,6 +22,13 @@ from vision.camera import (
 
 
 class CameraDeviceControlsTests(unittest.TestCase):
+    def test_a_calibration_frame_comes_from_the_running_capture_thread(self) -> None:
+        live = np.zeros((4, 4, 3), dtype=np.uint8)
+        with patch.object(camera_calibration_search, "_grab_live_frame", return_value=live):
+            with patch.object(camera_calibration_search.cv2, "VideoCapture", side_effect=AssertionError("opened the device")):
+                frame = camera_calibration_search._capture_frame_for_calibration("c_channel_2", 0)
+        self.assertIs(live, frame)
+
     def test_macos_probe_reports_live_settings_without_applying_saved_values(self) -> None:
         controls = [{"key": "brightness", "kind": "number"}]
         live_settings = {"brightness": 12.0}
