@@ -66,8 +66,8 @@ class ClassificationChannelStateMachine:
             event_queue,
             SimpleStateMachineRev01Context(),
         )
-        # The flow's phase (waiting, ejecting, staging) is what the runtime
-        # stats show as the classification channel's state.
+        # The flow's phase (waiting_for_piece, waiting, ejecting, staging) is
+        # what the runtime stats show as the classification channel's state.
         self._phase = self._two_piece.phaseName()
         if hasattr(self.gc, "runtime_stats"):
             self.gc.runtime_stats.observeStateTransition("classification", None, self._phase)

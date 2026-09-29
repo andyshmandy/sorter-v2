@@ -23,6 +23,7 @@ from unittest.mock import patch
 
 from defs.known_object import ClassificationStatus, KnownObject, PieceStage
 from piece_transport import ClassificationChannelTransport
+from runtime_stats import RuntimeStatsCollector
 from subsystems.classification_channel.two_piece import flow as two_piece
 from subsystems.classification_channel.two_piece import channel_clear
 from subsystems.classification_channel.two_piece.channel_clear import (
@@ -173,7 +174,7 @@ def _mkChannel(transport, shared) -> TwoPieceClassificationChannel:
     ch.transport = transport
     ch.shared = shared
     ch.logger = _LOGGER
-    ch.gc = SimpleNamespace()
+    ch.gc = SimpleNamespace(runtime_stats=RuntimeStatsCollector())
     ch.irl = SimpleNamespace()
     ch.irl_config = SimpleNamespace()
     ch.ctx = SimpleNamespace(reset=lambda: None, known_object=None)
