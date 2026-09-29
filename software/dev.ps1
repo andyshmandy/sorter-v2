@@ -84,6 +84,26 @@ function Stop-DevPort {
 $script:Shutdown = $false
 $script:ChildProcesses = New-Object System.Collections.Generic.List[System.Diagnostics.Process]
 
+function Resolve-DevCommand {
+    # Start-Process (-NoNewWindow) shells out via CreateProcess directly, which
+    # can only launch real .exe/.com binaries. Tools like pnpm are commonly
+    # installed as a .cmd/.ps1 shim (npm/Corepack global install), so a bare
+    # "pnpm" here fails with "Start-Process : ... InvalidOperationException:
+    # This command cannot be executed due to the error: ...". Route anything
+    # that resolves to a script shim through cmd.exe instead.
+    param([string]$FilePath, [string[]]$ArgumentList)
+    $cmd = Get-Command $FilePath -ErrorAction SilentlyContinue | Select-Object -First 1
+    $ext = if ($cmd) { [System.IO.Path]::GetExtension($cmd.Source) } else { "" }
+    if ($ext -in ".cmd", ".bat") {
+        return @{ FilePath = "cmd.exe"; ArgumentList = @("/c", $cmd.Source) + $ArgumentList }
+    }
+    if ($ext -eq ".ps1") {
+        return @{ FilePath = "powershell.exe"; ArgumentList = @("-NoProfile", "-File", $cmd.Source) + $ArgumentList }
+    }
+    $resolved = if ($cmd) { $cmd.Source } else { $FilePath }
+    return @{ FilePath = $resolved; ArgumentList = $ArgumentList }
+}
+
 function Invoke-DevWatched {
     param(
         [string]$Name,
@@ -92,6 +112,7 @@ function Invoke-DevWatched {
         [string]$FilePath,
         [string[]]$ArgumentList
     )
+    $resolved = Resolve-DevCommand -FilePath $FilePath -ArgumentList $ArgumentList
     $attempt = 0
     while (-not $script:Shutdown) {
         $attempt++
@@ -101,7 +122,7 @@ function Invoke-DevWatched {
             Start-Sleep -Seconds $delay
         }
         Write-DevLog "Starting $Name..." $Color
-        $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList `
+        $proc = Start-Process -FilePath $resolved.FilePath -ArgumentList $resolved.ArgumentList `
             -WorkingDirectory $WorkingDirectory -NoNewWindow -PassThru
         $script:ChildProcesses.Add($proc)
         Wait-Process -Id $proc.Id -ErrorAction SilentlyContinue
