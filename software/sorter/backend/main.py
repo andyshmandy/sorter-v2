@@ -48,6 +48,7 @@ from hardware.bus import MCUBusError
 from hardware.waveshare_bus_service import close_all_waveshare_bus_services
 from server.waveshare_inventory import get_waveshare_inventory_manager
 import uvicorn
+import functools
 import threading
 import queue
 import time
@@ -379,14 +380,17 @@ def runBroadcaster(gc: GlobalConfig) -> None:
                 # Persist to the durable history so a stuck piece still shows up
                 # on /records (ordered by created_at) instead of vanishing —
                 # normally only distributed pieces get recorded.
-                try:
-                    import piece_records
+                import piece_records
 
-                    piece_records.recordPiece(
-                        full_payload, run_id=gc.run_id, machine_id=gc.machine_id
-                    )
-                except Exception as exc:
-                    gc.logger.warning(f"failed to record reaped piece: {exc}")
+                db.defer(
+                    "recordPiece (reaped)",
+                    functools.partial(
+                        piece_records.recordPiece,
+                        full_payload,
+                        run_id=gc.run_id,
+                        machine_id=gc.machine_id,
+                    ),
+                )
                 gc.logger.info(
                     "reaping stuck piece "
                     f"{str(full_payload.get('uuid', ''))[:8]} "
@@ -440,7 +444,7 @@ def main() -> None:
     gc = mkGlobalConfig()
     db.configure(gc.logger)
     gc.run_recorder = RunRecorder(gc)
-    gc.lifetime_stats = LifetimeStatsTracker(gc)
+    gc.lifetime_stats = LifetimeStatsTracker()
     setGlobalConfig(gc)
     rv = mkRuntimeVariables(gc)
     setRuntimeVariables(rv)
@@ -798,6 +802,8 @@ def main() -> None:
             gc.run_recorder.save()
         except Exception as exc:
             gc.logger.warning(f"Failed to save run recorder during shutdown: {exc}")
+        if not db.drain(5.0):
+            gc.logger.warning("Shutting down with database writes still queued")
 
         try:
             vision.stop()
@@ -907,8 +913,8 @@ def main() -> None:
                 last_runtime_stats_broadcast = current_time
             marks.append(("stats", time.perf_counter()))
 
-            # Durable lifetime accumulator — periodic flush so powered/sorted
-            # time survives the soft-restart (os._exit) that skips save().
+            # Lifetime powered/sorted time: handed to the database writer every
+            # 10 s, so a crash loses at most that much.
             if current_time - last_lifetime_flush >= LIFETIME_FLUSH_INTERVAL_MS / 1000.0:
                 gc.lifetime_stats.flush()
                 last_lifetime_flush = current_time
@@ -935,6 +941,7 @@ def main() -> None:
     except KeyboardInterrupt:
         shutdown_reason["value"] = "KeyboardInterrupt"
     finally:
+        db.watch_realtime_thread(False)
         _shutdown_runtime(shutdown_reason["value"])
 
 

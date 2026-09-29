@@ -59,9 +59,22 @@ class DbTests(unittest.TestCase):
         self.assertEqual(1, len(slow))
         self.assertIn(".test_a_connection_held_too_long_is_logged ", slow[0])
 
+    def test_deferred_writes_run_in_order_on_the_writer_thread(self) -> None:
+        ran: list[str] = []
+
+        def write(name: str) -> None:
+            ran.append(f"{name} on {threading.current_thread().name}")
+
+        db.defer("first", lambda: write("first"))
+        db.defer("broken", lambda: 1 / 0)
+        db.defer("second", lambda: write("second"))
+        self.assertTrue(db.drain(5.0))
+        self.assertEqual(["first on db-writer", "second on db-writer"], ran)
+        self.assertEqual(1, len(self.warnings("[db] broken failed")))
+
     def test_connections_on_a_realtime_thread_are_logged_once_per_interval(self) -> None:
         db.watch_realtime_thread()
-        self.addCleanup(db._realtime_threads.discard, threading.get_ident())
+        self.addCleanup(db.watch_realtime_thread, False)
         for _ in range(3):
             with db.connect():
                 pass

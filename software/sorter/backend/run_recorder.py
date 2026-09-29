@@ -1,8 +1,10 @@
+import functools
 import time
 from typing import Optional
 from blob_manager import BLOB_DIR
 from defs.known_object import KnownObject
 from global_config import GlobalConfig
+import db
 import piece_records
 import runtime_stat_records
 
@@ -65,18 +67,18 @@ class RunRecorder:
 
     def recordPiece(self, piece: KnownObject) -> None:
         self.pieces.append(piece)
-        # Durable write the instant the piece commits — survives the dev
-        # soft-restart (os._exit) that skips save(). DB is the source of truth
-        # for sorting history now; the JSON file below only carries the
-        # runtime-stats / set-progress snapshots other pages still read.
-        try:
-            piece_records.recordPiece(
+        # Durable the instant the piece commits, so a restart that skips save()
+        # keeps it. Called on the control loop, so the write itself runs on the
+        # database writer thread.
+        db.defer(
+            f"recordPiece {piece.uuid[:8]}",
+            functools.partial(
+                piece_records.recordPiece,
                 _serializePiece(piece),
                 run_id=self.run_id,
                 machine_id=self.machine_id,
-            )
-        except Exception as e:
-            self.gc.logger.warning(f"RunRecorder: failed to persist piece {piece.uuid}: {e}")
+            ),
+        )
 
     def save(self) -> None:
         self.markPaused()

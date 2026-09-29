@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import functools
 import sqlite3
 import threading
 import time
 from typing import Any
 
-from global_config import GlobalConfig
 import db
 
 # Durable, machine-lifetime cumulative stats — survives the dev soft-restart
@@ -55,8 +55,7 @@ def accumulate(*, hour_start: int, powered_delta_s: float, sorted_delta_s: float
 
 
 class LifetimeStatsTracker:
-    def __init__(self, gc: GlobalConfig):
-        self.gc = gc
+    def __init__(self) -> None:
         self._running = False
         self._lock = threading.Lock()
         self._last_flush_mono = time.monotonic()
@@ -64,7 +63,8 @@ class LifetimeStatsTracker:
     # Flush the elapsed wall-time delta into the current hour bucket, attributing
     # it to "sorted" only while the machine is actively running. Shared monotonic
     # cursor means transition hooks and the periodic heartbeat can never double
-    # count the same interval.
+    # count the same interval. Called on the control loop, so the write itself
+    # runs on the database writer thread.
     def flush(self) -> None:
         with self._lock:
             self._flushLocked()
@@ -86,16 +86,16 @@ class LifetimeStatsTracker:
         if delta <= 0:
             return
         wall = time.time()
-        sorted_delta = delta if self._running else 0.0
-        try:
-            accumulate(
+        db.defer(
+            "lifetime_stats.accumulate",
+            functools.partial(
+                accumulate,
                 hour_start=_hourBucket(wall),
                 powered_delta_s=delta,
-                sorted_delta_s=sorted_delta,
+                sorted_delta_s=delta if self._running else 0.0,
                 now=wall,
-            )
-        except Exception as e:
-            self.gc.logger.warning(f"LifetimeStatsTracker: flush failed: {e}")
+            ),
+        )
 
 
 def _piecesByDay(conn: sqlite3.Connection, since: float) -> dict[str, dict[str, int]]:

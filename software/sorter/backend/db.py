@@ -4,11 +4,13 @@ All store modules open their connections through connect(): the same pragmas
 everywhere, each module's tables created once per process before its first use,
 and a log line for any connection held longer than SLOW_MS or opened on a
 thread that must never wait on the disk (the control loop, the API's event loop).
+Such a thread hands its writes to defer(), which runs them on one writer thread.
 """
 
 from __future__ import annotations
 
 import os
+import queue
 import sqlite3
 import sys
 import threading
@@ -31,6 +33,12 @@ _prepared: set[tuple[Path, Schema]] = set()
 # it closes, and a close only checkpoints when it can lock the file exclusively.
 _keeper: sqlite3.Connection | None = None
 _keeper_path: Path | None = None
+
+# Writes from threads that must never wait on the disk, run in order by one
+# writer thread.
+_deferred: "queue.Queue[tuple[str, Callable[[], Any]]]" = queue.Queue(maxsize=10_000)
+_writer_lock = threading.Lock()
+_writer: threading.Thread | None = None
 
 _realtime_lock = threading.Lock()
 _realtime_threads: set[int] = set()
@@ -55,9 +63,40 @@ def report_failure(op: str, exc: BaseException) -> None:
     _warn(f"[db] {op} failed: {exc}")
 
 
-def watch_realtime_thread() -> None:
-    """From now on, log the connections the calling thread opens: it must never wait on the disk."""
-    _realtime_threads.add(threading.get_ident())
+def defer(op: str, write: Callable[[], Any]) -> None:
+    """Run `write` on the database writer thread instead of the caller's, after
+    every write deferred before it. A failure is logged, not raised."""
+    global _writer
+    with _writer_lock:
+        if _writer is None:
+            _writer = threading.Thread(target=_run_deferred, name="db-writer", daemon=True)
+            _writer.start()
+    try:
+        _deferred.put_nowait((op, write))
+    except queue.Full:
+        _warn(f"[db] write queue full, dropped {op}")
+
+
+def drain(timeout_s: float) -> bool:
+    """Wait until every write deferred so far has run."""
+    done = threading.Event()
+    defer("drain", done.set)
+    return done.wait(timeout_s)
+
+
+def _run_deferred() -> None:
+    while True:
+        op, write = _deferred.get()
+        try:
+            write()
+        except Exception as exc:
+            report_failure(op, exc)
+
+
+def watch_realtime_thread(watch: bool = True) -> None:
+    """Log the connections the calling thread opens from now on (it must never
+    wait on the disk), or stop."""
+    (_realtime_threads.add if watch else _realtime_threads.discard)(threading.get_ident())
 
 
 @contextmanager
