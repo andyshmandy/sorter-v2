@@ -88,11 +88,7 @@ DEFAULT_LLM_CALIBRATION_MAX_ITERATIONS = 10
 logger = logging.getLogger(__name__)
 
 
-from server.config_helpers import (
-    read_machine_params_config as _read_machine_params_config,
-    toml_value as _toml_value,
-    write_machine_params_config as _write_machine_params_config,
-)
+import machine_toml
 
 
 # ---------------------------------------------------------------------------
@@ -2735,7 +2731,7 @@ def _run_camera_calibration_sync(
     gallery_dir = Path("/tmp/calibration-gallery") / gallery_id
     gallery_dir.mkdir(parents=True, exist_ok=True)
 
-    _, raw_config = _read_machine_params_config()
+    raw_config = machine_toml.read()
     original_picture_settings = _picture_settings_for_role(raw_config, role)
 
     if provider == "android-camera-app":
@@ -3085,7 +3081,7 @@ def get_camera_health() -> Dict[str, Any]:
 def get_camera_config() -> Dict[str, Any]:
     """Return current camera assignments from TOML."""
     try:
-        _, raw = _read_machine_params_config()
+        raw = machine_toml.read()
         return {role: _camera_source_for_role(raw, role) for role in CAMERA_SETUP_ROLES}
     except HTTPException:
         return dict.fromkeys(CAMERA_SETUP_ROLES)
@@ -3408,7 +3404,7 @@ def camera_feed_by_role(
 
     # Resolve layer — legacy `annotated` param maps into `layer`
     want_annotated = layer == "annotated" and annotated
-    _, raw = _read_machine_params_config(require_exists=True)
+    raw = machine_toml.read()
     picture_settings = parseCameraPictureSettings(cameraSettingsForRole(_get_picture_settings_table(raw), role))
     saved_device_settings = parseCameraDeviceSettings(
         cameraSettingsForRole(_get_camera_device_settings_table(raw), role)
@@ -3535,36 +3531,31 @@ def camera_feed_by_role(
 @router.post("/api/cameras/assign")
 def assign_cameras(assignment: CameraAssignment) -> Dict[str, Any]:
     """Save camera role assignments to the machine TOML config."""
-    params_path, config = _read_machine_params_config()
+    with machine_toml.edit() as config:
 
-    # Update cameras section
-    cameras = config.get("cameras", {})
-    if not isinstance(cameras, dict):
-        cameras = {}
-    cameras = {role: value for role, value in cameras.items() if role in CAMERA_SETUP_ROLES}
-    updates = assignment.model_dump(exclude_unset=True)
-    # A capture mode saved for a role belonged to the camera it had; a new
-    # camera starts from its own default mode.
-    capture_modes = config.get("camera_capture_modes")
-    for key, value in updates.items():
-        previous_source = cameraSourceForRole(cameras, key)
-        if key in {"classification_channel", "carousel"}:
-            alias = "carousel" if key == "classification_channel" else "classification_channel"
-            cameras.pop(alias, None)
+        # Update cameras section
+        cameras = config.get("cameras", {})
+        if not isinstance(cameras, dict):
+            cameras = {}
+        cameras = {role: value for role, value in cameras.items() if role in CAMERA_SETUP_ROLES}
+        updates = assignment.model_dump(exclude_unset=True)
+        # A capture mode saved for a role belonged to the camera it had; a new
+        # camera starts from its own default mode.
+        capture_modes = config.get("camera_capture_modes")
+        for key, value in updates.items():
+            previous_source = cameraSourceForRole(cameras, key)
+            if key in {"classification_channel", "carousel"}:
+                alias = "carousel" if key == "classification_channel" else "classification_channel"
+                cameras.pop(alias, None)
+                if isinstance(capture_modes, dict) and previous_source != value:
+                    capture_modes.pop(alias, None)
             if isinstance(capture_modes, dict) and previous_source != value:
-                capture_modes.pop(alias, None)
-        if isinstance(capture_modes, dict) and previous_source != value:
-            capture_modes.pop(key, None)
-        if value is None:
-            cameras.pop(key, None)
-        else:
-            cameras[key] = value
-    config["cameras"] = cameras
-
-    try:
-        _write_machine_params_config(params_path, config)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write config: {e}")
+                capture_modes.pop(key, None)
+            if value is None:
+                cameras.pop(key, None)
+            else:
+                cameras[key] = value
+        config["cameras"] = cameras
 
     applied_live: Dict[str, bool] = {}
     if shared_state.vision_manager is not None and hasattr(shared_state.vision_manager, "setCameraSourceForRole"):
@@ -3608,7 +3599,7 @@ def assign_cameras(assignment: CameraAssignment) -> Dict[str, Any]:
 @router.get("/api/cameras/picture-settings/{role}")
 def get_camera_picture_settings(role: str) -> Dict[str, Any]:
     """Return persisted picture settings for a camera role."""
-    _, config = _read_machine_params_config()
+    config = machine_toml.read()
     return {
         "role": role,
         "settings": _picture_settings_for_role(config, role),
@@ -3624,17 +3615,12 @@ def save_camera_picture_settings(
     if role not in CAMERA_SETUP_ROLES:
         raise HTTPException(status_code=404, detail=f"Unknown camera role '{role}'")
 
-    params_path, config = _read_machine_params_config()
-    picture_settings = _get_picture_settings_table(config)
-    parsed = parseCameraPictureSettings(payload.model_dump())
-    settings_role = "classification_channel" if role == "carousel" else role
-    picture_settings[settings_role] = cameraPictureSettingsToDict(parsed)
-    config["camera_picture_settings"] = picture_settings
-
-    try:
-        _write_machine_params_config(params_path, config)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write config: {e}")
+    with machine_toml.edit() as config:
+        picture_settings = _get_picture_settings_table(config)
+        parsed = parseCameraPictureSettings(payload.model_dump())
+        settings_role = "classification_channel" if role == "carousel" else role
+        picture_settings[settings_role] = cameraPictureSettingsToDict(parsed)
+        config["camera_picture_settings"] = picture_settings
 
     applied_live = False
     if shared_state.vision_manager is not None and hasattr(shared_state.vision_manager, "setPictureSettingsForRole"):
@@ -3709,7 +3695,7 @@ def get_camera_histogram(role: str) -> Dict[str, Any]:
 
 @router.get("/api/cameras/device-settings/{role}")
 def get_camera_device_settings(role: str) -> Dict[str, Any]:
-    _, config = _read_machine_params_config()
+    config = machine_toml.read()
     source = _camera_source_for_role(config, role)
     if source is None:
         return {
@@ -3776,7 +3762,7 @@ def get_camera_device_settings(role: str) -> Dict[str, Any]:
 
 @router.post("/api/cameras/device-settings/{role}/preview")
 def preview_camera_device_settings(role: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    _, config = _read_machine_params_config()
+    config = machine_toml.read()
     source = _camera_source_for_role(config, role)
     if source is None:
         raise HTTPException(status_code=404, detail="No camera is assigned to this role.")
@@ -3817,8 +3803,7 @@ def preview_camera_device_settings(role: str, payload: Dict[str, Any]) -> Dict[s
 
 @router.post("/api/cameras/device-settings/{role}")
 def save_camera_device_settings(role: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    params_path, config = _read_machine_params_config()
-    source = _camera_source_for_role(config, role)
+    source = _camera_source_for_role(machine_toml.read(), role)
     if source is None:
         raise HTTPException(status_code=404, detail="No camera is assigned to this role.")
 
@@ -3840,20 +3825,16 @@ def save_camera_device_settings(role: str, payload: Dict[str, Any]) -> Dict[str,
         }
 
     parsed = cameraDeviceSettingsToDict(parseCameraDeviceSettings(payload))
-    device_settings = _get_camera_device_settings_table(config)
     settings_role = "classification_channel" if role == "carousel" else role
-    if settings_role == "classification_channel":
-        device_settings.pop("carousel", None)
-    if parsed:
-        device_settings[settings_role] = dict(parsed)
-    else:
-        device_settings.pop(settings_role, None)
-    config["camera_device_settings"] = device_settings
-
-    try:
-        _write_machine_params_config(params_path, config)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to write config: {exc}")
+    with machine_toml.edit() as config:
+        device_settings = _get_camera_device_settings_table(config)
+        if settings_role == "classification_channel":
+            device_settings.pop("carousel", None)
+        if parsed:
+            device_settings[settings_role] = dict(parsed)
+        else:
+            device_settings.pop(settings_role, None)
+        config["camera_device_settings"] = device_settings
 
     shared_state.camera_device_preview_overrides[settings_role] = dict(parsed)
     applied_settings, applied_live = _apply_live_usb_device_settings(role, parsed, persist=True)
@@ -3873,8 +3854,7 @@ def save_camera_device_settings(role: str, payload: Dict[str, Any]) -> Dict[str,
 
 @router.post("/api/cameras/device-settings/{role}/reset-defaults")
 def reset_camera_device_settings_to_defaults(role: str) -> Dict[str, Any]:
-    params_path, config = _read_machine_params_config()
-    source = _camera_source_for_role(config, role)
+    source = _camera_source_for_role(machine_toml.read(), role)
     if source is None:
         raise HTTPException(status_code=404, detail="No camera is assigned to this role.")
 
@@ -3910,17 +3890,13 @@ def reset_camera_device_settings_to_defaults(role: str) -> Dict[str, Any]:
 
         auto_settings = default_auto_camera_device_settings()
 
-    device_settings = _get_camera_device_settings_table(config)
-    device_settings.pop(role, None)
-    if role in {"classification_channel", "carousel"}:
-        device_settings.pop("classification_channel", None)
-        device_settings.pop("carousel", None)
-    config["camera_device_settings"] = device_settings
-
-    try:
-        _write_machine_params_config(params_path, config)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to write config: {exc}")
+    with machine_toml.edit() as config:
+        device_settings = _get_camera_device_settings_table(config)
+        device_settings.pop(role, None)
+        if role in {"classification_channel", "carousel"}:
+            device_settings.pop("classification_channel", None)
+            device_settings.pop("carousel", None)
+        config["camera_device_settings"] = device_settings
 
     settings_role = "classification_channel" if role == "carousel" else role
     shared_state.camera_device_preview_overrides.pop(settings_role, None)
@@ -3990,7 +3966,7 @@ def _device_setting_diff(
 
 @router.get("/api/cameras/device-settings/{role}/diff")
 def get_camera_device_settings_diff(role: str) -> Dict[str, Any]:
-    _, config = _read_machine_params_config()
+    config = machine_toml.read()
     source = _camera_source_for_role(config, role)
     if source is None:
         return {
@@ -4150,7 +4126,7 @@ class CaptureModePayload(BaseModel):
 
 @router.get("/api/cameras/capture-modes/{role}")
 def get_camera_capture_modes(role: str) -> Dict[str, Any]:
-    _, config = _read_machine_params_config()
+    config = machine_toml.read()
     source = _camera_source_for_role(config, role)
     if source is None:
         return {
@@ -4226,43 +4202,38 @@ def save_camera_capture_mode(role: str, payload: CaptureModePayload) -> Dict[str
     if payload.width <= 0 or payload.height <= 0:
         raise HTTPException(status_code=400, detail="Width and height must be positive.")
 
-    params_path, config = _read_machine_params_config()
-    source = _camera_source_for_role(config, role)
-    if not isinstance(source, int):
-        raise HTTPException(status_code=400, detail="Resolution selection requires a USB camera.")
+    with machine_toml.edit() as config:
+        source = _camera_source_for_role(config, role)
+        if not isinstance(source, int):
+            raise HTTPException(status_code=400, detail="Resolution selection requires a USB camera.")
 
-    modes, _ = _capture_modes_for_source(source)
-    wanted_fourcc = (payload.fourcc or "MJPG").strip().upper()[:4]
-    same_size = [m for m in modes if m["width"] == payload.width and m["height"] == payload.height]
-    # Never fall into YUYV by accident: it fills the USB bus on its own.
-    mode_match = next(
-        (m for m in same_size if str(m.get("fourcc", "")).upper() == wanted_fourcc),
-        same_size[0] if same_size else None,
-    )
-    if mode_match is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Resolution {payload.width}x{payload.height} is not supported by this camera.",
+        modes, _ = _capture_modes_for_source(source)
+        wanted_fourcc = (payload.fourcc or "MJPG").strip().upper()[:4]
+        same_size = [m for m in modes if m["width"] == payload.width and m["height"] == payload.height]
+        # Never fall into YUYV by accident: it fills the USB bus on its own.
+        mode_match = next(
+            (m for m in same_size if str(m.get("fourcc", "")).upper() == wanted_fourcc),
+            same_size[0] if same_size else None,
         )
+        if mode_match is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Resolution {payload.width}x{payload.height} is not supported by this camera.",
+            )
 
-    fps = int(payload.fps) if payload.fps else int(mode_match["fps"])
-    raw_fourcc = payload.fourcc if payload.fourcc is not None else mode_match.get("fourcc")
-    fourcc = raw_fourcc.strip().upper()[:4] if isinstance(raw_fourcc, str) and raw_fourcc.strip() else None
+        fps = int(payload.fps) if payload.fps else int(mode_match["fps"])
+        raw_fourcc = payload.fourcc if payload.fourcc is not None else mode_match.get("fourcc")
+        fourcc = raw_fourcc.strip().upper()[:4] if isinstance(raw_fourcc, str) and raw_fourcc.strip() else None
 
-    entry: Dict[str, Any] = {"width": int(payload.width), "height": int(payload.height), "fps": fps}
-    if fourcc:
-        entry["fourcc"] = fourcc
-    capture_modes = config.get("camera_capture_modes", {})
-    if not isinstance(capture_modes, dict):
-        capture_modes = {}
-    settings_role = "classification_channel" if role == "carousel" else role
-    capture_modes[settings_role] = entry
-    config["camera_capture_modes"] = capture_modes
-
-    try:
-        _write_machine_params_config(params_path, config)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to write config: {exc}")
+        entry: Dict[str, Any] = {"width": int(payload.width), "height": int(payload.height), "fps": fps}
+        if fourcc:
+            entry["fourcc"] = fourcc
+        capture_modes = config.get("camera_capture_modes", {})
+        if not isinstance(capture_modes, dict):
+            capture_modes = {}
+        settings_role = "classification_channel" if role == "carousel" else role
+        capture_modes[settings_role] = entry
+        config["camera_capture_modes"] = capture_modes
 
     svc = shared_state.camera_service
     applied_live = False

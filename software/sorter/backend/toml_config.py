@@ -1,104 +1,16 @@
-"""Machine config helpers.
+"""Typed getters and setters for machine.toml's sections.
 
-Declarative machine configuration stays in machine.toml (see machine_toml.py).
-Mutable local state such as polygons, sync state, training session state,
-and secrets lives in `local_state.sqlite` via `local_state.py`.
+Declarative machine configuration stays in machine.toml; machine_toml.py reads it
+and owns every write. Mutable local state such as polygons, sync state, training
+session state, and secrets lives in `local_state.sqlite` via `local_state.py`.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import sys
-import tempfile
-import threading
-import tomllib
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from machine_toml import machine_toml_path
-from server.config_helpers import write_machine_params_config
-
-
-def loadTomlFile(path: str | Path) -> dict[str, Any]:
-    path_str = str(path)
-    try:
-        with open(path_str, "rb") as f:
-            return tomllib.load(f)
-    except tomllib.TOMLDecodeError as e:
-        print(f"[config] malformed TOML at {path_str}: {e}", file=sys.stderr)
-        sys.exit(1)
-
-_TOML_LOCK = threading.Lock()
-_POLYGONS_LOCK = threading.Lock()
-
-
-# ---------------------------------------------------------------------------
-# Path helpers
-# ---------------------------------------------------------------------------
-
-
-def _polygons_path() -> str:
-    """Legacy helper for the old polygons.json location."""
-    return str(machine_toml_path().parent / "polygons.json")
-
-
-# ---------------------------------------------------------------------------
-# TOML read/write primitives
-# ---------------------------------------------------------------------------
-
-
-def _read_toml() -> dict[str, Any]:
-    """Read and parse the TOML file. Returns {} if missing. Malformed TOML exits the program."""
-    path = machine_toml_path()
-    if not path.exists():
-        return {}
-    return loadTomlFile(path)
-
-
-def _update_toml(updater: Any) -> None:
-    """Read TOML, apply updater(config_dict), write back atomically."""
-    with _TOML_LOCK:
-        config = _read_toml()
-        updater(config)
-        write_machine_params_config(str(machine_toml_path()), config)
-
-
-# ---------------------------------------------------------------------------
-# Polygon JSON read/write primitives
-# ---------------------------------------------------------------------------
-
-
-def _write_json_atomic(path: str, data: dict[str, Any]) -> None:
-    """Write JSON atomically via tempfile + rename."""
-    parent = Path(path).parent
-    parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=parent, suffix=".json.tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.rename(tmp_path, path)
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-
-
-def _read_polygons_json() -> dict[str, Any]:
-    """Read the legacy polygons.json file. Returns {} if missing."""
-    path = _polygons_path()
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+import machine_toml
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +22,7 @@ def getClassificationChannelRev01Config() -> dict[str, Any]:
     from subsystems.classification_channel.two_piece.rev01_config import (
         Rev01Config, configToDict,
     )
-    config = _read_toml()
+    config = machine_toml.read()
     section = config.get("classification_channel_rev01")
     defaults = configToDict(Rev01Config())
     if isinstance(section, dict):
@@ -126,13 +38,11 @@ def setClassificationChannelRev01Config(updates: dict[str, Any]) -> dict[str, An
     defaults = configToDict(Rev01Config())
     valid = {k: v for k, v in updates.items() if k in defaults}
 
-    def updater(config: dict[str, Any]) -> None:
+    with machine_toml.edit() as config:
         existing = config.get("classification_channel_rev01")
         base = dict(existing) if isinstance(existing, dict) else {}
         base.update(valid)
         config["classification_channel_rev01"] = base
-
-    _update_toml(updater)
     return getClassificationChannelRev01Config()
 
 
@@ -144,7 +54,7 @@ def setClassificationChannelRev01Config(updates: dict[str, Any]) -> dict[str, An
 def getProfilerConfig() -> dict[str, Any]:
     """Whether the detailed code profiler is enabled. Defaults to True so a
     fresh machine collects profiling out of the box."""
-    config = _read_toml()
+    config = machine_toml.read()
     section = config.get("profiler")
     enabled = True
     if isinstance(section, dict) and isinstance(section.get("enabled"), bool):
@@ -153,20 +63,13 @@ def getProfilerConfig() -> dict[str, Any]:
 
 
 def setProfilerConfig(updates: dict[str, Any]) -> dict[str, Any]:
-    def updater(config: dict[str, Any]) -> None:
+    with machine_toml.edit() as config:
         section = config.get("profiler")
         base = dict(section) if isinstance(section, dict) else {}
         if "enabled" in updates:
             base["enabled"] = bool(updates["enabled"])
         config["profiler"] = base
-
-    _update_toml(updater)
     return getProfilerConfig()
-
-
-# ---------------------------------------------------------------------------
-# Feeder go-to-angle tuning config
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +82,7 @@ def setProfilerConfig(updates: dict[str, Any]) -> dict[str, Any]:
 
 def getActiveTrackerType() -> str:
     from perception.tracker_config import DEFAULT_TRACKER_TYPE, TRACKER_SPECS
-    config = _read_toml()
+    config = machine_toml.read()
     section = config.get("object_tracker")
     if isinstance(section, dict):
         t = section.get("type")
@@ -192,19 +95,17 @@ def setActiveTrackerType(tracker_type: str) -> str:
     from perception.tracker_config import DEFAULT_TRACKER_TYPE, TRACKER_SPECS
     t = tracker_type if tracker_type in TRACKER_SPECS else DEFAULT_TRACKER_TYPE
 
-    def updater(config: dict[str, Any]) -> None:
+    with machine_toml.edit() as config:
         existing = config.get("object_tracker")
         base = dict(existing) if isinstance(existing, dict) else {}
         base["type"] = t
         config["object_tracker"] = base
-
-    _update_toml(updater)
     return getActiveTrackerType()
 
 
 def getTrackerConfig(tracker_type: str) -> dict[str, Any]:
     from perception.tracker_config import defaultsFor
-    config = _read_toml()
+    config = machine_toml.read()
     section = config.get(f"object_tracker_{tracker_type}")
     defaults = defaultsFor(tracker_type)
     if isinstance(section, dict):
@@ -218,13 +119,11 @@ def setTrackerConfig(tracker_type: str, updates: dict[str, Any]) -> dict[str, An
     valid = {k: v for k, v in updates.items() if k in defaults}
     key = f"object_tracker_{tracker_type}"
 
-    def updater(config: dict[str, Any]) -> None:
+    with machine_toml.edit() as config:
         existing = config.get(key)
         base = dict(existing) if isinstance(existing, dict) else {}
         base.update(valid)
         config[key] = base
-
-    _update_toml(updater)
     return getTrackerConfig(tracker_type)
 
 
@@ -235,7 +134,7 @@ def setTrackerConfig(tracker_type: str, updates: dict[str, Any]) -> dict[str, An
 
 def getClassificationProviders() -> dict[str, str]:
     from classification.providers import normalizeColorProvider, normalizeMoldProvider
-    config = _read_toml()
+    config = machine_toml.read()
     section = config.get("classification_providers")
     section = section if isinstance(section, dict) else {}
     return {
@@ -252,13 +151,11 @@ def setClassificationProviders(updates: dict[str, Any]) -> dict[str, str]:
     if "mold_provider" in updates:
         valid["mold_provider"] = normalizeMoldProvider(updates.get("mold_provider"))
 
-    def updater(config: dict[str, Any]) -> None:
+    with machine_toml.edit() as config:
         existing = config.get("classification_providers")
         base = dict(existing) if isinstance(existing, dict) else {}
         base.update(valid)
         config["classification_providers"] = base
-
-    _update_toml(updater)
     return getClassificationProviders()
 
 
@@ -271,7 +168,7 @@ def getPulsePerceptionConfig() -> dict[str, Any]:
     from subsystems.feeder.pulse_perception.config import (
         PulsePerceptionConfig, configToDict, migrateLegacyKeys,
     )
-    config = _read_toml()
+    config = machine_toml.read()
     section = config.get("feeder_pulse_perception")
     defaults = configToDict(PulsePerceptionConfig())
     if isinstance(section, dict):
@@ -289,19 +186,12 @@ def setPulsePerceptionConfig(updates: dict[str, Any]) -> dict[str, Any]:
     defaults = configToDict(PulsePerceptionConfig())
     valid = {k: v for k, v in updates.items() if k in defaults}
 
-    def updater(config: dict[str, Any]) -> None:
+    with machine_toml.edit() as config:
         existing = config.get("feeder_pulse_perception")
         base = dict(existing) if isinstance(existing, dict) else {}
         base.update(valid)
         config["feeder_pulse_perception"] = base
-
-    _update_toml(updater)
     return getPulsePerceptionConfig()
-
-
-# ---------------------------------------------------------------------------
-# Feeder constant-movement tuning config
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +201,7 @@ def setPulsePerceptionConfig(updates: dict[str, Any]) -> dict[str, Any]:
 
 def getDetectionConfig(scope: str) -> dict[str, Any] | None:
     """Read detection config for a scope (classification/feeder/carousel)."""
-    config = _read_toml()
+    config = machine_toml.read()
     detection = config.get("detection")
     if not isinstance(detection, dict):
         return None
@@ -331,7 +221,7 @@ def getDetectionConfig(scope: str) -> dict[str, Any] | None:
 
 def setDetectionConfig(scope: str, cfg: dict[str, Any]) -> None:
     """Write detection config for a scope."""
-    def updater(config: dict[str, Any]) -> None:
+    with machine_toml.edit() as config:
         if "detection" not in config:
             config["detection"] = {}
         section = dict(cfg)
@@ -344,8 +234,6 @@ def setDetectionConfig(scope: str, cfg: dict[str, Any]) -> None:
         if isinstance(by_role, dict):
             config["detection"][scope]["sample_collection_enabled_by_role"] = by_role
 
-    _update_toml(updater)
-
 
 # ---------------------------------------------------------------------------
 # Machine nickname
@@ -354,7 +242,7 @@ def setDetectionConfig(scope: str, cfg: dict[str, Any]) -> None:
 
 def getMachineNickname() -> str | None:
     """Read machine nickname from TOML [machine] section."""
-    config = _read_toml()
+    config = machine_toml.read()
     machine = config.get("machine")
     if not isinstance(machine, dict):
         return None
@@ -367,7 +255,7 @@ def getMachineNickname() -> str | None:
 
 def setMachineNickname(nickname: str | None) -> None:
     """Write machine nickname to TOML [machine] section."""
-    def updater(config: dict[str, Any]) -> None:
+    with machine_toml.edit() as config:
         if "machine" not in config:
             config["machine"] = {}
         normalized = nickname.strip() if isinstance(nickname, str) else ""
@@ -375,8 +263,6 @@ def setMachineNickname(nickname: str | None) -> None:
             config["machine"]["nickname"] = normalized
         else:
             config["machine"].pop("nickname", None)
-
-    _update_toml(updater)
 
 
 # ---------------------------------------------------------------------------
@@ -515,7 +401,7 @@ def incidentHandlingOff(kind: str) -> bool:
 
 def getDashboardConfig() -> dict[str, Any]:
     """Return dashboard preferences merged on top of defaults."""
-    config = _read_toml()
+    config = machine_toml.read()
     section = config.get("dashboard")
     merged = {
         "show_sample_capture": bool(_DASHBOARD_DEFAULTS["show_sample_capture"]),
@@ -551,11 +437,9 @@ def setDashboardConfig(updates: dict[str, Any]) -> dict[str, Any]:
             merged_handling.update(handling)
             sanitized["incident_handling"] = merged_handling
 
-    def updater(config: dict[str, Any]) -> None:
+    with machine_toml.edit() as config:
         existing = config.get("dashboard") if isinstance(config.get("dashboard"), dict) else {}
         config["dashboard"] = {**existing, **sanitized}
-
-    _update_toml(updater)
     return getDashboardConfig()
 
 
@@ -569,7 +453,7 @@ def getBinAssignmentConfig() -> dict[str, Any]:
     once every bin already has an assignment the distributor keeps sorting new
     categories by combining them into existing bins (picking the least-loaded
     one) instead of falling through to the misc/discard passthrough."""
-    config = _read_toml()
+    config = machine_toml.read()
     section = config.get("bins")
     allow_multiple = False
     if isinstance(section, dict) and isinstance(
@@ -580,7 +464,7 @@ def getBinAssignmentConfig() -> dict[str, Any]:
 
 
 def setBinAssignmentConfig(updates: dict[str, Any]) -> dict[str, Any]:
-    def updater(config: dict[str, Any]) -> None:
+    with machine_toml.edit() as config:
         existing = config.get("bins")
         base = dict(existing) if isinstance(existing, dict) else {}
         if "allow_multiple_categories_per_bin" in updates:
@@ -588,8 +472,6 @@ def setBinAssignmentConfig(updates: dict[str, Any]) -> dict[str, Any]:
                 updates["allow_multiple_categories_per_bin"]
             )
         config["bins"] = base
-
-    _update_toml(updater)
     return getBinAssignmentConfig()
 
 
@@ -705,7 +587,7 @@ def setApiKeys(keys: dict[str, str]) -> None:
 
 def getChuteCalibration() -> dict[str, float] | None:
     """Read chute calibration from TOML [chute] section."""
-    config = _read_toml()
+    config = machine_toml.read()
     chute = config.get("chute")
     if not isinstance(chute, dict):
         return None
@@ -714,12 +596,10 @@ def getChuteCalibration() -> dict[str, float] | None:
 
 def setChuteCalibration(calibration: dict[str, float]) -> None:
     """Write chute calibration to TOML [chute] section (merge, not replace)."""
-    def updater(config: dict[str, Any]) -> None:
+    with machine_toml.edit() as config:
         if "chute" not in config:
             config["chute"] = {}
         config["chute"].update(calibration)
-
-    _update_toml(updater)
 
 
 # ---------------------------------------------------------------------------
@@ -729,7 +609,7 @@ def setChuteCalibration(calibration: dict[str, float]) -> None:
 
 def getCameraSetup() -> dict[str, Any] | None:
     """Read camera setup from TOML [cameras] section."""
-    config = _read_toml()
+    config = machine_toml.read()
     cameras = config.get("cameras")
     if not isinstance(cameras, dict):
         return None
@@ -744,14 +624,12 @@ def getCameraSetup() -> dict[str, Any] | None:
 
 def setCameraSetup(setup: dict[str, Any]) -> None:
     """Write camera setup to TOML [cameras] section."""
-    def updater(config: dict[str, Any]) -> None:
+    with machine_toml.edit() as config:
         if "cameras" not in config:
             config["cameras"] = {}
         for role in ("c_channel_2", "c_channel_3", "carousel", "classification_channel"):
             if role in setup:
                 config["cameras"][role] = setup[role]
-
-    _update_toml(updater)
 
 
 # ---------------------------------------------------------------------------
@@ -788,18 +666,6 @@ def setClassificationPolygons(polygons: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Legacy migration entry point
-# ---------------------------------------------------------------------------
-
-
-def migrateFromDataJson() -> None:
-    """Compatibility wrapper for the legacy startup migration entry point."""
-    from local_state import initialize_local_state
-
-    initialize_local_state()
-
-
-# ---------------------------------------------------------------------------
 # Piece-link matching (experimental)
 # ---------------------------------------------------------------------------
 
@@ -814,7 +680,7 @@ def getLinkMatchingConfig() -> dict[str, Any]:
     # ``min_confidence`` overrides the threshold baked into the model at
     # publish time (0.5 for link-v3) — fused/preselected picks must score at
     # or above it.
-    config = _read_toml()
+    config = machine_toml.read()
     section = config.get("link_matching")
     section = section if isinstance(section, dict) else {}
     raw = section.get("min_confidence")
@@ -840,11 +706,9 @@ def setLinkMatchingConfig(updates: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("min_confidence must be between 0 and 1")
         valid["min_confidence"] = value
 
-    def updater(config: dict[str, Any]) -> None:
+    with machine_toml.edit() as config:
         existing = config.get("link_matching")
         base = dict(existing) if isinstance(existing, dict) else {}
         base.update(valid)
         config["link_matching"] = base
-
-    _update_toml(updater)
     return getLinkMatchingConfig()

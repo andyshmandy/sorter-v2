@@ -311,17 +311,9 @@ def get_firmware_config() -> Dict[str, Any]:
         "feeder_mode": FEEDER_FLOW,
         "classification_channel_mode": CLASSIFICATION_CHANNEL_FLOW,
     }
-    try:
-        from machine_toml import machine_toml_path
-        from toml_config import loadTomlFile
+    from machine_toml import machine_toml_path
 
-        params_path = machine_toml_path()
-        if params_path.exists():
-            payload["machine_toml_present"] = True
-        else:
-            payload["machine_toml_present"] = False
-    except Exception as exc:
-        gc.logger.warning(f"Firmware config: could not read machine params: {exc}")
+    payload["machine_toml_present"] = machine_toml_path().exists()
     return payload
 
 

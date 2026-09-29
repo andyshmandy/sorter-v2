@@ -4,10 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import tomllib
-
 from global_config import GlobalConfig
-from machine_toml import machine_toml_path
+import machine_toml
 from hardware.bus import MCUBusError
 from hardware.cobs import DecodeError
 
@@ -88,36 +86,11 @@ class MachineConfig:
 
 
 def loadMachineSpecificParams(gc: GlobalConfig) -> dict[str, object]:
-    stepper_current_config_path = machine_toml_path()
-    if not stepper_current_config_path.exists():
+    if not machine_toml.machine_toml_path().exists():
         gc.logger.warning(
-            f"No machine config at {stepper_current_config_path}; using default stepper currents and servo angles."
+            f"No machine config at {machine_toml.machine_toml_path()}; using default stepper currents and servo angles."
         )
-        return {}
-
-    try:
-        raw_text = stepper_current_config_path.read_text(encoding="utf-8")
-    except Exception as e:
-        gc.logger.warning(
-            f"Failed to read machine-specific params at {stepper_current_config_path}: {e}. Using defaults."
-        )
-        return {}
-
-    if tomllib is None:
-        gc.logger.warning(
-            "TOML parser unavailable in this Python runtime. Using defaults."
-        )
-        return {}
-
-    raw: object = tomllib.loads(raw_text)
-
-    if not isinstance(raw, dict):
-        gc.logger.warning(
-            f"Machine-specific params at {stepper_current_config_path} must be an object. Using defaults."
-        )
-        return {}
-
-    return raw
+    return machine_toml.read()
 
 
 def _parseStepperCurrentOverrides(

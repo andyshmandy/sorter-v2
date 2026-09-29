@@ -75,7 +75,7 @@ class CameraDeviceControlsTests(unittest.TestCase):
         }
 
         with patch.object(cameras.shared_state, "camera_service", service):
-            with patch("server.routers.cameras._read_machine_params_config", return_value=(None, raw_config)):
+            with patch.object(cameras.machine_toml, "read", return_value=raw_config):
                 response = cameras.get_camera_device_settings("c_channel_2")
 
         self.assertTrue(response["ok"])
@@ -95,7 +95,7 @@ class CameraDeviceControlsTests(unittest.TestCase):
         }
 
         with patch.object(cameras.shared_state, "camera_service", None):
-            with patch("server.routers.cameras._read_machine_params_config", return_value=(None, raw_config)):
+            with patch.object(cameras.machine_toml, "read", return_value=raw_config):
                 response = cameras.get_camera_device_settings("c_channel_2")
 
         self.assertTrue(response["ok"])
@@ -113,7 +113,7 @@ class CameraDeviceControlsTests(unittest.TestCase):
         }
 
         with patch.object(cameras.shared_state, "camera_service", service):
-            with patch("server.routers.cameras._read_machine_params_config", return_value=(None, raw_config)):
+            with patch.object(cameras.machine_toml, "read", return_value=raw_config):
                 response = cameras.preview_camera_device_settings("c_channel_2", {"brightness": 30})
 
         self.assertTrue(response["ok"])
@@ -150,8 +150,8 @@ class CameraDeviceControlsTests(unittest.TestCase):
         )
 
         with patch.object(cameras.shared_state, "camera_service", service):
-            with patch("server.routers.cameras._read_machine_params_config", return_value=("machine.toml", raw_config)):
-                with patch("server.routers.cameras._write_machine_params_config") as write_config:
+            with patch.object(cameras.machine_toml, "read", return_value=raw_config):
+                with patch.object(cameras.machine_toml, "_write") as write_config:
                     response = cameras.reset_camera_device_settings_to_defaults("c_channel_2")
 
         self.assertTrue(response["ok"])
@@ -178,8 +178,8 @@ class CameraDeviceControlsTests(unittest.TestCase):
         )
         with (
             patch.object(cameras.shared_state, "camera_service", service),
-            patch.object(cameras, "_read_machine_params_config", return_value=(None, raw_config)),
-            patch.object(cameras, "_write_machine_params_config"),
+            patch.object(cameras.machine_toml, "read", return_value=raw_config),
+            patch.object(cameras.machine_toml, "_write"),
         ):
             cameras.preview_camera_device_settings("classification_channel", {"brightness": 3})
             cameras.preview_camera_device_settings("carousel", {"brightness": 4})
@@ -286,7 +286,7 @@ class CameraDeviceControlsTests(unittest.TestCase):
             with (
                 self.subTest(method=method),
                 patch.object(cameras, "get_camera_device_settings", return_value=current),
-                patch.object(cameras, "_read_machine_params_config", return_value=(None, {})),
+                patch.object(cameras.machine_toml, "read", return_value={}),
                 patch.object(cameras, "_cleanup_old_gallery_dirs"),
                 patch.object(cameras, "Path"),
                 patch.object(cameras.time, "sleep"),

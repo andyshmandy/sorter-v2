@@ -25,7 +25,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from machine_toml import machine_toml_path
+import machine_toml
 
 # 2: per-camera `calibration` block (color profile summary + device/picture
 # settings + capture mode).
@@ -115,19 +115,8 @@ def _liveCameras() -> dict[str, Any]:
 
 
 def _machineParamsTable(section: str) -> dict[str, Any]:
-    try:
-        from toml_config import loadTomlFile
-
-        params_path = machine_toml_path()
-        if not params_path.exists():
-            return {}
-        raw = loadTomlFile(params_path)
-        if not isinstance(raw, dict):
-            return {}
-        table = raw.get(section)
-        return table if isinstance(table, dict) else {}
-    except Exception:
-        return {}
+    table = machine_toml.read().get(section)
+    return table if isinstance(table, dict) else {}
 
 
 def _calibrationByRole() -> dict[str, dict[str, Any]]:

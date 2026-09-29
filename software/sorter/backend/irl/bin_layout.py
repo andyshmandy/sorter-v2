@@ -2,7 +2,7 @@ from typing import List
 from dataclasses import dataclass, field
 from enum import Enum
 
-from machine_toml import machine_toml_path
+import machine_toml
 
 
 @dataclass
@@ -223,12 +223,8 @@ def _parseLayersDict(data: dict) -> BinLayoutConfig | None:
 
 def _loadFromToml() -> BinLayoutConfig | None:
     import os
-    from toml_config import loadTomlFile
 
-    path = machine_toml_path()
-    if not path.exists():
-        return None
-    config = loadTomlFile(path)
+    config = machine_toml.read()
 
     layers_table = config.get("layers")
     if not isinstance(layers_table, dict):

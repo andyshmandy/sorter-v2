@@ -18,10 +18,7 @@ from irl.parse_user_toml import (
 )
 from machine_platform.control_board import discover_control_boards
 from server import shared_state
-from server.config_helpers import (
-    read_machine_params_config as _read_machine_params_config,
-    write_machine_params_config as _write_machine_params_config,
-)
+import machine_toml
 from server.routers.cameras import CAMERA_SETUP_ROLES, _camera_source_for_role
 from server.routers.hardware import _servo_settings_from_config
 
@@ -85,7 +82,7 @@ def _camera_assignments_complete(camera_assignments: dict[str, Any]) -> bool:
 
 
 def _current_stepper_direction_payload() -> list[dict[str, Any]]:
-    _, config = _read_machine_params_config()
+    config = machine_toml.read()
     inverts = config.get("stepper_direction_inverts", {})
     if not isinstance(inverts, dict):
         inverts = {}
@@ -494,7 +491,7 @@ def get_setup_wizard_needed() -> Dict[str, bool]:
     # A machine that has never been through the wizard has neither a name nor a
     # single camera (first boot writes -1 or nothing). Cheap on purpose: the
     # Dashboard asks on every first load, and the full summary probes the USB buses.
-    _, config = _read_machine_params_config()
+    config = machine_toml.read()
     assignments = _camera_assignments_from_config(config)
     any_camera = any(
         value is not None and value != -1
@@ -505,7 +502,7 @@ def get_setup_wizard_needed() -> Dict[str, bool]:
 
 @router.get("/api/setup-wizard")
 def get_setup_wizard_summary() -> Dict[str, Any]:
-    _, config = _read_machine_params_config()
+    config = machine_toml.read()
     camera_assignments = _camera_assignments_from_config(config)
     servo_settings = _servo_settings_from_config(config)
     discovery = _discover_control_board_summary()
@@ -560,17 +557,12 @@ def set_stepper_direction(stepper_name: str, payload: StepperDirectionPayload) -
         )
     config_key = _stepper_config_key(stepper_name)
 
-    params_path, config = _read_machine_params_config()
-    inverts = config.get("stepper_direction_inverts", {})
-    if not isinstance(inverts, dict):
-        inverts = {}
-    inverts = {**inverts, config_key: bool(payload.inverted)}
-    config["stepper_direction_inverts"] = inverts
-
-    try:
-        _write_machine_params_config(params_path, config)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to write config: {exc}")
+    with machine_toml.edit() as config:
+        inverts = config.get("stepper_direction_inverts", {})
+        if not isinstance(inverts, dict):
+            inverts = {}
+        inverts = {**inverts, config_key: bool(payload.inverted)}
+        config["stepper_direction_inverts"] = inverts
 
     applied_live = False
     active_irl = shared_state.getActiveIRL()

@@ -10,8 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from machine_toml import machine_toml_path
-from toml_config import loadTomlFile
+import machine_toml
 
 SOFTWARE_DIR = Path(__file__).resolve().parent
 
@@ -83,7 +82,7 @@ def local_state_db_path() -> Path:
 
 
 def _legacy_state_dir() -> Path:
-    return machine_toml_path().parent
+    return machine_toml.machine_toml_path().parent
 
 
 def _legacy_data_path() -> Path:
@@ -141,12 +140,6 @@ def _read_json_file(path: Path) -> Any | None:
         return None
 
 
-def _read_machine_params() -> dict[str, Any]:
-    path = machine_toml_path()
-    if not path.exists():
-        return {}
-    data = loadTomlFile(path)
-    return data if isinstance(data, dict) else {}
 
 
 def _get_meta(conn: sqlite3.Connection, key: str) -> str | None:
@@ -276,7 +269,7 @@ def _migrate_state_key(conn: sqlite3.Connection, key: str, value: Any) -> None:
 
 
 def _migrate_from_machine_params(conn: sqlite3.Connection) -> None:
-    config = _read_machine_params()
+    config = machine_toml.read()
     _migrate_state_key(conn, _STATE_KEY_CLASSIFICATION_TRAINING, config.get("classification_training"))
     _migrate_state_key(conn, _STATE_KEY_API_KEYS, _normalize_string_dict(config.get("api_keys")))
     _migrate_state_key(conn, _STATE_KEY_HIVE, _normalize_hive_config(config.get("hive") or config.get("sorthive")))
@@ -316,47 +309,17 @@ def _migrate_misc_state_files(conn: sqlite3.Connection) -> None:
         _migrate_state_key(conn, _STATE_KEY_SET_PROGRESS, set_progress)
 
 
-def _cleanup_machine_params_runtime_sections(conn: sqlite3.Connection) -> None:
-    path = machine_toml_path()
-    if not path.exists():
-        return
-
-    try:
-        original = path.read_text(encoding="utf-8")
-    except OSError:
-        return
-
-    runtime_roots = {
-        _STATE_KEY_CLASSIFICATION_TRAINING,
-        _STATE_KEY_API_KEYS,
-        _STATE_KEY_HIVE,
-        "sorthive",
-        _STATE_KEY_SORTING_PROFILE_SYNC,
-    }
-
-    cleaned_lines: list[str] = []
-    skipping_block = False
-
-    for line in original.splitlines(keepends=True):
-        stripped = line.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            header = stripped.strip("[]").strip()
-            table_path = header.split(".", 1)[0].strip()
-            skipping_block = table_path in runtime_roots
-            if skipping_block:
-                continue
-
-        if not skipping_block:
-            cleaned_lines.append(line)
-
-    cleaned = "".join(cleaned_lines)
-    if cleaned == original:
-        return
-
-    try:
-        path.write_text(cleaned, encoding="utf-8")
-    except OSError:
-        return
+def _cleanup_machine_params_runtime_sections() -> None:
+    """Drop the runtime sections older versions kept in machine.toml; they live here now."""
+    with machine_toml.edit() as config:
+        for root in (
+            _STATE_KEY_CLASSIFICATION_TRAINING,
+            _STATE_KEY_API_KEYS,
+            _STATE_KEY_HIVE,
+            "sorthive",
+            _STATE_KEY_SORTING_PROFILE_SYNC,
+        ):
+            config.pop(root, None)
 
 
 def _migrate_renamed_state_keys(conn: sqlite3.Connection) -> None:
@@ -752,7 +715,7 @@ def initialize_local_state() -> None:
             _migrate_from_polygons_json(conn)
             _migrate_from_data_json(conn)
             _migrate_misc_state_files(conn)
-            _cleanup_machine_params_runtime_sections(conn)
+            _cleanup_machine_params_runtime_sections()
             _migrate_renamed_state_keys(conn)
             _migrate_servo_channels_and_bin_layouts(conn)
             conn.commit()

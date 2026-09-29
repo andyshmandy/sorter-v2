@@ -1,5 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import asyncio
@@ -7,6 +8,8 @@ import json
 import os
 import time
 from pathlib import Path
+
+import machine_toml
 
 from defs.events import (
     IdentityEvent,
@@ -107,6 +110,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 app.add_middleware(RequestLoggingMiddleware)
+
+
+@app.exception_handler(machine_toml.MachineTomlError)
+async def _machine_toml_error(_request: Request, exc: machine_toml.MachineTomlError) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 
 def _load_saved_api_keys_into_environment() -> None:

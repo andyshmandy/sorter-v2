@@ -363,7 +363,7 @@ def _current_payload_from_persisted_config(name: str) -> Dict[str, int]:
         "ihold_delay": DEFAULT_STEPPER_IHOLD_DELAY,
     }
     try:
-        _, config = _read_machine_params_config()
+        config = machine_toml.read()
     except Exception:
         return result
 
@@ -506,16 +506,12 @@ _STEPPER_API_TO_TOML_NAME: Dict[str, str] = {
 }
 
 
-from server.config_helpers import (
-    read_machine_params_config as _read_machine_params_config,
-    write_machine_params_config as _write_machine_params_config,
-)
+import machine_toml
 
 
 def _persist_stepper_current(api_name: str, irun: int, ihold: int) -> None:
     toml_name = _STEPPER_API_TO_TOML_NAME.get(api_name, api_name)
-    try:
-        params_path, config = _read_machine_params_config()
+    with machine_toml.edit() as config:
         overrides = config.get("stepper_current_overrides", {})
         if not isinstance(overrides, dict):
             overrides = {}
@@ -526,9 +522,6 @@ def _persist_stepper_current(api_name: str, irun: int, ihold: int) -> None:
         entry["ihold"] = ihold
         overrides[toml_name] = entry
         config["stepper_current_overrides"] = overrides
-        _write_machine_params_config(params_path, config)
-    except Exception:
-        pass  # best-effort persistence
 
 
 # ---------------------------------------------------------------------------
@@ -1601,7 +1594,7 @@ def _stallguard_payload_from_persisted_config(name: str) -> Dict[str, Any]:
             "enabled": False,
         }
     try:
-        _, config = _read_machine_params_config()
+        config = machine_toml.read()
     except Exception:
         return result
     section = config.get("stepper_stallguard", {})
@@ -1618,19 +1611,18 @@ def _stallguard_payload_from_persisted_config(name: str) -> Dict[str, Any]:
 
 def _persist_stepper_stallguard(api_name: str, sgthrs: int, tcoolthrs: int, enabled: bool) -> None:
     toml_name = _STEPPER_API_TO_TOML_NAME.get(api_name, api_name)
-    params_path, config = _read_machine_params_config()
-    section = config.get("stepper_stallguard", {})
-    if not isinstance(section, dict):
-        section = {}
-    entry = section.get(toml_name, {})
-    if not isinstance(entry, dict):
-        entry = {}
-    entry["sgthrs"] = sgthrs
-    entry["tcoolthrs"] = tcoolthrs
-    entry["enabled"] = enabled
-    section[toml_name] = entry
-    config["stepper_stallguard"] = section
-    _write_machine_params_config(params_path, config)
+    with machine_toml.edit() as config:
+        section = config.get("stepper_stallguard", {})
+        if not isinstance(section, dict):
+            section = {}
+        entry = section.get(toml_name, {})
+        if not isinstance(entry, dict):
+            entry = {}
+        entry["sgthrs"] = sgthrs
+        entry["tcoolthrs"] = tcoolthrs
+        entry["enabled"] = enabled
+        section[toml_name] = entry
+        config["stepper_stallguard"] = section
 
 
 @router.post("/stepper/{stepper}/stallguard-config", response_model=StallGuardConfigResponse)

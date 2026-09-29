@@ -210,7 +210,7 @@ def _get_waveshare_service(*, timeout: float = 0.02) -> Any | None:
     if service is not None:
         return service
 
-    _, config = _read_machine_params_config()
+    config = machine_toml.read()
     return _configured_waveshare_service(config, timeout=timeout)
 
 
@@ -396,11 +396,7 @@ class StorageLayerSettingsPayload(BaseModel):
 
 ALLOWED_STORAGE_LAYER_BIN_COUNTS = [6, 12, 18, 30]
 DEFAULT_STORAGE_LAYER_SECTION_COUNT = 6
-from server.config_helpers import (
-    read_machine_params_config as _read_machine_params_config,
-    toml_value as _toml_value,
-    write_machine_params_config as _write_machine_params_config,
-)
+import machine_toml
 
 
 
@@ -990,7 +986,7 @@ def _stop_all_steppers() -> None:
 
 @router.get("/api/hardware-config")
 def get_hardware_config() -> Dict[str, Any]:
-    _, config = _read_machine_params_config()
+    config = machine_toml.read()
     layout = getBinLayout()
     storage_layers = _storage_layer_settings_from_layout(layout)
     _attach_live_servo_current_angles(storage_layers["layers"])
@@ -1004,7 +1000,7 @@ def get_hardware_config() -> Dict[str, Any]:
 
 @router.get("/api/hardware-config/servo/live")
 def get_live_servo_feedback() -> Dict[str, Any]:
-    _, config = _read_machine_params_config()
+    config = machine_toml.read()
     servo_settings = _servo_settings_from_config(config)
     layer_count = int(servo_settings.get("layer_count", 0))
     active_irl = _active_irl()
@@ -1091,39 +1087,34 @@ def save_servo_hardware_config(
         seen_ids.add(channel_id)
         channels.append({"id": channel_id, "invert": bool(channel.invert)})
 
-    params_path, config = _read_machine_params_config()
-    previous = _servo_settings_from_config(config)
+    with machine_toml.edit() as config:
+        previous = _servo_settings_from_config(config)
 
-    servo_table: Dict[str, Any] = {"backend": backend, "channels": channels}
-    if backend == "pca9685":
-        if open_speed is not None:
-            servo_table["open_speed"] = open_speed
-        if close_speed is not None:
-            servo_table["close_speed"] = close_speed
-        if homing_speed is not None:
-            servo_table["homing_speed"] = homing_speed
-    if backend == "waveshare":
-        if port is not None:
-            servo_table["port"] = port
-        existing_servo_table = config.get("servo", {})
-        previous_highest_seen = (
-            existing_servo_table.get("highest_seen_id")
-            if isinstance(existing_servo_table, dict)
-            else None
-        )
-        if (
-            isinstance(previous_highest_seen, int)
-            and not isinstance(previous_highest_seen, bool)
-            and previous_highest_seen > 0
-        ):
-            servo_table["highest_seen_id"] = previous_highest_seen
+        servo_table: Dict[str, Any] = {"backend": backend, "channels": channels}
+        if backend == "pca9685":
+            if open_speed is not None:
+                servo_table["open_speed"] = open_speed
+            if close_speed is not None:
+                servo_table["close_speed"] = close_speed
+            if homing_speed is not None:
+                servo_table["homing_speed"] = homing_speed
+        if backend == "waveshare":
+            if port is not None:
+                servo_table["port"] = port
+            existing_servo_table = config.get("servo", {})
+            previous_highest_seen = (
+                existing_servo_table.get("highest_seen_id")
+                if isinstance(existing_servo_table, dict)
+                else None
+            )
+            if (
+                isinstance(previous_highest_seen, int)
+                and not isinstance(previous_highest_seen, bool)
+                and previous_highest_seen > 0
+            ):
+                servo_table["highest_seen_id"] = previous_highest_seen
 
-    config["servo"] = servo_table
-
-    try:
-        _write_machine_params_config(params_path, config)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write config: {e}")
+        config["servo"] = servo_table
 
     previous_ids = [int(channel["id"]) if channel["id"] is not None else None for channel in previous["channels"]]
     previous_inverts = [bool(channel["invert"]) for channel in previous["channels"]]
@@ -1196,23 +1187,18 @@ def save_servo_speeds(payload: ServoSpeedSettingsPayload) -> Dict[str, Any]:
     close_speed = _clamp(payload.close_speed)
     homing_speed = _clamp(payload.homing_speed)
 
-    params_path, config = _read_machine_params_config()
-    servo = config.get("servo", {})
-    if not isinstance(servo, dict):
-        servo = {}
+    with machine_toml.edit() as config:
+        servo = config.get("servo", {})
+        if not isinstance(servo, dict):
+            servo = {}
 
-    for key, val in [("open_speed", open_speed), ("close_speed", close_speed), ("homing_speed", homing_speed)]:
-        if val is not None:
-            servo[key] = val
-        else:
-            servo.pop(key, None)
+        for key, val in [("open_speed", open_speed), ("close_speed", close_speed), ("homing_speed", homing_speed)]:
+            if val is not None:
+                servo[key] = val
+            else:
+                servo.pop(key, None)
 
-    config["servo"] = servo
-
-    try:
-        _write_machine_params_config(params_path, config)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write config: {e}")
+        config["servo"] = servo
 
     active_irl = _active_irl()
     if active_irl is not None:
@@ -1237,7 +1223,7 @@ def toggle_layer_servo(layer_index: int) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail="Selected servo does not support test toggling.")
 
     try:
-        _, _cfg = _read_machine_params_config()
+        _cfg = machine_toml.read()
         _speeds = _servo_settings_from_config(_cfg)
         currently_open = hasattr(servo, "isOpen") and servo.isOpen()
         _apply_pca_servo_speed(servo, _speeds.get("close_speed") if currently_open else _speeds.get("open_speed"))
@@ -1276,7 +1262,7 @@ def preview_layer_servo(
 ) -> Dict[str, Any]:
     _ensure_not_homing("preview a servo")
     servo = _live_servo_for_layer(layer_index)
-    _, config = _read_machine_params_config()
+    config = machine_toml.read()
     servo_settings = _servo_settings_from_config(config)
     backend = servo_settings["backend"]
     desired_open = bool(payload.is_open)
@@ -1366,7 +1352,7 @@ def nudge_layer_servo(layer_index: int, payload: ServoNudgePayload) -> Dict[str,
         raise HTTPException(status_code=500, detail="Servo does not support position-based movement.")
 
     try:
-        _, _cfg = _read_machine_params_config()
+        _cfg = machine_toml.read()
         _apply_pca_servo_speed(servo, _servo_settings_from_config(_cfg).get("homing_speed"))
 
         current_pos = int(servo.position)
@@ -1411,7 +1397,7 @@ def move_to_layer_servo(layer_index: int, payload: ServoLayerMovePayload) -> Dic
 
     angle = max(0, min(180, int(payload.angle)))
     try:
-        _, _cfg = _read_machine_params_config()
+        _cfg = machine_toml.read()
         _apply_pca_servo_speed(servo, _servo_settings_from_config(_cfg).get("homing_speed"))
         servo.move_to(angle)
         feedback = _live_servo_feedback_for_layer(layer_index, servo)
@@ -1805,7 +1791,7 @@ def nudge_waveshare_servo(servo_id: int, payload: ServoNudgePayload) -> Dict[str
 
 @router.get("/api/hardware-config/chute")
 def get_chute_hardware_config() -> Dict[str, Any]:
-    _, config = _read_machine_params_config()
+    config = machine_toml.read()
     return _chute_settings_from_config(config)
 
 
@@ -1828,31 +1814,26 @@ def save_chute_hardware_config(
             detail="operating_speed_microsteps_per_second must be greater than 0",
         )
 
-    params_path, config = _read_machine_params_config()
-    chute_config = config.get("chute", {})
-    if not isinstance(chute_config, dict):
-        chute_config = {}
-    # Keep the canonical aiming keys in sync with this legacy save so the
-    # newer chute-aiming page and this one never disagree about geometry.
-    num_sections = _coerce_int(chute_config.get("num_sections"), DEFAULT_CHUTE_NUM_SECTIONS)
-    if num_sections < 1:
-        num_sections = DEFAULT_CHUTE_NUM_SECTIONS
-    section_pitch_deg = 360.0 / num_sections
-    config["chute"] = {
-        **chute_config,
-        "first_bin_center": first_bin_center,
-        "pillar_width_deg": pillar_width_deg,
-        "num_sections": num_sections,
-        "section_width_deg": round(section_pitch_deg - pillar_width_deg, 4),
-        "first_section_offset_deg": first_bin_center,
-        "endstop_active_high": endstop_active_high,
-        "operating_speed_microsteps_per_second": operating_speed_microsteps_per_second,
-    }
-
-    try:
-        _write_machine_params_config(params_path, config)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write config: {e}")
+    with machine_toml.edit() as config:
+        chute_config = config.get("chute", {})
+        if not isinstance(chute_config, dict):
+            chute_config = {}
+        # Keep the canonical aiming keys in sync with this legacy save so the
+        # newer chute-aiming page and this one never disagree about geometry.
+        num_sections = _coerce_int(chute_config.get("num_sections"), DEFAULT_CHUTE_NUM_SECTIONS)
+        if num_sections < 1:
+            num_sections = DEFAULT_CHUTE_NUM_SECTIONS
+        section_pitch_deg = 360.0 / num_sections
+        config["chute"] = {
+            **chute_config,
+            "first_bin_center": first_bin_center,
+            "pillar_width_deg": pillar_width_deg,
+            "num_sections": num_sections,
+            "section_width_deg": round(section_pitch_deg - pillar_width_deg, 4),
+            "first_section_offset_deg": first_bin_center,
+            "endstop_active_high": endstop_active_high,
+            "operating_speed_microsteps_per_second": operating_speed_microsteps_per_second,
+        }
 
     applied_live = False
     if shared_state.controller_ref is not None and hasattr(shared_state.controller_ref, "irl"):
@@ -2037,29 +2018,24 @@ def _persist_and_apply_chute_aiming(
     operating_speed_microsteps_per_second: Optional[int] = None,
 ) -> Dict[str, Any]:
     section_pitch_deg = 360.0 / num_sections
-    params_path, config = _read_machine_params_config()
-    chute_config = config.get("chute", {})
-    if not isinstance(chute_config, dict):
-        chute_config = {}
-    new_chute: Dict[str, Any] = {
-        **chute_config,
-        "num_sections": num_sections,
-        "section_width_deg": round(section_width_deg, 4),
-        "first_section_offset_deg": round(first_section_offset_deg, 4),
-        # Keep legacy keys in sync for the old page / older readers.
-        "pillar_width_deg": round(section_pitch_deg - section_width_deg, 4),
-        "first_bin_center": round(first_section_offset_deg, 4),
-    }
-    if endstop_active_high is not None:
-        new_chute["endstop_active_high"] = bool(endstop_active_high)
-    if operating_speed_microsteps_per_second is not None:
-        new_chute["operating_speed_microsteps_per_second"] = int(operating_speed_microsteps_per_second)
-    config["chute"] = new_chute
-
-    try:
-        _write_machine_params_config(params_path, config)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write config: {e}")
+    with machine_toml.edit() as config:
+        chute_config = config.get("chute", {})
+        if not isinstance(chute_config, dict):
+            chute_config = {}
+        new_chute: Dict[str, Any] = {
+            **chute_config,
+            "num_sections": num_sections,
+            "section_width_deg": round(section_width_deg, 4),
+            "first_section_offset_deg": round(first_section_offset_deg, 4),
+            # Keep legacy keys in sync for the old page / older readers.
+            "pillar_width_deg": round(section_pitch_deg - section_width_deg, 4),
+            "first_bin_center": round(first_section_offset_deg, 4),
+        }
+        if endstop_active_high is not None:
+            new_chute["endstop_active_high"] = bool(endstop_active_high)
+        if operating_speed_microsteps_per_second is not None:
+            new_chute["operating_speed_microsteps_per_second"] = int(operating_speed_microsteps_per_second)
+        config["chute"] = new_chute
 
     applied_live = False
     if shared_state.controller_ref is not None and hasattr(shared_state.controller_ref, "irl"):
@@ -2901,7 +2877,7 @@ def clear_bin_contents(
 def get_bins_layout() -> Dict[str, Any]:
     """Return the full bin grid: layers → sections → bins, with chute angles."""
     layout_config = getBinLayout()
-    _, config = _read_machine_params_config()
+    config = machine_toml.read()
     chute_cfg = _chute_settings_from_config(config)
     first_bin_center = float(chute_cfg.get("first_bin_center", DEFAULT_CHUTE_FIRST_BIN_CENTER))
     pillar_width_deg = float(chute_cfg.get("pillar_width_deg", DEFAULT_CHUTE_PILLAR_WIDTH_DEG))

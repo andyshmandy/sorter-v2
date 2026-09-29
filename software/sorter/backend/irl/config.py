@@ -770,12 +770,8 @@ def cameraSettingsForRole(settings: object, role: str) -> dict:
 def mkIRLConfig(machine_params: dict[str, object] | None = None) -> IRLConfig:
     irl_config = IRLConfig()
 
-    from machine_toml import machine_toml_path
-    from toml_config import loadTomlFile
-    raw_toml: dict[str, object] = {}
-    params_path = machine_toml_path()
-    if params_path.exists():
-        raw_toml = loadTomlFile(params_path)
+    import machine_toml
+    raw_toml: dict[str, object] = machine_toml.read()
 
     picture_settings_section = {}
     if isinstance(raw_toml, dict):
