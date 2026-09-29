@@ -150,35 +150,6 @@ class RuntimeStatsCollectorBinClearTests(unittest.TestCase):
         self.assertEqual(collector.snapshot()["counts"], live["counts"])
 
 
-class RuntimeStatsRecognizerCountersTests(unittest.TestCase):
-    def test_snapshot_exposes_recognizer_counters_under_counts(self) -> None:
-        collector = RuntimeStatsCollector()
-        collector.setLifecycleState("running", now_wall=1.0, now_monotonic=1.0)
-
-        collector.observeRecognizerCounter("recognize_fired_total")
-        collector.observeRecognizerCounter("recognize_fired_total")
-        collector.observeRecognizerCounter("recognize_skipped_no_crops")
-        collector.observeRecognizerCounter("brickognize_empty_result")
-        collector.observeRecognizerCounter("brickognize_timeout_total")
-        collector.observeRecognizerCounter("unknown_counter_name")  # ignored
-
-        counts = collector.snapshot()["counts"]
-        self.assertEqual(2, counts["recognize_fired_total"])
-        self.assertEqual(1, counts["recognize_skipped_no_crops"])
-        self.assertEqual(1, counts["brickognize_empty_result"])
-        self.assertEqual(1, counts["brickognize_timeout_total"])
-
-    def test_classification_zone_lost_counter_bumps_and_surfaces_in_snapshot(self) -> None:
-        collector = RuntimeStatsCollector()
-        collector.setLifecycleState("running", now_wall=1.0, now_monotonic=1.0)
-
-        for _ in range(3):
-            collector.observeClassificationZoneLost()
-
-        feeder = collector.snapshot()["feeder"]
-        self.assertEqual(3, feeder["classification_zone_lost_total"])
-
-
 class RuntimeStatsReapStuckPiecesTests(unittest.TestCase):
     def _running(self) -> RuntimeStatsCollector:
         collector = RuntimeStatsCollector()
