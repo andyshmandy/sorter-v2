@@ -31,6 +31,7 @@ from subsystems.distribution.chute import BinAddress, Chute
 from subsystems.distribution.positioning import (
     CHUTE_JAM_ALERT_PREFIX,
     DISTRIBUTION_NO_BIN_AVAILABLE_INCIDENT_KIND,
+    DOORS_STOP_WAIT_S,
     Positioning,
     SERVO_BUS_ALERT_PREFIX,
 )
@@ -205,6 +206,33 @@ class ServoBusFatalTests(unittest.TestCase):
         self.assertIsNone(positioning.step())  # stopped: sent again and accepted
         self.assertEqual(2, positioning.chute.moveToBin.call_count)
         self.assertEqual(DistributionState.READY, positioning.step())
+
+    def test_the_doors_for_a_piece_are_set_only_once_every_door_has_stopped(self) -> None:
+        moving = _mk_healthy_servo()
+        moving.stopped = False
+        servos = [_mk_healthy_servo(), moving]
+        positioning = self._mk_positioning(servos=servos)
+        commands = lambda servo: servo.open.call_count + servo.close.call_count
+
+        self.assertIsNone(positioning.step())  # layer 1's door is still moving
+        self.assertIsNone(positioning.step())
+        self.assertEqual([0, 0], [commands(servo) for servo in servos])
+        positioning.chute.moveToBin.assert_not_called()
+
+        moving.stopped = True
+        self.assertIsNone(positioning.step())  # doors set, chute sent
+        self.assertEqual([1, 1], [commands(servo) for servo in servos])
+        positioning.chute.moveToBin.assert_called_once()
+
+    def test_a_door_that_never_stops_is_set_anyway_after_the_wait(self) -> None:
+        moving = _mk_healthy_servo()
+        moving.stopped = False
+        positioning = self._mk_positioning(servos=[_mk_healthy_servo(), moving])
+
+        self.assertIsNone(positioning.step())
+        positioning._doors_wait_since -= DOORS_STOP_WAIT_S
+        positioning.step()
+        positioning.chute.moveToBin.assert_called_once()
 
     def test_a_refused_door_close_marks_the_layer_unavailable(self) -> None:
         servo = _mk_healthy_servo()

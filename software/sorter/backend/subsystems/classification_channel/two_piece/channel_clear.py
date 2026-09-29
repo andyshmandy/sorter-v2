@@ -68,25 +68,30 @@ def openAllLayerDoors(gc: Any, irl: Any, label: str = LOG_TAG, settle_timeout_s:
     first and the whole sweep goes to the bucket.
 
     The doors are re-commanded unconditionally — shadow state is never trusted
-    here, exactly as ``Positioning._selectDoor`` does before a dispense — and we
-    wait for the flaps to stop before the caller starts rotating.
+    here, exactly as ``Positioning._selectDoor`` does before a dispense. A door
+    still moving refuses a new command, so each is commanded once it has
+    stopped, and we wait for the flaps to stop before the caller starts rotating.
     """
     if getattr(gc, "disable_servos", False):
         return
     servos = list(getattr(irl, "servos", []) or [])
     if not servos:
         return
+    deadline = time.monotonic() + max(0.0, settle_timeout_s)
     opened: list[int] = []
     for i, servo in enumerate(servos):
         try:
+            while not servo.stopped and time.monotonic() < deadline:
+                time.sleep(0.02)
             if hasattr(servo, "apply_open_speed"):
                 servo.apply_open_speed()
-            servo.open()
+            if servo.open() is False:
+                gc.logger.warning(f"{label} channel clear: layer {i} door refused to open")
+                continue
             opened.append(i)
         except Exception as exc:
             gc.logger.warning(f"{label} channel clear: could not open layer {i} door: {exc}")
     gc.logger.info(f"{label} channel clear: opened layer doors {opened} — sweep goes to the bucket")
-    deadline = time.monotonic() + max(0.0, settle_timeout_s)
     while time.monotonic() < deadline:
         try:
             if all(bool(getattr(servo, "stopped", True)) for servo in servos):

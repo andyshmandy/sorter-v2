@@ -30,6 +30,9 @@ DISTRIBUTION_NO_BIN_AVAILABLE_INCIDENT_KIND = "distribution_no_bin_available"
 # a real jam reliably.
 CHUTE_MOVE_TIMEOUT_MS = 6000
 CHUTE_MOVE_TIMEOUT_MULTIPLIER = 3.0
+# A door still moving refuses a new command, so the doors for the next piece
+# are set only once every flap has stopped; after this long, set them anyway.
+DOORS_STOP_WAIT_S = 2.0
 
 
 def _incidentHandlingOff(kind: str) -> bool:
@@ -93,6 +96,7 @@ class Positioning(BaseState):
         self._phase: str = "init"
         self._target_address: BinAddress | None = None
         self._door_servo_index: int | None = None
+        self._doors_wait_since: float | None = None
         self._state_entered_at: float = 0.0
         self._moving_started_at: float = 0.0
         self._piece = None
@@ -119,6 +123,9 @@ class Positioning(BaseState):
         now = time.monotonic()
 
         if self._phase == "init":
+            if not self._doorsStopped(now):
+                self._setOccupancyState("positioning.wait_doors_stopped")
+                return None
             # Fresh evaluation per piece — an earlier transient servo
             # glitch must not permanently disable a layer.
             self._blocked_layers.clear()
@@ -485,6 +492,28 @@ class Positioning(BaseState):
         self.logger.warning(
             f"Positioning: disabling layer {layer_index} temporarily because {reason}"
         )
+
+    def _doorsStopped(self, now: float) -> bool:
+        if self.gc.disable_servos:
+            return True
+        for index, servo in enumerate(self.irl.servos):
+            try:
+                moving = bool(getattr(servo, "available", True)) and not servo.stopped
+            except Exception:
+                moving = False  # an unreachable servo is _isLayerUsable's to judge
+            if not moving:
+                continue
+            if self._doors_wait_since is None:
+                self._doors_wait_since = now
+            if now - self._doors_wait_since < DOORS_STOP_WAIT_S:
+                return False
+            self.logger.warning(
+                f"Positioning: layer {index} door still reports moving after "
+                f"{DOORS_STOP_WAIT_S:.0f} s; setting the doors anyway"
+            )
+            break
+        self._doors_wait_since = None
+        return True
 
     def _isDoorServoStopped(self) -> bool:
         if self._door_servo_index is None:
