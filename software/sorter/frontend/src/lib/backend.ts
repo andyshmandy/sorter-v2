@@ -1,18 +1,9 @@
 const BACKEND_PORT = 8000;
-const SUPERVISOR_PORT = 8001;
-const SSR_FALLBACK_HTTP = `http://localhost:${BACKEND_PORT}`;
-const SSR_FALLBACK_SUPERVISOR = `http://localhost:${SUPERVISOR_PORT}`;
-
-function originForPort(port: number): string {
-	if (typeof window === 'undefined') {
-		return port === SUPERVISOR_PORT ? SSR_FALLBACK_SUPERVISOR : SSR_FALLBACK_HTTP;
-	}
-	const { protocol, hostname } = window.location;
-	return `${protocol}//${hostname}:${port}`;
-}
 
 export function getBackendHttpBase(): string {
-	return originForPort(BACKEND_PORT);
+	if (typeof window === 'undefined') return `http://localhost:${BACKEND_PORT}`;
+	const { protocol, hostname } = window.location;
+	return `${protocol}//${hostname}:${BACKEND_PORT}`;
 }
 
 export function getBackendWsBase(): string {
@@ -46,138 +37,32 @@ export function machineWsUrlFromHttpBaseUrl(
 	}
 }
 
-export function supervisorHttpBaseUrlFromBackendHttpBaseUrl(
-	backendBaseUrl: string | null | undefined
-): string | null {
-	if (!backendBaseUrl) return null;
-	try {
-		const parsed = new URL(backendBaseUrl);
-		parsed.port = String(SUPERVISOR_PORT);
-		return parsed.toString().replace(/\/+$/, '');
-	} catch {
-		return null;
-	}
-}
-
-export type BackendRestartRequestResult = {
-	ok: boolean;
-	mode: 'supervisor' | 'backend' | 'none';
-};
-
-export type BackendConnectionProbeResult = {
-	backendOk: boolean;
-	supervisorOk: boolean;
-	supervisorState: string | null;
-	backendRunning: boolean;
-	backendHealthy: boolean;
-	restartRequested: boolean;
-	crashLooping: boolean;
-	lastCrashOutput: string | null;
-};
-
+// The backend exits and its service restarts it. (The supervisor listens on
+// loopback only, so a browser cannot reach it.)
 export async function requestBackendRestart(
 	backendBaseUrl: string,
 	timeoutMs = 4000
-): Promise<BackendRestartRequestResult> {
-	const supervisorBaseUrl = supervisorHttpBaseUrlFromBackendHttpBaseUrl(backendBaseUrl);
-	if (supervisorBaseUrl) {
-		try {
-			const response = await fetch(`${supervisorBaseUrl}/api/supervisor/restart`, {
-				method: 'POST',
-				signal: AbortSignal.timeout(timeoutMs)
-			});
-			if (response.ok) {
-				return { ok: true, mode: 'supervisor' };
-			}
-		} catch {
-			// Fall through to backend in-process restart.
-		}
-	}
-
+): Promise<boolean> {
 	try {
 		const response = await fetch(`${backendBaseUrl}/api/system/restart`, {
 			method: 'POST',
 			signal: AbortSignal.timeout(timeoutMs)
 		});
-		if (response.ok) {
-			return { ok: true, mode: 'backend' };
-		}
+		return response.ok;
 	} catch {
-		// The backend may already be down.
+		return false;
 	}
-
-	return { ok: false, mode: 'none' };
 }
 
-export async function probeBackendConnection(
-	backendBaseUrl: string,
-	options?: {
-		backendTimeoutMs?: number;
-		supervisorTimeoutMs?: number;
-	}
-): Promise<BackendConnectionProbeResult> {
-	const backendTimeoutMs = options?.backendTimeoutMs ?? 2500;
-	const supervisorTimeoutMs = options?.supervisorTimeoutMs ?? 1500;
-
+export async function backendHealthy(backendBaseUrl: string, timeoutMs = 2500): Promise<boolean> {
 	try {
 		const response = await fetch(`${backendBaseUrl}/health`, {
-			signal: AbortSignal.timeout(backendTimeoutMs)
+			signal: AbortSignal.timeout(timeoutMs)
 		});
-		if (response.ok) {
-			return {
-				backendOk: true,
-				supervisorOk: false,
-				supervisorState: null,
-				backendRunning: true,
-				backendHealthy: true,
-				restartRequested: false,
-				crashLooping: false,
-				lastCrashOutput: null
-			};
-		}
-		console.warn(`[backend] /health probe returned non-ok status ${response.status} for ${backendBaseUrl}/health`);
-	} catch (err) {
-		console.warn(`[backend] /health probe failed for ${backendBaseUrl}/health:`, err);
-		// Try supervisor next.
+		return response.ok;
+	} catch {
+		return false;
 	}
-
-	const supervisorBaseUrl = supervisorHttpBaseUrlFromBackendHttpBaseUrl(backendBaseUrl);
-	if (supervisorBaseUrl) {
-		try {
-			const response = await fetch(`${supervisorBaseUrl}/api/supervisor/status`, {
-				signal: AbortSignal.timeout(supervisorTimeoutMs)
-			});
-			if (response.ok) {
-				const data = await response.json();
-				return {
-					backendOk: false,
-					supervisorOk: true,
-					supervisorState:
-						typeof data?.supervisor_state === 'string' ? data.supervisor_state : null,
-					backendRunning: Boolean(data?.backend_running),
-					backendHealthy: Boolean(data?.backend_healthy),
-					restartRequested: Boolean(data?.restart_requested),
-					crashLooping: Boolean(data?.crash_looping),
-					lastCrashOutput:
-						typeof data?.last_crash_output === 'string' ? data.last_crash_output : null
-				};
-			}
-		} catch (err) {
-			console.warn(`[backend] supervisor probe failed for ${supervisorBaseUrl}/api/supervisor/status:`, err);
-			// Supervisor unavailable too.
-		}
-	}
-
-	return {
-		backendOk: false,
-		supervisorOk: false,
-		supervisorState: null,
-		backendRunning: false,
-		backendHealthy: false,
-		restartRequested: false,
-		crashLooping: false,
-		lastCrashOutput: null
-	};
 }
 
 export async function waitForBackend(
@@ -197,13 +82,7 @@ export async function waitForBackend(
 	await new Promise((resolve) => setTimeout(resolve, initialDelayMs));
 
 	for (let attempt = 0; attempt < maxAttempts; attempt++) {
-		const probe = await probeBackendConnection(backendBaseUrl, {
-			backendTimeoutMs: timeoutMs,
-			supervisorTimeoutMs: Math.min(timeoutMs, 1500)
-		});
-		if (probe.backendOk) {
-			return true;
-		}
+		if (await backendHealthy(backendBaseUrl, timeoutMs)) return true;
 		await new Promise((resolve) => setTimeout(resolve, intervalMs));
 	}
 

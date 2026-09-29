@@ -26,7 +26,6 @@ export interface MachineState {
 	status: ConnectionStatus;
 	cameraHealth: Map<string, string>;
 	cameraFeedEpoch: number;
-	lastHeartbeat: number | null;
 	recentObjects: KnownObjectData[];
 	runtimeStats: Record<string, unknown> | null;
 	systemStatus: SystemStatusData | null;
@@ -47,19 +46,12 @@ export interface MachinesContext {
 export interface MachineContext {
 	readonly machine: MachineState | null;
 	readonly cameraHealth: Map<string, string>;
-	sendCommand(command: unknown): void;
 }
 
 export function isIdentityEvent(
 	event: SocketEvent
 ): event is { tag: 'identity'; data: MachineIdentity } {
 	return event.tag === 'identity';
-}
-
-export function isHeartbeatEvent(
-	event: SocketEvent
-): event is { tag: 'heartbeat'; data: { timestamp: number } } {
-	return event.tag === 'heartbeat';
 }
 
 export function isKnownObjectEvent(event: SocketEvent): event is KnownObjectEvent {

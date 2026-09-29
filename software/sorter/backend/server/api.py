@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status
+from fastapi import FastAPI, WebSocket, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -7,7 +7,6 @@ import asyncio
 import json
 import os
 import time
-from pathlib import Path
 
 import db
 import machine_toml
@@ -33,16 +32,7 @@ from server.security import (
     websocket_connection_allowed,
 )
 
-from server.shared_state import (
-    active_connections,
-    broadcastEvent,
-    setGlobalConfig,
-    setRuntimeVariables,
-    setCommandQueue,
-    setController,
-    setVisionManager,
-    _getRuntimeVariables,
-)
+from server.shared_state import _getRuntimeVariables
 import server.shared_state as shared_state
 
 # ---------------------------------------------------------------------------
@@ -203,11 +193,20 @@ async def _loop_lag_probe() -> None:
             gc.runtime_stats.observePerfMs("socket.loop_lag_ms", max(0.0, lag_ms))
 
 
+async def _heartbeats() -> None:
+    """The server's ping: a tab that hears nothing for a few seconds reconnects."""
+    while True:
+        await asyncio.sleep(shared_state.WS_HEARTBEAT_INTERVAL_S)
+        heartbeat = {"tag": "heartbeat", "data": {"timestamp": time.time()}}
+        shared_state.fanOut("heartbeat", shared_state.encodeEvent(heartbeat))
+
+
 @app.on_event("startup")
 async def onStartup() -> None:
     _load_saved_api_keys_into_environment()
     shared_state.server_loop = asyncio.get_running_loop()
     asyncio.create_task(_loop_lag_probe())
+    asyncio.create_task(_heartbeats())
     getSetProgressSyncWorker().start()
     get_waveshare_inventory_manager().start()
     keep_tailscale_installed()
@@ -251,26 +250,16 @@ class MachineIdentityUpdateRequest(BaseModel):
 
 
 def _getMachineIdentityData() -> MachineIdentityData:
-    machine_id = shared_state.gc_ref.machine_id if shared_state.gc_ref is not None else getMachineId()
+    gc = shared_state.gc_ref
     return MachineIdentityData(
-        machine_id=machine_id,
+        machine_id=gc.machine_id if gc is not None else getMachineId(),
         nickname=getMachineNickname(),
+        run_id=gc.run_id if gc is not None else None,
     )
 
 
 def _broadcastIdentityUpdate() -> None:
-    if shared_state.server_loop is None:
-        return
-
-    identity_event = IdentityEvent(tag="identity", data=_getMachineIdentityData())
-    future = asyncio.run_coroutine_threadsafe(
-        broadcastEvent(identity_event.model_dump()),
-        shared_state.server_loop,
-    )
-    try:
-        future.result(timeout=1.0)
-    except Exception:
-        pass
+    shared_state.broadcast(IdentityEvent(tag="identity", data=_getMachineIdentityData()).model_dump())
 
 
 @app.get("/api/machine-identity", response_model=MachineIdentityData)
@@ -740,48 +729,40 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         return
 
     await websocket.accept()
-    active_connections.append(websocket)
+    client = shared_state.WsClient(websocket)
+    # Registered before the snapshot is read, so no change in between is lost.
+    shared_state.ws_clients.add(client)
+    tasks: list[asyncio.Future] = []
+    try:
+        # A broadcast that arrived meanwhile is at least as new, so it keeps its
+        # value; the snapshot keeps its place, identity first.
+        client.pending = {**_connectSnapshot(), **client.pending}
+        tasks = [
+            asyncio.ensure_future(client.send()),
+            asyncio.ensure_future(_readUntilDisconnect(websocket)),
+        ]
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        shared_state.ws_clients.discard(client)
+        for task in tasks:
+            task.cancel()
 
-    identity_event = IdentityEvent(tag="identity", data=_getMachineIdentityData())
-    await websocket.send_json(identity_event.model_dump())
-    # No known_object replay on connect — clients hydrate recent pieces via
-    # GET /api/pieces instead of a sqlite-backed ring of past events.
+
+def _connectSnapshot() -> dict[str, str]:
+    """Everything a new client needs before the live updates, identity first.
+    No known_object replay: clients hydrate recent pieces via GET /api/pieces."""
+    events = [
+        {"tag": "identity", "data": _getMachineIdentityData().model_dump()},
+        {"tag": "system_status", "data": shared_state.systemStatusData()},
+    ]
     if shared_state.runtime_stats_live is not None:
-        await websocket.send_json(
-            {
-                "tag": "runtime_stats",
-                "data": {"payload": shared_state.runtime_stats_live},
-            }
-        )
-
-    # Always send a fresh system_status snapshot on connect (cheap + always valid).
-    await websocket.send_json(
-        {
-            "tag": "system_status",
-            "data": {
-                "hardware_state": shared_state.hardware_state,
-                "hardware_error": shared_state.hardware_error,
-                "homing_step": shared_state.hardware_homing_step,
-                "no_power_development_mode": bool(
-                    getattr(shared_state.gc_ref, "no_power_development_mode", False)
-                ),
-            },
-        }
-    )
+        events.append({"tag": "runtime_stats", "data": {"payload": shared_state.runtime_stats_live}})
     if shared_state.sorter_state_snapshot is None:
         fsm_state = "initializing"
         if shared_state.controller_ref is not None:
             fsm_state = getattr(shared_state.controller_ref.state, "value", "initializing")
-        shared_state.sorter_state_snapshot = {
-            "state": fsm_state,
-        }
-    await websocket.send_json(
-        {
-            "tag": "sorter_state",
-            "data": shared_state.sorter_state_snapshot,
-        }
-    )
-
+        shared_state.sorter_state_snapshot = {"state": fsm_state}
+    events.append({"tag": "sorter_state", "data": shared_state.sorter_state_snapshot})
     # Populate cameras_config snapshot on-demand from the live config file.
     if shared_state.cameras_config_snapshot is None:
         try:
@@ -790,40 +771,24 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         except Exception:
             shared_state.cameras_config_snapshot = None
     if shared_state.cameras_config_snapshot is not None:
-        await websocket.send_json(
-            {
-                "tag": "cameras_config",
-                "data": shared_state.cameras_config_snapshot,
-            }
-        )
+        events.append({"tag": "cameras_config", "data": shared_state.cameras_config_snapshot})
     # Always compute fresh sorting profile status on connect — cheap file read,
     # keeps frontend in sync without depending on mutation-time broadcasts.
     try:
         from server.routers.sorting_profiles import _current_local_profile_status
-        await websocket.send_json(
-            {
-                "tag": "sorting_profile_status",
-                "data": _current_local_profile_status(),
-            }
-        )
+        events.append({"tag": "sorting_profile_status", "data": _current_local_profile_status()})
     except Exception:
         pass
+    return {event["tag"]: shared_state.encodeEvent(event) for event in events}
 
-    tracker = getattr(shared_state.gc_ref, 'set_progress_tracker', None) if shared_state.gc_ref else None
-    if tracker is not None:
-        await websocket.send_json(
-            {
-                "tag": "set_progress",
-                "data": tracker.get_snapshot(),
-            }
-        )
 
+async def _readUntilDisconnect(websocket: WebSocket) -> None:
+    # Clients send nothing the server acts on; reading is how a disconnect shows.
     try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        if websocket in active_connections:
-            active_connections.remove(websocket)
+        while (await websocket.receive())["type"] != "websocket.disconnect":
+            pass
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------

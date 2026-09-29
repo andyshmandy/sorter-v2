@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getMachinesContext, getMachineContext } from '$lib/machines/context';
+	import { getMachineContext } from '$lib/machines/context';
 	import MachineDropdown from '$lib/components/MachineDropdown.svelte';
-	import { getBackendHttpBase, getBackendWsBase } from '$lib/backend';
+	import { getBackendHttpBase } from '$lib/backend';
 	import { settings } from '$lib/stores/settings';
 	import { ArrowLeft } from 'lucide-svelte';
 
@@ -45,7 +45,6 @@
 		'distribution.occupancy'
 	];
 
-	const manager = getMachinesContext();
 	const machine_ctx = getMachineContext();
 
 	let loaded_runtime_stats = $state<Record<string, unknown> | null>(null);
@@ -427,9 +426,6 @@
 	onMount(() => {
 		let disposed = false;
 		let initialized = false;
-		if (manager.connectedMachines.length === 0) {
-			manager.connect(`${getBackendWsBase()}/ws`);
-		}
 		loadRecords();
 		void loadLive();
 		const live_timer = setInterval(loadLive, 2000);

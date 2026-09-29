@@ -34,29 +34,12 @@ class HeartbeatEvent(BaseModel):
     data: HeartbeatData
 
 
-class FrameResultData(BaseModel):
-    class_id: Optional[int]
-    class_name: Optional[str]
-    confidence: float
-    bbox: Optional[Tuple[int, int, int, int]]
-
-
-class FrameData(BaseModel):
-    camera: CameraName
-    timestamp: float
-    raw: str
-    annotated: Optional[str]
-    results: List[FrameResultData]
-
-
-class FrameEvent(BaseModel):
-    tag: Literal["frame"]
-    data: FrameData
-
-
 class MachineIdentityData(BaseModel):
     machine_id: str
     nickname: Optional[str]
+    # New with every backend process: a tab reopens its camera feeds when it
+    # reconnects to a different one, since the old process's streams are gone.
+    run_id: Optional[str] = None
 
 
 class IdentityEvent(BaseModel):
@@ -303,7 +286,6 @@ class SetProfilerEnabledEvent(BaseModel):
 
 SocketEvent = Union[
     HeartbeatEvent,
-    FrameEvent,
     IdentityEvent,
     KnownObjectEvent,
     CameraHealthEvent,
@@ -315,7 +297,6 @@ SocketEvent = Union[
 ]
 MainThreadToServerCommand = Union[
     HeartbeatEvent,
-    FrameEvent,
     KnownObjectEvent,
     CameraHealthEvent,
     SystemStatusEvent,

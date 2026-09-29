@@ -10,7 +10,6 @@ import type {
 import type { MachineState, MachineIdentity } from './types';
 import {
 	isIdentityEvent,
-	isHeartbeatEvent,
 	isKnownObjectEvent,
 	isCameraHealthEvent,
 	isRuntimeStatsEvent,
@@ -22,9 +21,12 @@ import {
 import { mergeKnownObject, pieceStore } from '$lib/pieces';
 
 const RECONNECT_BASE_DELAY_MS = 1000;
-const RECONNECT_MAX_DELAY_MS = 30000;
-const CONNECTION_WATCHDOG_INTERVAL_MS = 3000;
-const HEARTBEAT_STALE_MS = 15000;
+const RECONNECT_MAX_DELAY_MS = 3000;
+const CONNECTION_WATCHDOG_INTERVAL_MS = 1000;
+// The server sends a heartbeat every 2 s. A connection silent for this long is
+// dead even if the browser still calls it open (a sleeping laptop, a dropped
+// Wi-Fi link, a server that gave up on a slow client).
+const STALE_MS = 5000;
 const RECENT_OBJECT_BUFFER_LIMIT = 32;
 const RECENT_OBJECT_REMOVAL_GRACE_MS = 1500;
 
@@ -52,6 +54,7 @@ export class MachineManager {
 	private ignored_closures = new WeakSet<WebSocket>();
 	private recent_removal_timers = new Map<string, ReturnType<typeof setTimeout>>();
 	private manually_disconnected = new Set<string>();
+	private last_message_at = new WeakMap<WebSocket, number>();
 	private connection_watchdog_timer: ReturnType<typeof setInterval> | null = null;
 
 	selectedMachine = $derived.by(() => {
@@ -76,6 +79,7 @@ export class MachineManager {
 
 		const ws = new WebSocket(url);
 		this.pending_connections.set(ws, url);
+		this.last_message_at.set(ws, Date.now());
 
 		ws.onopen = () => {
 			console.log(`[MachineManager] Connected to ${url}`);
@@ -83,6 +87,7 @@ export class MachineManager {
 		};
 
 		ws.onmessage = (message) => {
+			this.last_message_at.set(ws, Date.now());
 			const event = JSON.parse(message.data) as SocketEvent;
 			this.handleEvent(ws, event);
 		};
@@ -144,27 +149,29 @@ export class MachineManager {
 		this.reconnect_timers.set(url, timer);
 	}
 
-	startConnectionWatchdog(
-		options: {
-			defaultUrl?: string;
-			intervalMs?: number;
-			heartbeatStaleMs?: number;
-		} = {}
-	): () => void {
+	startConnectionWatchdog(options: { defaultUrl?: string } = {}): () => void {
 		this.stopConnectionWatchdog();
-		const intervalMs = options.intervalMs ?? CONNECTION_WATCHDOG_INTERVAL_MS;
-		const heartbeatStaleMs = options.heartbeatStaleMs ?? HEARTBEAT_STALE_MS;
 		const defaultUrl = options.defaultUrl;
 
 		const tick = () => {
-			if (defaultUrl) {
+			// A socket that has delivered nothing for STALE_MS (the server sends a
+			// heartbeat every 2 s) is replaced now: closing a dead socket can take
+			// the browser a minute to report.
+			const now = Date.now();
+			for (const [ws, url] of this.pending_connections) {
+				if (ws.readyState !== WebSocket.CONNECTING && ws.readyState !== WebSocket.OPEN) continue;
+				if (now - (this.last_message_at.get(ws) ?? now) < STALE_MS) continue;
+				console.warn(`[MachineManager] Nothing from ${url} for ${STALE_MS} ms; reconnecting`);
+				this.connect(url, { force: true });
+			}
+			// A pending reconnect timer owns the retry (and its backoff).
+			if (defaultUrl && !this.reconnect_timers.has(defaultUrl)) {
 				this.ensureConnected(defaultUrl);
 			}
-			this.reconnectStaleConnections({ fallbackUrl: defaultUrl, heartbeatStaleMs });
 		};
 
 		tick();
-		this.connection_watchdog_timer = setInterval(tick, intervalMs);
+		this.connection_watchdog_timer = setInterval(tick, CONNECTION_WATCHDOG_INTERVAL_MS);
 		return () => this.stopConnectionWatchdog();
 	}
 
@@ -174,29 +181,11 @@ export class MachineManager {
 		this.connection_watchdog_timer = null;
 	}
 
-	reconnectStaleConnections(
-		options: {
-			fallbackUrl?: string;
-			heartbeatStaleMs?: number;
-		} = {}
-	): void {
-		const heartbeatStaleMs = options.heartbeatStaleMs ?? HEARTBEAT_STALE_MS;
-		const now = Date.now();
-		for (const machine of this.machines.values()) {
-			const url = machine.url ?? options.fallbackUrl;
-			if (!url) continue;
-			if (this.manually_disconnected.has(url)) continue;
-			if (
-				machine.connection.readyState === WebSocket.CLOSING ||
-				machine.connection.readyState === WebSocket.CLOSED
-			) {
-				this.connect(url);
-				continue;
-			}
-			if (!this.isMachineHeartbeatStale(machine, now, heartbeatStaleMs)) continue;
-			console.warn(`[MachineManager] Heartbeat stale for ${url}; reconnecting WebSocket`);
-			this.connect(url, { force: true });
-		}
+	/** Whether the machine's websocket has delivered anything recently. */
+	isLive(machine: MachineState | null): boolean {
+		if (!machine || machine.status !== 'connected') return false;
+		if (machine.connection.readyState !== WebSocket.OPEN) return false;
+		return Date.now() - (this.last_message_at.get(machine.connection) ?? 0) < STALE_MS;
 	}
 
 	disconnect(machineId: string): void {
@@ -254,17 +243,6 @@ export class MachineManager {
 		}
 	}
 
-	private isMachineHeartbeatStale(
-		machine: MachineState,
-		nowMs: number,
-		heartbeatStaleMs: number
-	): boolean {
-		if (machine.status !== 'connected') return false;
-		if (machine.connection.readyState !== WebSocket.OPEN) return false;
-		if (machine.lastHeartbeat === null) return false;
-		return nowMs - machine.lastHeartbeat * 1000 > heartbeatStaleMs;
-	}
-
 	private handleEvent(ws: WebSocket, event: SocketEvent): void {
 		if (isIdentityEvent(event)) {
 			this.handleIdentity(ws, event.data);
@@ -275,9 +253,7 @@ export class MachineManager {
 				return;
 			}
 
-			if (isHeartbeatEvent(event)) {
-				this.handleHeartbeat(machineId);
-			} else if (isKnownObjectEvent(event)) {
+			if (isKnownObjectEvent(event)) {
 				this.handleKnownObject(machineId, event.data);
 			} else if (isCameraHealthEvent(event)) {
 				this.handleCameraHealth(machineId, event.data);
@@ -300,10 +276,12 @@ export class MachineManager {
 		this.pending_connections.delete(ws);
 
 		const existing = this.machines.get(identity.machine_id);
-		const replacingConnection = Boolean(existing && existing.connection !== ws);
 		if (existing && existing.connection !== ws) {
 			existing.connection.close();
 		}
+		// A reconnect keeps the camera feeds; only a new backend process (whose
+		// old streams are gone) reopens them.
+		const backendRestarted = Boolean(existing && existing.identity?.run_id !== identity.run_id);
 
 		const updated = new Map(this.machines);
 		updated.set(identity.machine_id, {
@@ -312,8 +290,7 @@ export class MachineManager {
 			url: url ?? existing?.url ?? null,
 			status: 'connected',
 			cameraHealth: existing?.cameraHealth ?? new Map(),
-			cameraFeedEpoch: (existing?.cameraFeedEpoch ?? 0) + (replacingConnection ? 1 : 0),
-			lastHeartbeat: null,
+			cameraFeedEpoch: (existing?.cameraFeedEpoch ?? 0) + (backendRestarted ? 1 : 0),
 			recentObjects: existing?.recentObjects ?? [],
 			runtimeStats: existing?.runtimeStats ?? null,
 			systemStatus: existing?.systemStatus ?? null,
@@ -332,33 +309,6 @@ export class MachineManager {
 		}
 
 		console.log(`[MachineManager] Machine identified: ${identity.machine_id}`);
-	}
-
-	refreshSelectedCameraFeeds(): void {
-		const machineId = this.selectedMachineId;
-		if (!machineId) return;
-		const machine = this.machines.get(machineId);
-		if (!machine) return;
-		const updated = new Map(this.machines);
-		updated.set(machineId, {
-			...machine,
-			cameraFeedEpoch: (machine.cameraFeedEpoch ?? 0) + 1
-		});
-		this.machines = updated;
-	}
-
-	private handleHeartbeat(machineId: string): void {
-		const machine = this.machines.get(machineId);
-		if (!machine) return;
-
-		// Stamp with the client's own receive time (seconds), NOT the server's
-		// heartbeat timestamp. The staleness watchdog subtracts this from
-		// Date.now(), so trusting the Pi's clock made the check sensitive to
-		// clock skew between the browser and an RTC-less Pi. Measuring elapsed
-		// time on a single clock is skew-proof.
-		const updated = new Map(this.machines);
-		updated.set(machineId, { ...machine, lastHeartbeat: Date.now() / 1000 });
-		this.machines = updated;
 	}
 
 	private handleKnownObject(machineId: string, obj: KnownObjectData): void {
@@ -543,16 +493,5 @@ export class MachineManager {
 			}
 		}
 		return null;
-	}
-
-	sendCommand(command: unknown): void {
-		const machine = this.selectedMachine;
-		if (machine && machine.connection.readyState === WebSocket.OPEN) {
-			machine.connection.send(JSON.stringify(command));
-		}
-	}
-
-	get connectedMachines(): MachineState[] {
-		return Array.from(this.machines.values()).filter((m) => m.status === 'connected');
 	}
 }
