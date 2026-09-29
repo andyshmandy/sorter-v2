@@ -1,4 +1,4 @@
-"""Router for stepper motor control and TMC driver settings endpoints."""
+"""Router for stepper motion and TMC driver settings, and the hardware-busy guards other routers share."""
 
 from __future__ import annotations
 
@@ -120,22 +120,24 @@ def _resolve_stepper(stepper_name: str) -> Any:
     return stepper
 
 
-def _hardware_worker_alive() -> bool:
+def _ensure_not_homing(action: str) -> None:
     worker = shared_state.hardware_worker_thread
-    return bool(worker is not None and worker.is_alive())
+    if (
+        (worker is not None and worker.is_alive())
+        or shared_state.hardware_state in {"homing", "initializing"}
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot {action} while hardware is {shared_state.hardware_state}.",
+        )
 
 
 def _ensure_runtime_ready(action: str) -> None:
-    state = shared_state.hardware_state
-    if _hardware_worker_alive() or state in {"homing", "initializing"}:
+    _ensure_not_homing(action)
+    if shared_state.hardware_state != "ready":
         raise HTTPException(
             status_code=409,
-            detail=f"Cannot {action} while hardware is {state}.",
-        )
-    if state != "ready":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Cannot {action} while hardware is {state}; run Safe Home first.",
+            detail=f"Cannot {action} while hardware is {shared_state.hardware_state}; run Safe Home first.",
         )
 
 
@@ -170,12 +172,7 @@ def _ensure_manual_motion_allowed(action: str) -> None:
             status_code=409,
             detail=f"Cannot {action} while power stress is active.",
         )
-    state = shared_state.hardware_state
-    if _hardware_worker_alive() or state in {"homing", "initializing"}:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Cannot {action} while hardware is {state}.",
-        )
+    _ensure_not_homing(action)
 
 
 def _active_irl_config() -> Any | None:
@@ -244,6 +241,31 @@ def _halt_stepper(stepper: Any, *, force: bool = False) -> None:
     if not stopped:
         detail = "; ".join(errors) if errors else "No supported stop method found"
         raise RuntimeError(detail)
+
+
+def _stop_all_steppers() -> None:
+    """Stop all known steppers. Raises HTTPException on failure."""
+    halted: list[str] = []
+    errors: Dict[str, str] = {}
+
+    for name, stepper in _stepper_mapping().items():
+        if stepper is None:
+            continue
+        try:
+            _halt_stepper(stepper)
+            halted.append(name)
+        except Exception as e:
+            errors[name] = str(e)
+
+    if errors:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "One or more steppers failed to stop.",
+                "errors": errors,
+                "stopped": halted,
+            },
+        )
 
 
 def _stop_stepper_after_delay(stepper: Any, delay_s: float, lock: threading.Lock, *, force: bool = False) -> None:
@@ -1898,8 +1920,6 @@ def rehome_after_stall() -> Dict[str, Any]:
         STEPPER_STALL_INCIDENT_KIND,
         CHUTE_NEEDS_HOMING_INCIDENT_KIND,
     )
-
-    from server.routers.hardware import _ensure_not_homing
 
     _ensure_not_homing("re-home the chute")
 

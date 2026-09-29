@@ -20,7 +20,7 @@ from machine_platform.control_board import discover_control_boards
 from server import shared_state
 import machine_toml
 from server.routers.cameras import CAMERA_SETUP_ROLES, _camera_source_for_role
-from server.routers.hardware import _servo_settings_from_config
+from server.routers.servos import _servo_settings_from_config
 
 router = APIRouter()
 

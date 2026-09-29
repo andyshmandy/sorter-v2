@@ -52,6 +52,18 @@ def _allowMultiCategoryBins() -> bool:
         return False
 
 
+def clearBinsFullAlertIfOwned() -> None:
+    try:
+        with shared_state.hardware_lifecycle_lock:
+            err = shared_state.hardware_error
+            if isinstance(err, str) and (
+                err.startswith(BINS_FULL_ALERT_PREFIX)
+                or err.startswith(MISC_PASSTHROUGH_ALERT_PREFIX)
+            ):
+                shared_state.setHardwareStatus(clear_error=True)
+    except Exception:
+        pass
+
 
 def _persistBinCategories(layout: DistributionLayout) -> None:
     # Runs on the control loop, so the write runs on the database writer
@@ -134,7 +146,7 @@ class Positioning(BaseState):
                     f"Positioning: piece {piece.uuid} is too big "
                     f"({piece.max_dimension_mm}mm) — passthrough to misc bottom bin"
                 )
-                self._clearBinsFullAlertIfOwned()
+                clearBinsFullAlertIfOwned()
                 self._clearChuteJamAlertIfOwned()
                 self._openAllDoorsForPassthrough()
                 piece.stage = PieceStage.distributing
@@ -185,7 +197,7 @@ class Positioning(BaseState):
                     f"Positioning: unrouted piece loose on the classification channel — "
                     f"piece {piece.uuid} passes through to the bucket instead of claiming a bin"
                 )
-                self._clearBinsFullAlertIfOwned()
+                clearBinsFullAlertIfOwned()
                 self._clearChuteJamAlertIfOwned()
                 self._openAllDoorsForPassthrough()
                 piece.stage = PieceStage.distributing
@@ -249,7 +261,7 @@ class Positioning(BaseState):
                     f"Positioning: piece {piece.uuid} ({piece.max_dimension_mm}mm) exceeds "
                     f"layer {address.layer_index} limit ({layer_max}mm) — passthrough to misc bottom bin"
                 )
-                self._clearBinsFullAlertIfOwned()
+                clearBinsFullAlertIfOwned()
                 self._clearChuteJamAlertIfOwned()
                 self._openAllDoorsForPassthrough()
                 piece.stage = PieceStage.distributing
@@ -265,7 +277,7 @@ class Positioning(BaseState):
                 self._setOccupancyState("positioning.passthrough_too_big_for_layer")
                 return DistributionState.READY
 
-            self._clearBinsFullAlertIfOwned()
+            clearBinsFullAlertIfOwned()
             self._clearChuteJamAlertIfOwned()
             self.logger.info(
                 f"Positioning: moving to bin at layer={address.layer_index}, section={address.section_index}, bin={address.bin_index}"
@@ -737,18 +749,6 @@ class Positioning(BaseState):
         self._jam_pause_enqueued = False
         self._jam_ignored_logged = False
         self._clearDistributionIncident(DISTRIBUTION_CHUTE_JAM_INCIDENT_KIND)
-
-    def _clearBinsFullAlertIfOwned(self) -> None:
-        try:
-            with shared_state.hardware_lifecycle_lock:
-                err = shared_state.hardware_error
-                if isinstance(err, str) and (
-                    err.startswith(BINS_FULL_ALERT_PREFIX)
-                    or err.startswith(MISC_PASSTHROUGH_ALERT_PREFIX)
-                ):
-                    shared_state.setHardwareStatus(clear_error=True)
-        except Exception:
-            pass
 
     def _openAllDoorsForPassthrough(self) -> None:
         """Open every usable layer door so a piece with no assigned bin
