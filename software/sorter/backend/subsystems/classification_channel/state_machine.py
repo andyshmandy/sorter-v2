@@ -3,7 +3,6 @@ import time
 from global_config import GlobalConfig
 from irl.config import IRLConfig, IRLInterface
 from piece_transport import ClassificationChannelTransport
-from subsystems.base_subsystem import BaseSubsystem
 from subsystems.classification_channel.incidents import (
     C4_EXIT_STUCK_INCIDENT_KIND,
     c4_stall_incident_active,
@@ -31,7 +30,7 @@ from subsystems.classification_channel.states import ClassificationChannelState
 from subsystems.shared_variables import SharedVariables
 
 
-class ClassificationChannelStateMachine(BaseSubsystem):
+class ClassificationChannelStateMachine:
     def __init__(
         self,
         *,
@@ -43,7 +42,6 @@ class ClassificationChannelStateMachine(BaseSubsystem):
         event_queue,
         transport: ClassificationChannelTransport,
     ):
-        super().__init__()
         self.irl = irl
         self.gc = gc
         self.logger = gc.logger

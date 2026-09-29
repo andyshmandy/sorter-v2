@@ -1,4 +1,3 @@
-from .base_subsystem import BaseSubsystem
 from .shared_variables import SharedVariables
 from .feeder.state_machine import FeederStateMachine
 from .distribution.state_machine import DistributionStateMachine

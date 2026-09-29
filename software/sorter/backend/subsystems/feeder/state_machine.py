@@ -1,4 +1,3 @@
-from subsystems.base_subsystem import BaseSubsystem
 from subsystems.shared_variables import SharedVariables
 from .states import FeederState
 from .idle import Idle
@@ -7,7 +6,7 @@ from global_config import GlobalConfig
 from vision import VisionManager
 
 
-class FeederStateMachine(BaseSubsystem):
+class FeederStateMachine:
     def __init__(
         self,
         irl: IRLInterface,
@@ -16,7 +15,6 @@ class FeederStateMachine(BaseSubsystem):
         shared: SharedVariables,
         vision: VisionManager,
     ):
-        super().__init__()
         self.irl = irl
         self.gc = gc
         self.logger = gc.logger

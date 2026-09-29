@@ -1,4 +1,3 @@
-from subsystems.base_subsystem import BaseSubsystem
 from subsystems.shared_variables import SharedVariables
 from .states import DistributionState
 from .idle import Idle
@@ -12,7 +11,7 @@ from sorting_profile import SortingProfile
 import queue
 
 
-class DistributionStateMachine(BaseSubsystem):
+class DistributionStateMachine:
     def __init__(
         self,
         irl: IRLInterface,
@@ -24,7 +23,6 @@ class DistributionStateMachine(BaseSubsystem):
         *,
         post_distribute_cooldown_s: float = 0.0,
     ):
-        super().__init__()
         self.irl = irl
         self.gc = gc
         self.logger = gc.logger
