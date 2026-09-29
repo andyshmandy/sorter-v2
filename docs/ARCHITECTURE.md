@@ -256,10 +256,12 @@ Machine → Hive (HTTPS)
 ## Known Limitations & Trade-offs
 
 ### Windows Support
-- No fcntl (process guard falls back to PID-only)
-- No v4l2-ctl (camera format negotiation unavailable)
-- Multiple USB 2.0 cameras may saturate bandwidth
-- Recommended: Linux for production, Windows for development/testing only
+- Runs natively (no WSL): backend, firmware flasher, and dev tooling all have Windows code paths.
+- No `fcntl` — the single-instance process guard uses a named Windows mutex instead (same effect, not a degraded fallback).
+- No `v4l2-ctl` — camera format/resolution negotiation is Linux-only, so Windows opens cameras at their driver default. Multiple cameras sharing one USB 2.0 bus can saturate it if a camera defaults to uncompressed YUYV.
+- No RK3588 NPU wheels (`rknn-toolkit-lite2` is Linux/aarch64-only) — detection falls back to ONNX/NCNN on CPU, same as macOS dev boxes.
+- Firmware flashing detects the Pico's `RPI-RP2` bootloader drive by volume label instead of a Unix mount point.
+- Recommended: Linux (Orange Pi 5) for production; Windows and macOS are both fully supported for development.
 
 ### Firmware State
 - All state lives in backend (Picos are stateless)

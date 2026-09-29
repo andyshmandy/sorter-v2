@@ -102,11 +102,19 @@ class BackendSupervisor:
             process = self._process
             if process is not None and process.poll() is None:
                 return
+            # start_new_session (setsid) is POSIX-only; on Windows a new
+            # process group is requested instead so the child can be signaled
+            # without also reaching this supervisor.
+            group_kwargs: dict[str, Any] = (
+                {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+                if sys.platform == "win32"
+                else {"start_new_session": True}
+            )
             child = subprocess.Popen(
                 self._command,
                 cwd=str(self._cwd),
                 env=self._environment,
-                start_new_session=True,
+                **group_kwargs,
             )
             self._process = child
             self._process_started_at = time.time()
@@ -174,6 +182,10 @@ class BackendSupervisor:
         if process is None or process.poll() is not None:
             return
 
+        if sys.platform == "win32":
+            self._stop_backend_windows(process)
+            return
+
         try:
             os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
@@ -189,6 +201,30 @@ class BackendSupervisor:
                 process.wait(timeout=2.0)
             except subprocess.TimeoutExpired:
                 pass
+
+    def _stop_backend_windows(self, process: subprocess.Popen[bytes]) -> None:
+        # No process groups/signals on Windows: TerminateProcess is the only
+        # reliable cross-process stop, so there is no graceful phase here
+        # (unlike SIGTERM on POSIX). The child still gets its own chance to
+        # shut down cleanly when asked to restart through the HTTP endpoint,
+        # since that path runs inside the same interpreter as this call.
+        try:
+            process.terminate()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=self._stop_timeout_s)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            process.kill()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def _file_in(root: Path, url_path: str) -> Path | None:

@@ -91,7 +91,10 @@ def rebootToBootloader(gc: GlobalConfig, port: str) -> None:
 
 
 def findBootloaderBlockdev() -> Optional[str]:
-    if platform.system() == "Darwin":
+    # Block-device + manual mount is a Linux-only fallback for when the
+    # desktop environment doesn't auto-mount the drive; macOS and Windows
+    # always auto-mount RPI-RP2 (as /Volumes/RPI-RP2 or a drive letter).
+    if platform.system() != "Linux":
         return None
     try:
         result = subprocess.run(
@@ -110,10 +113,50 @@ def findBootloaderBlockdev() -> Optional[str]:
     return None
 
 
+def _windowsBootloaderDrive() -> Optional[str]:
+    """The drive letter (e.g. "E:\\") whose volume label is RPI-RP2, or None.
+
+    Windows always auto-mounts the Pico's UF2 bootloader drive, so this only
+    has to ask the OS which drive letter got it — no mount/unmount step
+    needed, unlike the Linux blockdev fallback above.
+    """
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    DRIVE_REMOVABLE = 2
+    DRIVE_FIXED = 3
+    bitmask = kernel32.GetLogicalDrives()
+    for i in range(26):
+        if not (bitmask >> i) & 1:
+            continue
+        root = f"{chr(65 + i)}:\\"
+        drive_type = kernel32.GetDriveTypeW(ctypes.c_wchar_p(root))
+        if drive_type not in (DRIVE_REMOVABLE, DRIVE_FIXED):
+            continue
+        volume_name = ctypes.create_unicode_buffer(261)
+        fs_name = ctypes.create_unicode_buffer(261)
+        ok = kernel32.GetVolumeInformationW(
+            ctypes.c_wchar_p(root),
+            volume_name,
+            ctypes.sizeof(volume_name),
+            None,
+            None,
+            None,
+            fs_name,
+            ctypes.sizeof(fs_name),
+        )
+        if ok and volume_name.value == "RPI-RP2":
+            return root
+    return None
+
+
 def findBootloaderMount() -> Optional[str]:
-    if platform.system() == "Darwin":
+    system = platform.system()
+    if system == "Darwin":
         path = "/Volumes/RPI-RP2"
         return path if os.path.isdir(path) else None
+    if system == "Windows":
+        return _windowsBootloaderDrive()
     for pattern in ["/media/*/RPI-RP2", "/run/media/*/RPI-RP2", "/mnt/RPI-RP2"]:
         matches = glob.glob(pattern)
         if matches:
@@ -139,7 +182,7 @@ def waitForBootloaderMount(
         path = findBootloaderMount()
         if path:
             return path
-        if platform.system() != "Darwin":
+        if platform.system() == "Linux":
             dev = findBootloaderBlockdev()
             if dev:
                 os.makedirs(LINUX_MOUNT_POINT, exist_ok=True)
@@ -182,7 +225,8 @@ def copyUf2ToMount(
         os.fsync(dst.fileno())
     # The bootloader consumes the file and reboots; sync makes sure the page
     # cache actually reaches the fake FAT device before we start waiting.
-    if platform.system() != "Darwin":
+    # (No `sync` binary on Windows, and macOS doesn't need it either.)
+    if platform.system() == "Linux":
         try:
             subprocess.run(["sync"], timeout=15)
         except Exception:
@@ -211,7 +255,7 @@ def waitForBootloaderGone(
 
 
 def _unmountStaleMountpoint() -> None:
-    if platform.system() != "Darwin" and os.path.ismount(LINUX_MOUNT_POINT):
+    if platform.system() == "Linux" and os.path.ismount(LINUX_MOUNT_POINT):
         try:
             subprocess.run(["umount", LINUX_MOUNT_POINT], check=False, timeout=10)
         except Exception:

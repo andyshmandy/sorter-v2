@@ -9,14 +9,37 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from typing import Any, TextIO
 
 try:
     import fcntl
-except ImportError:  # pragma: no cover - not expected on macOS/Linux dev hosts
+except ImportError:  # expected on Windows: locking there goes through a named mutex instead
     fcntl = None
+
+_WINDOWS = sys.platform == "win32"
+
+if _WINDOWS:
+    import ctypes
+    from ctypes import wintypes
+
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel32.CreateMutexW.argtypes = (wintypes.LPCVOID, wintypes.BOOL, wintypes.LPCWSTR)
+    _kernel32.CreateMutexW.restype = wintypes.HANDLE
+    _kernel32.ReleaseMutex.argtypes = (wintypes.HANDLE,)
+    _kernel32.ReleaseMutex.restype = wintypes.BOOL
+    _kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _kernel32.CloseHandle.restype = wintypes.BOOL
+    _ERROR_ALREADY_EXISTS = 183
+    # Handles for mutexes this process currently holds, keyed by lock path.
+    _WINDOWS_MUTEX_HANDLES: dict[str, int] = {}
+
+# Windows has no SIGKILL; os.kill(pid, SIGTERM) there unconditionally calls
+# TerminateProcess anyway, so escalating to the same signal is a no-op retry
+# rather than a crash.
+_FORCE_KILL_SIGNAL = getattr(signal, "SIGKILL", signal.SIGTERM)
 
 
 APP_NAME = "lego-sorter-client-backend"
@@ -50,11 +73,10 @@ class BackendProcessGuard:
         except Exception:
             pass
 
-        if fcntl is not None:
-            try:
-                fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
-            except Exception:
-                pass
+        try:
+            _unlock(self._handle, self.lock_path)
+        except Exception:
+            pass
 
         try:
             self._handle.close()
@@ -72,8 +94,8 @@ def acquire_backend_process_guard(
     cleanup_port_conflicts: bool = True,
     lock_path: Path | None = None,
 ) -> BackendProcessGuard:
-    if fcntl is None:
-        raise ProcessGuardError("Backend process guard requires fcntl support on this platform.")
+    if fcntl is None and not _WINDOWS:
+        raise ProcessGuardError("Backend process guard requires fcntl (POSIX) or a Windows mutex on this platform.")
 
     resolved_script = script_path.resolve()
     resolved_repo = repo_root.resolve()
@@ -136,7 +158,7 @@ def _acquire_or_replace_lock(
     terminate_existing: bool,
 ) -> None:
     try:
-        _try_lock(handle)
+        _try_lock(handle, lock_path)
     except BlockingIOError:
         existing_metadata = _read_metadata(handle)
         if existing_metadata is None:
@@ -165,7 +187,7 @@ def _acquire_or_replace_lock(
         deadline = time.monotonic() + TERMINATE_GRACE_PERIOD_S + FORCE_KILL_GRACE_PERIOD_S
         while time.monotonic() < deadline:
             try:
-                _try_lock(handle)
+                _try_lock(handle, lock_path)
                 break
             except BlockingIOError:
                 time.sleep(LOCK_RETRY_INTERVAL_S)
@@ -177,9 +199,39 @@ def _acquire_or_replace_lock(
     _write_metadata(handle, current_metadata)
 
 
-def _try_lock(handle: TextIO) -> None:
-    assert fcntl is not None
-    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+def _windows_mutex_name(lock_path: Path) -> str:
+    digest = hashlib.sha1(str(lock_path).encode("utf-8")).hexdigest()
+    return f"Local\\{APP_NAME}-{digest}"
+
+
+def _try_lock(handle: TextIO, lock_path: Path) -> None:
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return
+    if _WINDOWS:
+        name = _windows_mutex_name(lock_path)
+        ctypes.set_last_error(0)
+        mutex = _kernel32.CreateMutexW(None, True, name)
+        last_error = ctypes.get_last_error()
+        if not mutex:
+            raise ProcessGuardError(f"Failed to create backend process guard mutex (WinError {last_error}).")
+        if last_error == _ERROR_ALREADY_EXISTS:
+            _kernel32.CloseHandle(mutex)
+            raise BlockingIOError()
+        _WINDOWS_MUTEX_HANDLES[str(lock_path)] = mutex
+        return
+    raise ProcessGuardError("Backend process guard requires fcntl or a Windows mutex on this platform.")
+
+
+def _unlock(handle: TextIO, lock_path: Path) -> None:
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return
+    if _WINDOWS:
+        mutex = _WINDOWS_MUTEX_HANDLES.pop(str(lock_path), None)
+        if mutex:
+            _kernel32.ReleaseMutex(mutex)
+            _kernel32.CloseHandle(mutex)
 
 
 def _read_metadata(handle: TextIO) -> dict[str, Any] | None:
@@ -225,7 +277,7 @@ def _terminate_process(pid: int, logger: Any | None) -> None:
         return
 
     _log(logger, "warning", "Backend pid=%s did not exit after SIGTERM; escalating to SIGKILL.", pid)
-    if not _send_signal(pid, signal.SIGKILL):
+    if not _send_signal(pid, _FORCE_KILL_SIGNAL):
         return
     if _wait_for_process_exit(pid, FORCE_KILL_GRACE_PERIOD_S):
         return
@@ -249,6 +301,10 @@ def _process_exists(pid: int) -> bool:
         return False
     except PermissionError:
         return True
+    except OSError:
+        # Windows raises a plain OSError (not ProcessLookupError) for an
+        # invalid/nonexistent pid.
+        return False
 
     state = _read_process_state(pid)
     if state is not None and state.startswith("Z"):
@@ -260,6 +316,8 @@ def _send_signal(pid: int, sig: int) -> bool:
     try:
         os.kill(pid, sig)
     except ProcessLookupError:
+        return False
+    except OSError:
         return False
     return True
 
@@ -311,6 +369,8 @@ def _cleanup_listening_conflicts(
 
 
 def _find_listening_pids(port: int) -> list[int]:
+    if _WINDOWS:
+        return _find_listening_pids_windows(port)
     if shutil.which("lsof") is None:
         return []
 
@@ -332,6 +392,9 @@ def _find_listening_pids(port: int) -> list[int]:
 
 
 def _read_process_info(pid: int) -> dict[str, str] | None:
+    if _WINDOWS:
+        return _read_process_info_windows(pid)
+
     result = subprocess.run(
         ["ps", "-o", "user=", "-o", "command=", "-p", str(pid)],
         capture_output=True,
@@ -353,6 +416,10 @@ def _read_process_info(pid: int) -> dict[str, str] | None:
 
 
 def _read_process_state(pid: int) -> str | None:
+    if _WINDOWS:
+        # No POSIX zombie state on Windows; os.kill(pid, 0) existence is enough.
+        return None
+
     result = subprocess.run(
         ["ps", "-o", "stat=", "-p", str(pid)],
         capture_output=True,
@@ -367,6 +434,10 @@ def _read_process_state(pid: int) -> str | None:
 
 
 def _read_process_cwd(pid: int) -> Path | None:
+    if _WINDOWS:
+        # Not resolved on Windows (no lsof); command-line matching is the
+        # primary signal there. See _read_process_info_windows.
+        return None
     if shutil.which("lsof") is None:
         return None
 
@@ -386,6 +457,66 @@ def _read_process_cwd(pid: int) -> Path | None:
             except OSError:
                 return None
     return None
+
+
+def _find_listening_pids_windows(port: int) -> list[int]:
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano", "-p", "TCP"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return []
+    if result.returncode != 0:
+        return []
+
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 5 or parts[0].upper() != "TCP":
+            continue
+        local_addr, state, pid_str = parts[1], parts[3], parts[4]
+        if state.upper() != "LISTENING":
+            continue
+        if local_addr.rsplit(":", 1)[-1] != str(port):
+            continue
+        pid = _safe_int(pid_str)
+        if pid is not None:
+            pids.append(pid)
+    return pids
+
+
+def _read_process_info_windows(pid: int) -> dict[str, str] | None:
+    # No `ps` on Windows: ask WMI (via PowerShell) for the owner and full
+    # command line of the pid instead.
+    script = (
+        f"$p = Get-CimInstance Win32_Process -Filter 'ProcessId={pid}' -ErrorAction Stop; "
+        "$owner = $p.GetOwner(); "
+        "[PSCustomObject]@{User=$owner.User; Command=$p.CommandLine} | ConvertTo-Json -Compress"
+    )
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    command = data.get("Command")
+    if not command:
+        return None
+    return {"user": str(data.get("User") or ""), "command": str(command)}
 
 
 def _process_matches_current_backend(

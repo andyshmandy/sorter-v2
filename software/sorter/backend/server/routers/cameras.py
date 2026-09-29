@@ -67,6 +67,9 @@ def _open_camera_for_probe(index: int) -> cv2.VideoCapture:
     try:
         from vision.camera import _open_capture_source
 
+        # Windows opens through the same helper, which selects CAP_MSMF for
+        # an int source there (see vision/camera.py), so probing addresses
+        # the camera by the same id number cv2.VideoCapture opens it with.
         return _open_capture_source(index, fourcc="MJPG")
     except Exception:
         return cv2.VideoCapture(index)
@@ -141,6 +144,83 @@ def _list_usb_cameras() -> List[Dict[str, Any]]:
 
     active = _active_camera_indices()
 
+    def _probe_enumerated(enumerated: list[Any]) -> List[Dict[str, Any]]:
+        """Cameras the OS already told us exist (mac/Windows): only probe the
+        ones not already open, and address every one by the same integer
+        `index` that opens it via cv2.VideoCapture."""
+        indices_to_probe = [int(c.index) for c in enumerated if int(c.index) not in active]
+        probed_map: dict[int, dict] = {}
+        if indices_to_probe:
+            with ThreadPoolExecutor(max_workers=min(4, len(indices_to_probe))) as pool:
+                futs = {pool.submit(_probe_camera_index, idx): idx for idx in indices_to_probe}
+                for fut in as_completed(futs):
+                    idx = futs[fut]
+                    probed_map[idx] = fut.result() or {}
+
+        cameras: List[Dict[str, Any]] = []
+        for camera in enumerated:
+            idx = int(camera.index)
+            if idx in active:
+                w, h = active[idx]
+                info = {"width": w, "height": h, "preview_available": w > 0 and h > 0}
+            else:
+                info = probed_map.get(idx, {})
+            cameras.append(
+                {
+                    "kind": "usb",
+                    "index": idx,
+                    "name": str(camera.name),
+                    "width": int(info.get("width", 0)),
+                    "height": int(info.get("height", 0)),
+                    "preview_available": bool(info.get("preview_available", False)),
+                }
+            )
+        return cameras
+
+    def _brute_force_probe(max_index: int = 16) -> List[Dict[str, Any]]:
+        """Last resort: open each id 0..max_index-1 directly with
+        cv2.VideoCapture and see what answers. Used on Windows when
+        cv2_enumerate_cameras itself can't enumerate — there's no device-node
+        listing to fall back to there the way Linux has /sys/class/video4linux."""
+        indices_to_probe = [i for i in range(max_index) if i not in active]
+        probed_map: dict[int, dict] = {}
+        if indices_to_probe:
+            with ThreadPoolExecutor(max_workers=min(4, len(indices_to_probe))) as pool:
+                futs = {pool.submit(_probe_camera_index, idx): idx for idx in indices_to_probe}
+                for fut in as_completed(futs):
+                    idx = futs[fut]
+                    result = fut.result()
+                    if result:
+                        probed_map[idx] = result
+
+        cameras: List[Dict[str, Any]] = []
+        for idx in range(max_index):
+            if idx in active and active[idx] != (0, 0):
+                w, h = active[idx]
+                cameras.append(
+                    {
+                        "kind": "usb",
+                        "index": idx,
+                        "name": f"USB Camera {idx}",
+                        "width": w,
+                        "height": h,
+                        "preview_available": True,
+                    }
+                )
+            elif idx in probed_map:
+                info = probed_map[idx]
+                cameras.append(
+                    {
+                        "kind": "usb",
+                        "index": idx,
+                        "name": str(info.get("name") or f"USB Camera {idx}"),
+                        "width": int(info.get("width", 0)),
+                        "height": int(info.get("height", 0)),
+                        "preview_available": bool(info.get("preview_available", False)),
+                    }
+                )
+        return cameras
+
     if platform.system() == "Darwin":
         enumerated = [
             camera
@@ -148,36 +228,17 @@ def _list_usb_cameras() -> List[Dict[str, Any]]:
             if not _is_ignored_camera_name(str(camera.name))
         ]
         if enumerated:
-            indices_to_probe = [
-                int(c.index) for c in enumerated if int(c.index) not in active
-            ]
-            probed_map: dict[int, dict] = {}
-            if indices_to_probe:
-                with ThreadPoolExecutor(max_workers=min(4, len(indices_to_probe))) as pool:
-                    futs = {pool.submit(_probe_camera_index, idx): idx for idx in indices_to_probe}
-                    for fut in as_completed(futs):
-                        idx = futs[fut]
-                        probed_map[idx] = fut.result() or {}
+            return _probe_enumerated(enumerated)
 
-            cameras: List[Dict[str, Any]] = []
-            for camera in enumerated:
-                idx = int(camera.index)
-                if idx in active:
-                    w, h = active[idx]
-                    info = {"width": w, "height": h, "preview_available": w > 0 and h > 0}
-                else:
-                    info = probed_map.get(idx, {})
-                cameras.append(
-                    {
-                        "kind": "usb",
-                        "index": idx,
-                        "name": str(camera.name),
-                        "width": int(info.get("width", 0)),
-                        "height": int(info.get("height", 0)),
-                        "preview_available": bool(info.get("preview_available", False)),
-                    }
-                )
-            return cameras
+    if platform.system() == "Windows":
+        from hardware.windows_camera_registry import refresh_windows_cameras
+
+        enumerated = list(refresh_windows_cameras())
+        if enumerated:
+            return _probe_enumerated(enumerated)
+        # cv2_enumerate_cameras came back empty (missing/failed) — still try
+        # cameras directly by id number rather than reporting none available.
+        return _brute_force_probe()
 
     # Linux: a capture camera is a node with pixel formats. Asking for them does
     # not open a stream, so a camera already streaming a preview (or a probe

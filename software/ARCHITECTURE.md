@@ -226,7 +226,7 @@ Hive is a cloud platform for collaborative data collection and model training.
 
 ### Backend ↔ Hardware
 - **USB Serial**: MCU communication to Picos (one bus per Pico)
-- **USB Video**: Camera capture via OpenCV (Linux) or generic (Windows)
+- **USB Video**: Camera capture via OpenCV, with `v4l2-ctl` format negotiation on Linux and driver-default capture on macOS/Windows
 - **GPIO**: Direct digital I/O for switches and status signals
 
 ## Key Architectural Decisions

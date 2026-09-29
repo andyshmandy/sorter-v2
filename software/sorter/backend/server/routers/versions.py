@@ -181,7 +181,10 @@ def _buildUi() -> Optional[str]:
 def _deferredRestart() -> None:
     def _exit() -> None:
         time.sleep(0.5)
-        os.kill(os.getpid(), signal.SIGTERM)
+        # See system.py's _deferred_exit for why this is raise_signal, not
+        # os.kill(getpid(), SIGTERM): the latter bypasses the signal handler
+        # entirely on Windows.
+        signal.raise_signal(signal.SIGTERM)
 
     threading.Thread(target=_exit, daemon=True).start()
 

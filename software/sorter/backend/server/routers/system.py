@@ -185,7 +185,11 @@ def restart_system() -> Dict[str, Any]:
     def _deferred_exit() -> None:
         import time
         time.sleep(0.5)
-        os.kill(os.getpid(), signal.SIGTERM)
+        # raise_signal (not os.kill on self) so the handler actually runs on
+        # Windows too: os.kill(getpid(), SIGTERM) there goes through
+        # TerminateProcess, which kills the process without ever invoking a
+        # registered Python signal handler.
+        signal.raise_signal(signal.SIGTERM)
 
     threading.Thread(target=_deferred_exit, daemon=True).start()
     return {"ok": True, "message": "Backend is restarting..."}

@@ -74,6 +74,13 @@ def _open_capture_source(
 ) -> cv2.VideoCapture:
     if isinstance(source, int) and platform.system() == "Darwin":
         return cv2.VideoCapture(source, cv2.CAP_AVFOUNDATION)
+    if isinstance(source, int) and platform.system() == "Windows":
+        # Explicit CAP_MSMF (Media Foundation), not the no-backend constructor:
+        # letting OpenCV pick lands on the legacy DirectShow backend on some
+        # builds, which negotiates UVC formats less reliably and opens
+        # noticeably slower. Same plain integer id number every other
+        # platform in this module addresses cameras by.
+        return cv2.VideoCapture(source, cv2.CAP_MSMF)
     if isinstance(source, int) and platform.system() == "Linux":
         # V4L2 MJPEG capture via cv2.VideoCapture (software JPEG decode). A HW
         # GStreamer mppjpegdec path used to live here; it was removed because it
