@@ -53,7 +53,6 @@ from irl.config import (
 PREVIEW_MAX_WIDTH = int(os.environ.get("SORTER_PREVIEW_MAX_WIDTH", "960"))
 
 from server import shared_state
-from server.calibration_reference import REFERENCE_TILE_RGB
 from server.camera_calibration import (
     analyze_color_plate_target,
 )
@@ -3056,16 +3055,6 @@ class CameraCalibrationStartPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/api/cameras/health")
-def get_camera_health() -> Dict[str, Any]:
-    """Return per-role camera health status."""
-    import server.shared_state as shared_state
-
-    if shared_state.camera_service is None:
-        raise HTTPException(status_code=500, detail="Camera service not initialized")
-    return shared_state.camera_service.get_health_status()
-
-
 @router.get("/api/cameras/config")
 def get_camera_config() -> Dict[str, Any]:
     """Return current camera assignments from TOML."""
@@ -3605,56 +3594,6 @@ def save_camera_picture_settings(
         "settings": cameraPictureSettingsToDict(parsed),
         "applied_live": applied_live,
         "message": "Feed orientation saved.",
-    }
-
-
-# ---------------------------------------------------------------------------
-# Live histogram
-# ---------------------------------------------------------------------------
-
-_HISTOGRAM_BINS = 64
-
-
-@router.get("/api/cameras/{role}/histogram")
-def get_camera_histogram(role: str) -> Dict[str, Any]:
-    """Return live RGB histogram (64 bins) with reference color markers."""
-    markers: Dict[str, Dict[str, int]] = {}
-    for label, (r, g, b) in REFERENCE_TILE_RGB.items():
-        markers[label] = {"r": r, "g": g, "b": b}
-
-    frame = _grab_live_frame(role, after_timestamp=0.0, timeout=0.3)
-    if frame is None:
-        return {
-            "ok": True,
-            "waiting": True,
-            "bins": _HISTOGRAM_BINS,
-            "r": [],
-            "g": [],
-            "b": [],
-            "reference_markers": markers,
-        }
-
-    # Downsample large frames for speed
-    h, w = frame.shape[:2]
-    if h * w > 640 * 480:
-        scale = (640 * 480 / (h * w)) ** 0.5
-        frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-
-    bins = _HISTOGRAM_BINS
-    bin_edges = np.linspace(0, 256, bins + 1)
-
-    channels: Dict[str, list] = {}
-    for idx, ch_name in enumerate(("b", "g", "r")):
-        hist = cv2.calcHist([frame], [idx], None, [bins], [0, 256]).flatten()
-        peak = float(hist.max()) if hist.max() > 0 else 1.0
-        channels[ch_name] = (hist / peak).tolist()
-
-    return {
-        "ok": True,
-        "waiting": False,
-        "bins": bins,
-        **channels,
-        "reference_markers": markers,
     }
 
 

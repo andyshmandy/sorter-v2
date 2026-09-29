@@ -23,7 +23,6 @@ from blob_manager import (
     getSortingProfileSyncState,
     setMachineNickname,
 )
-from runtime_variables import VARIABLE_DEFS
 from server.camera_discovery import shutdownCameraDiscovery
 from server.set_progress_sync import getSetProgressSyncWorker
 from server.waveshare_inventory import get_waveshare_inventory_manager
@@ -32,7 +31,6 @@ from server.security import (
     websocket_connection_allowed,
 )
 
-from server.shared_state import _getRuntimeVariables
 import server.shared_state as shared_state
 
 # ---------------------------------------------------------------------------
@@ -600,59 +598,6 @@ def get_piece_image(uuid: str, image_id: int) -> Any:
     )
 
 
-@app.get("/api/pieces/{uuid}/possible-crops")
-def get_possible_crops(uuid: str) -> Dict[str, Any]:
-    # 'Possibly the same piece': upstream C2/C3 crops that are plausibly this
-    # classified piece, found by time + channel + distance-to-exit. Returns a
-    # confidence-ranked superset.
-    #
-    # When an experimental piece_link model is enabled it re-ranks that same
-    # candidate set by appearance + the same time/position features and the
-    # response gains prediction_source="model" plus per-candidate model_score.
-    # It can only reorder what the heuristic found, never recover a dropped
-    # crop, so the heuristic stays the recall net.
-    import channel_crop_lookup
-    import link_matcher
-
-    gc = shared_state.gc_ref
-    try:
-        matched = link_matcher.matchForPiece(gc, uuid)
-    except Exception:
-        # Never let the experimental path break the review page.
-        gc.logger.debug("link matcher failed; falling back to heuristic", exc_info=True)
-        matched = None
-    if matched is not None:
-        return {"piece_uuid": uuid, **matched}
-    return {
-        "piece_uuid": uuid,
-        "prediction_source": "heuristic",
-        **channel_crop_lookup.findPossibleCrops(gc, uuid),
-    }
-
-
-@app.get("/api/channel-crops/{crop_id}/image")
-def get_channel_crop_image(crop_id: int) -> Any:
-    from fastapi.responses import FileResponse
-
-    import channel_crop_store
-
-    path = channel_crop_store.getCropFileById(crop_id)
-    if path is None:
-        raise HTTPException(status_code=404, detail="crop not available locally")
-    return FileResponse(
-        path,
-        media_type="image/jpeg",
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
-    )
-
-
-@app.get("/api/piece-images/stats")
-def get_piece_image_stats() -> Dict[str, Any]:
-    import piece_image_store
-
-    return piece_image_store.getStats()
-
-
 class ClassifyRetryRequest(BaseModel):
     # base64 JPEGs (with or without a data: URI prefix). Order is preserved.
     images: List[str]
@@ -875,43 +820,6 @@ def getSetProgress() -> SetProgressResponse:
     if tracker is None:
         return SetProgressResponse(is_set_based=False)
     return SetProgressResponse(is_set_based=True, progress=tracker.get_progress())
-
-
-# ---------------------------------------------------------------------------
-# Runtime variables
-# ---------------------------------------------------------------------------
-
-
-class RuntimeVariableDef(BaseModel):
-    type: str
-    min: float
-    max: float
-    unit: str
-
-
-class RuntimeVariablesResponse(BaseModel):
-    definitions: Dict[str, RuntimeVariableDef]
-    values: Dict[str, Any]
-
-
-class RuntimeVariablesUpdateRequest(BaseModel):
-    values: Dict[str, Any]
-
-
-@app.get("/runtime-variables", response_model=RuntimeVariablesResponse)
-def getRuntimeVariables() -> RuntimeVariablesResponse:
-    defs = {k: RuntimeVariableDef(**v) for k, v in VARIABLE_DEFS.items()}
-    return RuntimeVariablesResponse(definitions=defs, values=_getRuntimeVariables().getAll())
-
-
-@app.post("/runtime-variables", response_model=RuntimeVariablesResponse)
-def updateRuntimeVariables(
-    req: RuntimeVariablesUpdateRequest,
-) -> RuntimeVariablesResponse:
-    rv = _getRuntimeVariables()
-    rv.setAll(req.values)
-    defs = {k: RuntimeVariableDef(**v) for k, v in VARIABLE_DEFS.items()}
-    return RuntimeVariablesResponse(definitions=defs, values=rv.getAll())
 
 
 # ---------------------------------------------------------------------------

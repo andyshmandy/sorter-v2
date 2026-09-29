@@ -176,16 +176,6 @@ class CameraService:
 
     # ---- Health ----
 
-    def get_health_status(self) -> dict[str, dict]:
-        result: dict[str, dict] = {}
-        for role, feed in self._feeds.items():
-            device = feed.device
-            result[role] = {
-                "status": device.health.value,
-                "last_frame_at": device.last_frame_at,
-            }
-        return result
-
     def get_health_map(self) -> dict[str, str]:
         return {role: feed.device.health.value for role, feed in self._feeds.items()}
 

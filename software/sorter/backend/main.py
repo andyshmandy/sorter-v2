@@ -13,12 +13,10 @@ if _saved_api_keys.get("openrouter"):
     os.environ["OPENROUTER_API_KEY"] = _saved_api_keys["openrouter"]
 
 from global_config import mkGlobalConfig, GlobalConfig
-from runtime_variables import mkRuntimeVariables
 from utils.event import slimKnownObjectForSocket
 from server.api import app
 from server.shared_state import (
     setGlobalConfig,
-    setRuntimeVariables,
     setCommandQueue,
     setController,
     setCameraService,
@@ -444,8 +442,6 @@ def main() -> None:
     gc.run_recorder = RunRecorder(gc)
     gc.lifetime_stats = LifetimeStatsTracker()
     setGlobalConfig(gc)
-    rv = mkRuntimeVariables(gc)
-    setRuntimeVariables(rv)
     setCommandQueue(server_to_main_queue)
     startup_total_start = time.time()
 
@@ -718,7 +714,7 @@ def main() -> None:
             shared_state.setHardwareStatus(homing_step="Homing distributor...")
 
         next_controller = SorterController(
-            irl, irl_config, gc, vision, main_to_server_queue, rv
+            irl, irl_config, gc, vision, main_to_server_queue
         )
 
         chute = getattr(next_controller.coordinator.distribution, "chute", None) if hasattr(next_controller, "coordinator") else None

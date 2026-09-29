@@ -80,7 +80,6 @@ class CoordinatorOrderTests(unittest.TestCase):
                 gc=gc,
                 vision=SimpleNamespace(),
                 event_queue=queue.Queue(),
-                rv=SimpleNamespace(),
             )
 
         coordinator.step()
@@ -119,7 +118,6 @@ class CoordinatorOrderTests(unittest.TestCase):
                 gc=gc,
                 vision=SimpleNamespace(),
                 event_queue=queue.Queue(),
-                rv=SimpleNamespace(),
             )
 
         coordinator.step()
@@ -158,7 +156,6 @@ class CoordinatorOrderTests(unittest.TestCase):
                 gc=gc,
                 vision=SimpleNamespace(),
                 event_queue=queue.Queue(),
-                rv=SimpleNamespace(),
             )
 
         coordinator.step()

@@ -40,14 +40,8 @@ _worker_started = threading.Event()
 _worker_lock = threading.Lock()
 _logger: Any = None
 
-_stats_lock = threading.Lock()
-_stats = {
-    "enqueued": 0,
-    "dropped_queue_full": 0,
-    "written": 0,
-    "write_errors": 0,
-    "evicted_files": 0,
-}
+# Whether the last enqueue found the queue full: one warning per stretch of drops.
+_dropping = False
 
 
 def configure(logger: Any) -> None:
@@ -119,14 +113,15 @@ def enqueue(jpeg: bytes, meta: dict[str, Any]) -> None:
     slow disk never stalls capture."""
     if not jpeg:
         return
+    global _dropping
     _ensureWorker()
     try:
         _queue.put_nowait((jpeg, dict(meta)))
-        with _stats_lock:
-            _stats["enqueued"] += 1
+        _dropping = False
     except queue.Full:
-        with _stats_lock:
-            _stats["dropped_queue_full"] += 1
+        if not _dropping:
+            _dropping = True
+            _log("warning", "channel_crop_store: the write queue is full; dropping crops until it drains")
 
 
 def _ensureWorker() -> None:
@@ -152,11 +147,7 @@ def _workerLoop() -> None:
             jpeg, meta = item
             try:
                 _writeCrop(jpeg, meta)
-                with _stats_lock:
-                    _stats["written"] += 1
             except Exception as exc:
-                with _stats_lock:
-                    _stats["write_errors"] += 1
                 _log("warning", f"channel_crop_store: failed to persist crop: {exc}")
         now = time.monotonic()
         if now - last_sweep >= _RETENTION_SWEEP_INTERVAL_S:
@@ -283,8 +274,6 @@ def _retentionSweep() -> None:
         )
         conn.commit()
     evicted = len(victims)
-    with _stats_lock:
-        _stats["evicted_files"] += evicted
     _log(
         "info",
         f"channel_crop_store: retention evicted {evicted} files ({freed / 1024 / 1024:.1f} MB)",
@@ -369,19 +358,3 @@ def markSyncedUpTo(max_id: int, synced_at: float) -> None:
             (float(synced_at), int(max_id)),
         )
         conn.commit()
-
-
-def getStats() -> dict[str, Any]:
-    with _stats_lock:
-        stats = dict(_stats)
-    stats["queue_depth"] = _queue.qsize()
-    with _connection() as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS total FROM channel_crops "
-            "WHERE deleted_at IS NULL"
-        ).fetchone()
-        stats["live_files"] = int(row["n"]) if row is not None else 0
-        stats["live_bytes"] = int(row["total"]) if row is not None else 0
-        row = conn.execute("SELECT COUNT(*) AS n FROM channel_crops").fetchone()
-        stats["total_rows"] = int(row["n"]) if row is not None else 0
-    return stats

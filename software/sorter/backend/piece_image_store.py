@@ -48,19 +48,26 @@ _worker_started = threading.Event()
 _worker_lock = threading.Lock()
 _logger: Any = None
 
-_stats_lock = threading.Lock()
-_stats = {
-    "enqueued": 0,
-    "dropped_queue_full": 0,
-    "written": 0,
-    "write_errors": 0,
-    "evicted_files": 0,
-}
+# Whether the last enqueue found the queue full: one warning per stretch of drops.
+_dropping = False
 
 
 def configure(logger: Any) -> None:
     global _logger
     _logger = logger
+
+
+def _enqueue(entry: tuple[str, str, Any]) -> bool:
+    global _dropping
+    try:
+        _queue.put_nowait(entry)
+    except queue.Full:
+        if not _dropping:
+            _dropping = True
+            _log("warning", "piece_image_store: the write queue is full; dropping images until it drains")
+        return False
+    _dropping = False
+    return True
 
 
 def _log(level: str, message: str) -> None:
@@ -200,13 +207,7 @@ def enqueueKnownObjectImages(payload: dict[str, Any]) -> None:
                 "created_at": entry.get("created_at"),
                 "sharpness": entry.get("sharpness"),
             }
-            try:
-                _queue.put_nowait(("image", piece_uuid, (seq, item)))
-                with _stats_lock:
-                    _stats["enqueued"] += 1
-            except queue.Full:
-                with _stats_lock:
-                    _stats["dropped_queue_full"] += 1
+            _enqueue(("image", piece_uuid, (seq, item)))
 
     _maybeEnqueueFlags(piece_uuid, images)
 
@@ -235,11 +236,7 @@ def _maybeEnqueueFlags(piece_uuid: str, images: list[Any]) -> None:
         if isinstance(entry, dict)
     ]
     _ensureWorker()
-    try:
-        _queue.put_nowait(("flags", piece_uuid, flags))
-    except queue.Full:
-        with _stats_lock:
-            _stats["dropped_queue_full"] += 1
+    if not _enqueue(("flags", piece_uuid, flags)):
         return
     with _seen_lock:
         _flags_done.add(piece_uuid)
@@ -272,18 +269,12 @@ def _workerLoop() -> None:
                 if kind == "image":
                     seq, item = payload
                     _writeImage(piece_uuid, seq, item)
-                    with _stats_lock:
-                        _stats["written"] += 1
                 elif kind == "link_image":
                     seq, item = payload
                     _writeLinkImage(piece_uuid, seq, item)
-                    with _stats_lock:
-                        _stats["written"] += 1
                 elif kind == "flags":
                     _updateImageFlags(piece_uuid, payload)
             except Exception as exc:
-                with _stats_lock:
-                    _stats["write_errors"] += 1
                 _log("warning", f"piece_image_store: failed to persist {kind} for {piece_uuid[:8]}: {exc}")
         now = time.monotonic()
         if now - last_sweep >= _RETENTION_SWEEP_INTERVAL_S:
@@ -369,13 +360,7 @@ def enqueueKnownObjectLinkImages(payload: dict[str, Any]) -> None:
             "score": entry.get("score"),
             "used": entry.get("used"),
         }
-        try:
-            _queue.put_nowait(("link_image", piece_uuid, (seq, item)))
-            with _stats_lock:
-                _stats["enqueued"] += 1
-        except queue.Full:
-            with _stats_lock:
-                _stats["dropped_queue_full"] += 1
+        _enqueue(("link_image", piece_uuid, (seq, item)))
 
 
 def _writeLinkImage(piece_uuid: str, seq: int, item: dict[str, Any]) -> None:
@@ -526,8 +511,6 @@ def _sweepTable(
         )
         conn.commit()
     evicted = len(victims)
-    with _stats_lock:
-        _stats["evicted_files"] += evicted
     _log(
         "info",
         f"piece_image_store: {label} evicted {evicted} files ({freed / 1024 / 1024:.1f} MB)",
@@ -669,19 +652,3 @@ def markImagesSyncedUpTo(max_id: int, synced_at: float) -> None:
             (float(synced_at), int(max_id)),
         )
         conn.commit()
-
-
-def getStats() -> dict[str, Any]:
-    with _stats_lock:
-        stats = dict(_stats)
-    stats["queue_depth"] = _queue.qsize()
-    with _connection() as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS total FROM piece_images "
-            "WHERE deleted_at IS NULL"
-        ).fetchone()
-        stats["live_files"] = int(row["n"]) if row is not None else 0
-        stats["live_bytes"] = int(row["total"]) if row is not None else 0
-        row = conn.execute("SELECT COUNT(*) AS n FROM piece_images").fetchone()
-        stats["total_rows"] = int(row["n"]) if row is not None else 0
-    return stats

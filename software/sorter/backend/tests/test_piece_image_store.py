@@ -170,14 +170,6 @@ class PieceImageStoreTests(unittest.TestCase):
         piece_image_store.enqueueKnownObjectImages(payload)
         self.assertTrue(piece_image_store._queue.empty())
 
-    def test_stats(self) -> None:
-        piece_image_store.enqueueKnownObjectImages(makePayload("piece-s", 2))
-        self.drainQueue()
-        stats = piece_image_store.getStats()
-        self.assertEqual(stats["live_files"], 2)
-        self.assertEqual(stats["live_bytes"], len(FAKE_JPEG) * 2)
-        self.assertEqual(stats["total_rows"], 2)
-
     def test_ignores_malformed_payloads(self) -> None:
         piece_image_store.enqueueKnownObjectImages({})
         piece_image_store.enqueueKnownObjectImages({"uuid": "x", "recognition_image_set": None})

@@ -3,7 +3,6 @@ from subsystems import (
 )
 from irl.config import IRLInterface, IRLConfig
 from global_config import GlobalConfig
-from runtime_variables import RuntimeVariables
 from vision import VisionManager
 from sorting_profile import mkSortingProfile
 import queue
@@ -20,7 +19,6 @@ class Coordinator:
         gc: GlobalConfig,
         vision: VisionManager,
         event_queue: queue.Queue,
-        rv: RuntimeVariables,
     ):
         self.irl = irl
         self.irl_config = irl_config

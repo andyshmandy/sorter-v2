@@ -16,14 +16,12 @@ from typing import Any, Dict, Optional
 from fastapi import WebSocket
 
 from global_config import GlobalConfig
-from runtime_variables import RuntimeVariables
 
 # ---------------------------------------------------------------------------
 # Global state
 # ---------------------------------------------------------------------------
 
 server_loop: Optional[asyncio.AbstractEventLoop] = None
-runtime_vars: Optional[RuntimeVariables] = None
 command_queue: Optional[queue.Queue] = None
 controller_ref: Optional[Any] = None
 gc_ref: Optional[GlobalConfig] = None
@@ -75,18 +73,6 @@ CLASSIFICATION_BASELINE_CAPTURE_INTERVAL_S = 0.1
 def setGlobalConfig(gc: GlobalConfig) -> None:
     global gc_ref
     gc_ref = gc
-
-
-def setRuntimeVariables(rv: RuntimeVariables) -> None:
-    global runtime_vars
-    runtime_vars = rv
-
-
-def _getRuntimeVariables() -> RuntimeVariables:
-    global runtime_vars
-    if runtime_vars is None:
-        runtime_vars = RuntimeVariables()
-    return runtime_vars
 
 
 def setCommandQueue(q: queue.Queue) -> None:
