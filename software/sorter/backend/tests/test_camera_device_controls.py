@@ -1,8 +1,11 @@
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
+from fastapi import HTTPException
 
 from irl.config import mkCameraConfig
 from server.routers import camera_calibration, camera_device_settings
@@ -291,6 +294,22 @@ class CameraDeviceControlsTests(unittest.TestCase):
             self.assertEqual(method, result["method"])
             self.assertEqual(analysis, result["analysis"])
             self.assertNotIn("color_profile", result)
+
+    def test_calibration_gallery_stays_in_its_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "gallery").mkdir()
+            (root / "frame.jpg").write_bytes(b"not a gallery frame")
+            (root / "frame.json").write_text("{}")
+            with patch.object(camera_calibration, "CALIBRATION_GALLERY_DIR", str(root / "gallery")):
+                for route, args in (
+                    (camera_calibration.get_calibration_gallery, ("c_channel_2", "..")),
+                    (camera_calibration.get_calibration_gallery_image, ("c_channel_2", "..", "frame.jpg")),
+                ):
+                    with self.subTest(route=route.__name__):
+                        with self.assertRaises(HTTPException) as raised:
+                            route(*args)
+                        self.assertEqual(404, raised.exception.status_code)
 
     def test_capture_failure_backoff_caps(self) -> None:
         self.assertEqual(0.0, _capture_failure_backoff_s(0))

@@ -560,7 +560,7 @@ def get_camera_device_settings_calibration_task(role: str, task_id: str) -> Dict
 def get_calibration_gallery(role: str, task_id: str) -> Dict[str, Any]:
     """List all frames saved during a calibration run."""
     gallery_dir = Path(CALIBRATION_GALLERY_DIR) / task_id
-    if not gallery_dir.exists():
+    if task_id == ".." or not gallery_dir.exists():
         raise HTTPException(status_code=404, detail="Gallery not found for this calibration task.")
 
     entries: list[Dict[str, Any]] = []
@@ -588,7 +588,7 @@ def get_calibration_gallery_image(role: str, task_id: str, filename: str) -> Str
     if ".." in filename or "/" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename.")
     image_path = Path(CALIBRATION_GALLERY_DIR) / task_id / filename
-    if not image_path.exists() or not image_path.suffix == ".jpg":
+    if task_id == ".." or not image_path.exists() or not image_path.suffix == ".jpg":
         raise HTTPException(status_code=404, detail="Image not found.")
     return StreamingResponse(
         open(image_path, "rb"),
