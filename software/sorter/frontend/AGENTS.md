@@ -3,6 +3,16 @@
 The Sorter UI is a local, industrial monitoring tool. The style is deliberately
 sharp-edged and dense. When adding or editing components, follow these rules.
 
+## Static files, no server
+
+The UI ships as static files (`adapter-static`, SSR off in
+`src/routes/+layout.ts`) that the backend's supervisor serves on port 80
+(`software/sorter/backend/supervisor.py`); a machine runs no Node process. So
+there are no `+server.ts`, `+page.server.ts`, `+layout.server.ts` or
+`hooks.server.ts` files, and load functions run in the browser. Anything that
+needs a server belongs in the backend. `pnpm dev` (port 5173) is for working
+on the UI.
+
 ## Favicon — the machine's site color is blue
 
 Every web UI in the ecosystem shows the same basically brick on a full-bleed
