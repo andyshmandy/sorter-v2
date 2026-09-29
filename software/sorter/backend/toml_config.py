@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import time
 from typing import Any
-from urllib.parse import urlparse
 
 import machine_toml
 
@@ -486,40 +485,6 @@ def setClassificationTrainingConfig(cfg: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 # Hive config
 # ---------------------------------------------------------------------------
-
-
-def _default_hive_target_name(url: str, index: int) -> str:
-    hostname = urlparse(url).hostname
-    if isinstance(hostname, str) and hostname.strip():
-        return hostname.strip()
-    return f"Hive {index + 1}"
-
-
-def _normalize_hive_target(raw: Any, index: int) -> dict[str, Any] | None:
-    if not isinstance(raw, dict):
-        return None
-
-    url = raw.get("url")
-    api_token = raw.get("api_token")
-    if not isinstance(url, str) or not url.strip():
-        return None
-    if not isinstance(api_token, str) or not api_token.strip():
-        return None
-
-    target_id = raw.get("id")
-    name = raw.get("name")
-    machine_id = raw.get("machine_id")
-
-    target = {
-        "id": target_id.strip() if isinstance(target_id, str) and target_id.strip() else f"target-{index + 1}",
-        "name": name.strip() if isinstance(name, str) and name.strip() else _default_hive_target_name(url, index),
-        "url": url.strip().rstrip("/"),
-        "api_token": api_token.strip(),
-        "enabled": bool(raw.get("enabled", True)),
-    }
-    if isinstance(machine_id, str) and machine_id.strip():
-        target["machine_id"] = machine_id.strip()
-    return target
 
 
 def getHiveConfig() -> dict[str, Any] | None:
