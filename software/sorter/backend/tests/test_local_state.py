@@ -12,6 +12,7 @@ from local_state import (
     get_bin_snapshot,
     get_bin_snapshot_pieces,
     get_current_bin_contents_snapshot,
+    get_current_bin_piece_counts,
     get_current_bin_pieces,
     get_machine_id,
     list_bin_snapshots,
@@ -92,6 +93,29 @@ class LocalStateTests(unittest.TestCase):
         clear_current_session_bins(scope="bin", layer_index=0, section_index=0, bin_index=0)
         cleared = get_current_bin_contents_snapshot()
         self.assertEqual([], cleared["bins"])
+
+    def test_bin_piece_counts_follow_every_write_and_read_no_database_once_loaded(self) -> None:
+        start_new_sorting_session(reason="test")
+        self.assertEqual({}, get_current_bin_piece_counts())
+
+        def _distribute(uuid: str, destination_bin: list[int]) -> None:
+            record_piece_distribution({"uuid": uuid, "destination_bin": destination_bin, "distributed_at": 1.0})
+
+        _distribute("piece-a", [0, 0, 0])
+        _distribute("piece-b", [0, 0, 0])
+        _distribute("piece-b", [0, 0, 0])
+        _distribute("piece-c", [1, 0, 2])
+        with patch.object(db, "_open", side_effect=AssertionError("the counts read the database")):
+            self.assertEqual({(0, 0, 0): 2, (1, 0, 2): 1}, get_current_bin_piece_counts())
+
+        start_new_sorting_session(reason="test")
+        self.assertEqual({(0, 0, 0): 2, (1, 0, 2): 1}, get_current_bin_piece_counts())
+
+        clear_current_session_bins(scope="bin", layer_index=0, section_index=0, bin_index=0)
+        self.assertEqual({(0, 0, 0): 0, (1, 0, 2): 1}, get_current_bin_piece_counts())
+
+        clear_current_session_bins(scope="all")
+        self.assertEqual({(0, 0, 0): 0, (1, 0, 2): 0}, get_current_bin_piece_counts())
 
     def test_bin_snapshots_accumulate_layers_and_close_on_all_clear(self) -> None:
         start_new_sorting_session(reason="test")

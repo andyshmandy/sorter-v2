@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 import db
@@ -34,6 +36,13 @@ _STATE_KEY_BASICALLY_SERVICES = "basically_services"
 
 _META_KEY_ACTIVE_SORTING_SESSION_ID = "active_sorting_session_id"
 _META_KEY_OPEN_BIN_SNAPSHOT_ID = "open_bin_snapshot_id"
+
+# The control loop picks a bin for every piece by its current count, so it
+# reads the counts from memory. Every write to bin_state_current holds
+# _bin_state_write_lock and refreshes the copy after its commit, so the copy
+# always matches the last commit.
+_bin_state_write_lock = threading.RLock()
+_bin_piece_counts: tuple[Path, dict[tuple[int, int, int], int]] | None = None
 
 
 def _connection(op: str | None = None):
@@ -1181,9 +1190,10 @@ def _ensure_active_sorting_session_conn(
 
 
 def start_new_sorting_session(*, reason: str = "profile_activated") -> dict[str, Any]:
-    with _connection() as conn:
+    with _bin_state_write_lock, _connection() as conn:
         session = _ensure_active_sorting_session_conn(conn, force_new=True, reason=reason)
         conn.commit()
+        _refresh_bin_piece_counts(conn)
         return session
 
 
@@ -1241,7 +1251,7 @@ def record_piece_distribution(piece: dict[str, Any]) -> None:
     except (TypeError, ValueError):
         return
 
-    with _connection() as conn:
+    with _bin_state_write_lock, _connection() as conn:
         session = _ensure_active_sorting_session_conn(conn, force_new=False)
         session_id = str(session["id"])
         bin_epoch = _ensure_bin_state_row_conn(
@@ -1287,6 +1297,7 @@ def record_piece_distribution(piece: dict[str, Any]) -> None:
         )
         if cursor.rowcount == 0:
             conn.commit()
+            _refresh_bin_piece_counts(conn)
             return
 
         conn.execute(
@@ -1328,6 +1339,7 @@ def record_piece_distribution(piece: dict[str, Any]) -> None:
             (unique_count, float(distributed_at), time.time(), session_id, layer_index, section_index, bin_index),
         )
         conn.commit()
+        _refresh_bin_piece_counts(conn)
 
 
 def _get_or_create_open_bin_snapshot_conn(conn: sqlite3.Connection, now: float) -> str:
@@ -1409,7 +1421,7 @@ def clear_current_session_bins(
     bin_index: int | None = None,
     bin_categories: Any | None = None,
 ) -> dict[str, Any]:
-    with _connection() as conn:
+    with _bin_state_write_lock, _connection() as conn:
         active_session_id = _get_meta(conn, _META_KEY_ACTIVE_SORTING_SESSION_ID)
         if not active_session_id:
             return {"ok": True, "cleared_bins": 0}
@@ -1516,22 +1528,33 @@ def clear_current_session_bins(
             ),
         )
         conn.commit()
+        _refresh_bin_piece_counts(conn)
         return {"ok": True, "cleared_bins": cleared_bins, "snapshot_id": closed_snapshot_id}
 
 
 def get_current_bin_piece_counts() -> dict[tuple[int, int, int], int]:
-    with _connection() as conn:
-        active_session_id = _get_meta(conn, _META_KEY_ACTIVE_SORTING_SESSION_ID)
-        if not active_session_id:
-            return {}
+    cached = _bin_piece_counts
+    if cached is None or cached[0] != db.local_state_db_path():
+        with _bin_state_write_lock, _connection() as conn:
+            _refresh_bin_piece_counts(conn)
+        cached = _bin_piece_counts
+    return dict(cached[1])
+
+
+def _refresh_bin_piece_counts(conn: sqlite3.Connection) -> None:
+    global _bin_piece_counts
+    counts: dict[tuple[int, int, int], int] = {}
+    active_session_id = _get_meta(conn, _META_KEY_ACTIVE_SORTING_SESSION_ID)
+    if active_session_id:
         rows = conn.execute(
             "SELECT layer_index, section_index, bin_index, piece_count FROM bin_state_current WHERE session_id = ?",
             (active_session_id,),
         ).fetchall()
-        return {
+        counts = {
             (int(row["layer_index"]), int(row["section_index"]), int(row["bin_index"])): int(row["piece_count"] or 0)
             for row in rows
         }
+    _bin_piece_counts = (db.local_state_db_path(), counts)
 
 
 def get_current_bin_contents_snapshot() -> dict[str, Any]:
@@ -1731,7 +1754,7 @@ def import_bin_contents_snapshot(snapshot: dict[str, Any], *, reason: str = "sna
     if not isinstance(bins, list):
         return {"imported_bins": 0}
 
-    with _connection() as conn:
+    with _bin_state_write_lock, _connection() as conn:
         session = _ensure_active_sorting_session_conn(conn, force_new=False, reason=reason)
         session_id = str(session["id"])
         imported_bins = 0
@@ -1843,6 +1866,7 @@ def import_bin_contents_snapshot(snapshot: dict[str, Any], *, reason: str = "sna
                 (session_id, "snapshot_imported", now, json.dumps({"imported_bins": imported_bins}, sort_keys=True)),
             )
         conn.commit()
+        _refresh_bin_piece_counts(conn)
         return {"imported_bins": imported_bins, "session_id": session_id}
 
 
