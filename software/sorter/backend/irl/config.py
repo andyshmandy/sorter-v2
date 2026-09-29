@@ -617,7 +617,7 @@ class IRLInterface:
     c_channel_3_rotor_stepper: "StepperMotor"
     fifth_stepper: "StepperMotor"
     servos: "list[ServoMotor]"
-    chute: "Chute"
+    chute: "Chute | None"
     distribution_layout: DistributionLayout
     interfaces: dict[str, SorterInterface]
     control_boards: dict[str, "ControlBoard"]
@@ -1104,14 +1104,26 @@ def _bindHardware(irl_interface: IRLInterface, config: IRLConfig, gc: GlobalConf
         stepper_config: StepperConfig | None = getattr(config, attr, None)
         stepper.set_hardware_name(physical_name)
         stepper.set_name(attr_base)
-        _configureStepper(
-            gc,
-            stepper,
-            canonical_name,
-            _STEPPER_LABELS.get(attr_base, attr_base),
-            stepper_config,
-            machine_config,
-        )
+        if gc.feeder_only and identity.role == "distribution":
+            # No distribution board wired up on purpose (feeder-only bring-up):
+            # this stepper's driver may not even be powered, so don't touch it
+            # over UART at all rather than fail hardware init when it can't
+            # answer. It stays bound (so anything doing getattr(irl, attr) or
+            # hasattr checks still finds it) but unconfigured and never moved
+            # in this mode.
+            gc.logger.info(
+                f"Skipping driver setup for '{physical_name}' ({attr_base}) on "
+                f"{identity.device_name}: feeder-only mode (LEGOSORTER_FEEDER_ONLY=1)."
+            )
+        else:
+            _configureStepper(
+                gc,
+                stepper,
+                canonical_name,
+                _STEPPER_LABELS.get(attr_base, attr_base),
+                stepper_config,
+                machine_config,
+            )
         logical_name = logical_name_for_attr_base.get(attr_base)
         stepper.set_direction_inverted(
             stepper_direction_inverts.get(logical_name, False) if logical_name is not None else False
@@ -1204,26 +1216,33 @@ def _bindHardware(irl_interface: IRLInterface, config: IRLConfig, gc: GlobalConf
     from subsystems.distribution.chute import Chute
 
     if distribution_board is None:
-        raise RuntimeError("Distribution board not found — cannot initialize chute homing")
-    chute_calibration = loadChuteCalibrationConfig(
-        gc,
-        machine_specific_params,
-        dict(distribution_board.input_aliases),
-        distribution_board.chute_home_active_high,
-    )
-    chute_home_pin = distribution_board.get_input(chute_calibration.home_pin_channel)
-    if chute_home_pin is None:
-        raise RuntimeError(
-            f"Distribution board chute home input channel {chute_calibration.home_pin_channel} is unavailable."
+        if gc.feeder_only:
+            gc.logger.info(
+                "No distribution board found; feeder-only mode — chute stays uninitialized."
+            )
+            irl_interface.chute = None
+        else:
+            raise RuntimeError("Distribution board not found — cannot initialize chute homing")
+    else:
+        chute_calibration = loadChuteCalibrationConfig(
+            gc,
+            machine_specific_params,
+            dict(distribution_board.input_aliases),
+            distribution_board.chute_home_active_high,
         )
-    irl_interface.chute = Chute(
-        gc,
-        irl_interface.chute_stepper,
-        chute_home_pin,
-        irl_interface.distribution_layout,
-        num_sections=chute_calibration.num_sections,
-        section_width_deg=chute_calibration.section_width_deg,
-        first_section_offset_deg=chute_calibration.first_section_offset_deg,
-        endstop_active_high=chute_calibration.endstop_active_high,
-        operating_speed_microsteps_per_second=chute_calibration.operating_speed_microsteps_per_second,
-    )
+        chute_home_pin = distribution_board.get_input(chute_calibration.home_pin_channel)
+        if chute_home_pin is None:
+            raise RuntimeError(
+                f"Distribution board chute home input channel {chute_calibration.home_pin_channel} is unavailable."
+            )
+        irl_interface.chute = Chute(
+            gc,
+            irl_interface.chute_stepper,
+            chute_home_pin,
+            irl_interface.distribution_layout,
+            num_sections=chute_calibration.num_sections,
+            section_width_deg=chute_calibration.section_width_deg,
+            first_section_offset_deg=chute_calibration.first_section_offset_deg,
+            endstop_active_high=chute_calibration.endstop_active_high,
+            operating_speed_microsteps_per_second=chute_calibration.operating_speed_microsteps_per_second,
+        )

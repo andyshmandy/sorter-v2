@@ -49,6 +49,12 @@ class GlobalConfig:
     disable_c_channels: set[int]  # {1, 2, 3, 4} — c-channel rotor steppers to suppress
     disable_carousel: bool         # carousel stepper (same physical motor as c_channel_4)
     no_power_development_mode: bool
+    # No distribution board attached (dev/bring-up on a lone feeder control
+    # board): skip driver setup for any stepper discovered on a distribution-
+    # role board (chute, distribution_aux_*) instead of failing hardware init
+    # when it can't be read, and don't require a distribution board to be
+    # present at all. Implies disable_chute (see mkGlobalConfig).
+    feeder_only: bool
     rotary_channel_steppers_can_operate_in_parallel: bool
     run_recorder: "RunRecorder"
     runtime_stats: "RuntimeStatsCollector"
@@ -89,6 +95,7 @@ class GlobalConfig:
         self.disable_c_channels: set[int] = set()
         self.disable_carousel = False
         self.no_power_development_mode = False
+        self.feeder_only = False
         self.rotary_channel_steppers_can_operate_in_parallel = False
         self.runtime_stats = RuntimeStatsCollector()
         # Rev04: perception service for the GO_TO_ANGLE_REV01 +
@@ -159,6 +166,9 @@ def mkGlobalConfig() -> GlobalConfig:
     if gc.no_power_development_mode:
         gc.disable_chute = True
         gc.disable_servos = True
+    gc.feeder_only = os.getenv("LEGOSORTER_FEEDER_ONLY", "0") == "1"
+    if gc.feeder_only:
+        gc.disable_chute = True
 
     log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
     os.makedirs(log_dir, exist_ok=True)
