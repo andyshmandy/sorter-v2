@@ -75,7 +75,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -85,23 +85,26 @@ from starlette.responses import Response
 _LOG_ALL_REQUESTS = os.environ.get("SORTER_LOG_REQUESTS", "").lower() in ("1", "true", "yes")
 
 
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        gc = shared_state.gc_ref
-        if _LOG_ALL_REQUESTS and gc is not None:
-            client = request.client.host if request.client is not None else None
-            gc.logger.info(
-                f"[req] {request.method} {request.url.path} "
-                f"origin={request.headers.get('origin')!r} client={client!r}"
-            )
-            response: Response = await call_next(request)
-            gc.logger.info(f"[req] <- {response.status_code} {request.method} {request.url.path}")
-            return response
-        if request.method != "GET" and gc is not None:
-            gc.logger.info(f"[API] {request.method} {request.url.path}")
-        return await call_next(request)
+class _LogRequests:
+    """Logs each non-GET request. Plain ASGI: responses, streamed camera frames
+    included, pass straight through instead of being re-queued through a task."""
 
-app.add_middleware(RequestLoggingMiddleware)
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        gc = shared_state.gc_ref
+        if scope["type"] == "http" and gc is not None:
+            if _LOG_ALL_REQUESTS:
+                origin = dict(scope["headers"]).get(b"origin", b"").decode()
+                client = scope["client"][0] if scope.get("client") else None
+                gc.logger.info(f"[req] {scope['method']} {scope['path']} origin={origin!r} client={client!r}")
+            elif scope["method"] != "GET":
+                gc.logger.info(f"[API] {scope['method']} {scope['path']}")
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(_LogRequests)
 
 
 @app.exception_handler(machine_toml.MachineTomlError)
@@ -734,9 +737,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     shared_state.ws_clients.add(client)
     tasks: list[asyncio.Future] = []
     try:
+        snapshot = await run_in_threadpool(_connectSnapshot)
         # A broadcast that arrived meanwhile is at least as new, so it keeps its
         # value; the snapshot keeps its place, identity first.
-        client.pending = {**_connectSnapshot(), **client.pending}
+        client.pending = {**snapshot, **client.pending}
         tasks = [
             asyncio.ensure_future(client.send()),
             asyncio.ensure_future(_readUntilDisconnect(websocket)),
@@ -749,36 +753,30 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
 
 def _connectSnapshot() -> dict[str, str]:
-    """Everything a new client needs before the live updates, identity first.
+    """Everything a new client needs before the live updates, identity first,
+    read fresh. Runs in a worker thread: it reads SQLite and machine.toml.
     No known_object replay: clients hydrate recent pieces via GET /api/pieces."""
+    from server.routers.cameras import get_camera_config
+    from server.routers.sorting_profiles import _current_local_profile_status
+
+    controller = shared_state.controller_ref
     events = [
         {"tag": "identity", "data": _getMachineIdentityData().model_dump()},
         {"tag": "system_status", "data": shared_state.systemStatusData()},
+        {"tag": "sorter_state", "data": {"state": getattr(getattr(controller, "state", None), "value", "initializing")}},
     ]
     if shared_state.runtime_stats_live is not None:
         events.append({"tag": "runtime_stats", "data": {"payload": shared_state.runtime_stats_live}})
-    if shared_state.sorter_state_snapshot is None:
-        fsm_state = "initializing"
-        if shared_state.controller_ref is not None:
-            fsm_state = getattr(shared_state.controller_ref.state, "value", "initializing")
-        shared_state.sorter_state_snapshot = {"state": fsm_state}
-    events.append({"tag": "sorter_state", "data": shared_state.sorter_state_snapshot})
-    # Populate cameras_config snapshot on-demand from the live config file.
-    if shared_state.cameras_config_snapshot is None:
+    optional = {
+        "camera_health": lambda: {"cameras": shared_state.camera_service.get_health_map()},
+        "cameras_config": lambda: {"cameras": get_camera_config()},
+        "sorting_profile_status": _current_local_profile_status,
+    }
+    for tag, read in optional.items():
         try:
-            from server.routers.cameras import get_camera_config
-            shared_state.cameras_config_snapshot = {"cameras": get_camera_config()}
+            events.append({"tag": tag, "data": read()})
         except Exception:
-            shared_state.cameras_config_snapshot = None
-    if shared_state.cameras_config_snapshot is not None:
-        events.append({"tag": "cameras_config", "data": shared_state.cameras_config_snapshot})
-    # Always compute fresh sorting profile status on connect — cheap file read,
-    # keeps frontend in sync without depending on mutation-time broadcasts.
-    try:
-        from server.routers.sorting_profiles import _current_local_profile_status
-        events.append({"tag": "sorting_profile_status", "data": _current_local_profile_status()})
-    except Exception:
-        pass
+            pass  # not available yet; it is broadcast when it is
     return {event["tag"]: shared_state.encodeEvent(event) for event in events}
 
 

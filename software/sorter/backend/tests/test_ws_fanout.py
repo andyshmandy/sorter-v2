@@ -53,8 +53,6 @@ def test_a_client_that_takes_nothing_is_closed_and_the_others_carry_on(monkeypat
 
 
 def test_broadcast_encodes_an_event_once_for_every_client(monkeypatch) -> None:
-    monkeypatch.setattr(shared_state, "sorter_state_snapshot", None)
-
     async def run() -> list[str]:
         monkeypatch.setattr(shared_state, "server_loop", asyncio.get_running_loop())
         clients = [shared_state.WsClient(_Socket()) for _ in range(2)]

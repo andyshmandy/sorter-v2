@@ -45,10 +45,6 @@ camera_calibration_tasks_lock = threading.Lock()
 # GET /runtime-stats, and the live part last pushed to the dashboard.
 runtime_stats_snapshot: Optional[dict[str, Any]] = None
 runtime_stats_live: Optional[dict[str, Any]] = None
-system_status_snapshot: Optional[dict[str, Any]] = None
-sorter_state_snapshot: Optional[dict[str, Any]] = None
-cameras_config_snapshot: Optional[dict[str, Any]] = None
-sorting_profile_status_snapshot: Optional[dict[str, Any]] = None
 
 # Hardware lifecycle state:
 # "standby" | "initializing" | "initialized" | "homing" | "ready" | "error"
@@ -223,7 +219,6 @@ def encodeEvent(event: dict) -> str:
 def broadcast(event: dict) -> None:
     """Send an event to every websocket client; safe from any thread. It is
     encoded once, here in the caller's thread, and never waits for a client."""
-    _update_snapshot(event)
     tag = str(event.get("tag"))
     key = f"{tag}:{event['data'].get('uuid')}" if tag == "known_object" else tag
     text = encodeEvent(event)
@@ -241,21 +236,6 @@ def fanOut(key: str, text: str) -> None:
     last_broadcast_ok_ts = time.time()
     for client in ws_clients:
         client.push(key, text)
-
-
-def _update_snapshot(event: dict) -> None:
-    """Update in-memory snapshot globals so WS-connect replay is accurate."""
-    global system_status_snapshot, sorter_state_snapshot, cameras_config_snapshot, sorting_profile_status_snapshot
-    tag = event.get("tag")
-    data = event.get("data") if isinstance(event.get("data"), dict) else None
-    if tag == "system_status" and data is not None:
-        system_status_snapshot = dict(data)
-    elif tag == "sorter_state" and data is not None:
-        sorter_state_snapshot = dict(data)
-    elif tag == "cameras_config" and data is not None:
-        cameras_config_snapshot = dict(data)
-    elif tag == "sorting_profile_status" and data is not None:
-        sorting_profile_status_snapshot = dict(data)
 
 
 def systemStatusData() -> dict[str, Any]:

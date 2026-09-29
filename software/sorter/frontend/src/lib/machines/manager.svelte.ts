@@ -1,23 +1,12 @@
 import type {
 	SocketEvent,
 	KnownObjectData,
-	CameraHealthData,
+	MachineIdentityData,
 	SystemStatusData,
 	SorterStateData,
 	CamerasConfigData,
 	SortingProfileStatusData
 } from '$lib/api/events';
-import type { MachineState, MachineIdentity } from './types';
-import {
-	isIdentityEvent,
-	isKnownObjectEvent,
-	isCameraHealthEvent,
-	isRuntimeStatsEvent,
-	isSystemStatusEvent,
-	isSorterStateEvent,
-	isCamerasConfigEvent,
-	isSortingProfileStatusEvent
-} from './types';
 import { mergeKnownObject, pieceStore } from '$lib/pieces';
 
 const RECONNECT_BASE_DELAY_MS = 1000;
@@ -29,6 +18,8 @@ const CONNECTION_WATCHDOG_INTERVAL_MS = 1000;
 const STALE_MS = 5000;
 const RECENT_OBJECT_BUFFER_LIMIT = 32;
 const RECENT_OBJECT_REMOVAL_GRACE_MS = 1500;
+
+export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
 function shouldKeepRecentObject(obj: KnownObjectData): boolean {
 	// Aborted pieces had their classification cycle torn down before any result
@@ -45,31 +36,50 @@ function shouldKeepRecentObject(obj: KnownObjectData): boolean {
 	return obj.first_carousel_seen_ts != null;
 }
 
+/** One sorter as its websocket reports it. Each field is its own reactive
+ *  value, so an event re-runs only what reads the field it changed. */
+export class Machine {
+	id: string;
+	connection: WebSocket;
+	identity = $state.raw<MachineIdentityData | null>(null);
+	url = $state<string | null>(null);
+	status = $state<ConnectionStatus>('connected');
+	cameraHealth = $state.raw(new Map<string, string>());
+	cameraFeedEpoch = $state(0);
+	recentObjects = $state.raw<KnownObjectData[]>([]);
+	runtimeStats = $state.raw<Record<string, unknown> | null>(null);
+	systemStatus = $state.raw<SystemStatusData | null>(null);
+	sorterState = $state.raw<SorterStateData | null>(null);
+	camerasConfig = $state.raw<CamerasConfigData | null>(null);
+	sortingProfileStatus = $state.raw<SortingProfileStatusData | null>(null);
+	// Pieces that no longer belong in the ring leave it after a grace period.
+	removalTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+	constructor(id: string, connection: WebSocket, url: string | null) {
+		this.id = id;
+		this.connection = connection;
+		this.url = url;
+	}
+}
+
 export class MachineManager {
-	machines = $state(new Map<string, MachineState>());
+	machines = $state.raw(new Map<string, Machine>());
 	selectedMachineId = $state<string | null>(null);
-	private pending_connections = new Map<WebSocket, string>();
+	selectedMachine = $derived(
+		this.selectedMachineId ? (this.machines.get(this.selectedMachineId) ?? null) : null
+	);
+	private socket_urls = new Map<WebSocket, string>();
+	private last_message_at = new WeakMap<WebSocket, number>();
+	private ignored_closures = new WeakSet<WebSocket>();
 	private reconnect_attempts = new Map<string, number>();
 	private reconnect_timers = new Map<string, ReturnType<typeof setTimeout>>();
-	private ignored_closures = new WeakSet<WebSocket>();
-	private recent_removal_timers = new Map<string, ReturnType<typeof setTimeout>>();
 	private manually_disconnected = new Set<string>();
-	private last_message_at = new WeakMap<WebSocket, number>();
 	private connection_watchdog_timer: ReturnType<typeof setInterval> | null = null;
-
-	selectedMachine = $derived.by(() => {
-		if (!this.selectedMachineId) return null;
-		return this.machines.get(this.selectedMachineId) ?? null;
-	});
 
 	connect(url: string, options: { force?: boolean } = {}): void {
 		this.manually_disconnected.delete(url);
-
-		const existing_timer = this.reconnect_timers.get(url);
-		if (existing_timer) {
-			clearTimeout(existing_timer);
-			this.reconnect_timers.delete(url);
-		}
+		clearTimeout(this.reconnect_timers.get(url));
+		this.reconnect_timers.delete(url);
 
 		if (options.force) {
 			this.closeSocketsForUrl(url);
@@ -78,7 +88,7 @@ export class MachineManager {
 		}
 
 		const ws = new WebSocket(url);
-		this.pending_connections.set(ws, url);
+		this.socket_urls.set(ws, url);
 		this.last_message_at.set(ws, Date.now());
 
 		ws.onopen = () => {
@@ -88,8 +98,7 @@ export class MachineManager {
 
 		ws.onmessage = (message) => {
 			this.last_message_at.set(ws, Date.now());
-			const event = JSON.parse(message.data) as SocketEvent;
-			this.handleEvent(ws, event);
+			this.handleEvent(ws, JSON.parse(message.data) as SocketEvent);
 		};
 
 		ws.onerror = (error) => {
@@ -98,54 +107,32 @@ export class MachineManager {
 
 		ws.onclose = () => {
 			console.log(`[MachineManager] WebSocket closed for ${url}`);
-			const closed_url = this.pending_connections.get(ws);
-			this.pending_connections.delete(ws);
-
-			for (const [id, machine] of this.machines) {
-				if (machine.connection === ws) {
-					const updated = new Map(this.machines);
-					const existing = updated.get(id);
-					if (existing) {
-						updated.set(id, { ...existing, status: 'disconnected' });
-						this.machines = updated;
-					}
-					break;
-				}
-			}
-
-			const reconnect_url = closed_url ?? url;
-			if (this.ignored_closures.has(ws)) {
-				return;
-			}
-			if (!this.manually_disconnected.has(reconnect_url)) {
-				this.scheduleReconnect(reconnect_url);
+			this.socket_urls.delete(ws);
+			const machine = this.machineFor(ws);
+			if (machine) machine.status = 'disconnected';
+			if (!this.ignored_closures.has(ws) && !this.manually_disconnected.has(url)) {
+				this.scheduleReconnect(url);
 			}
 		};
 	}
 
-	ensureConnected(url: string, options: { respectManualDisconnect?: boolean } = {}): void {
-		if (options.respectManualDisconnect !== false && this.manually_disconnected.has(url)) return;
-		if (this.hasUsableSocketForUrl(url)) return;
+	ensureConnected(url: string): void {
+		if (this.manually_disconnected.has(url) || this.hasUsableSocketForUrl(url)) return;
 		this.connect(url);
 	}
 
 	private scheduleReconnect(url: string): void {
-		if (this.hasUsableSocketForUrl(url) || this.reconnect_timers.has(url)) {
-			return;
-		}
+		if (this.hasUsableSocketForUrl(url) || this.reconnect_timers.has(url)) return;
 		const attempts = this.reconnect_attempts.get(url) ?? 0;
 		const delay = Math.min(RECONNECT_BASE_DELAY_MS * Math.pow(2, attempts), RECONNECT_MAX_DELAY_MS);
-
 		console.log(
 			`[MachineManager] Scheduling reconnect to ${url} in ${delay}ms (attempt ${attempts + 1})`
 		);
-
 		const timer = setTimeout(() => {
 			this.reconnect_timers.delete(url);
 			this.reconnect_attempts.set(url, attempts + 1);
 			this.connect(url);
 		}, delay);
-
 		this.reconnect_timers.set(url, timer);
 	}
 
@@ -158,7 +145,7 @@ export class MachineManager {
 			// heartbeat every 2 s) is replaced now: closing a dead socket can take
 			// the browser a minute to report.
 			const now = Date.now();
-			for (const [ws, url] of this.pending_connections) {
+			for (const [ws, url] of this.socket_urls) {
 				if (ws.readyState !== WebSocket.CONNECTING && ws.readyState !== WebSocket.OPEN) continue;
 				if (now - (this.last_message_at.get(ws) ?? now) < STALE_MS) continue;
 				console.warn(`[MachineManager] Nothing from ${url} for ${STALE_MS} ms; reconnecting`);
@@ -182,7 +169,7 @@ export class MachineManager {
 	}
 
 	/** Whether the machine's websocket has delivered anything recently. */
-	isLive(machine: MachineState | null): boolean {
+	isLive(machine: Machine | null): boolean {
 		if (!machine || machine.status !== 'connected') return false;
 		if (machine.connection.readyState !== WebSocket.OPEN) return false;
 		return Date.now() - (this.last_message_at.get(machine.connection) ?? 0) < STALE_MS;
@@ -190,25 +177,20 @@ export class MachineManager {
 
 	disconnect(machineId: string): void {
 		const machine = this.machines.get(machineId);
-		if (machine) {
-			this.clearRecentRemovalTimersForMachine(machineId);
-			const url = this.findUrlBySocket(machine.connection);
-			if (url) {
-				this.manually_disconnected.add(url);
-				const timer = this.reconnect_timers.get(url);
-				if (timer) {
-					clearTimeout(timer);
-					this.reconnect_timers.delete(url);
-				}
-			}
-
-			machine.connection.close();
-			const updated = new Map(this.machines);
-			updated.delete(machineId);
-			this.machines = updated;
-			if (this.selectedMachineId === machineId) {
-				this.selectedMachineId = updated.size > 0 ? (updated.keys().next().value ?? null) : null;
-			}
+		if (!machine) return;
+		this.clearRemovalTimers(machine);
+		const url = this.socket_urls.get(machine.connection);
+		if (url) {
+			this.manually_disconnected.add(url);
+			clearTimeout(this.reconnect_timers.get(url));
+			this.reconnect_timers.delete(url);
+		}
+		machine.connection.close();
+		const updated = new Map(this.machines);
+		updated.delete(machineId);
+		this.machines = updated;
+		if (this.selectedMachineId === machineId) {
+			this.selectedMachineId = updated.keys().next().value ?? null;
 		}
 	}
 
@@ -216,15 +198,8 @@ export class MachineManager {
 		this.selectedMachineId = machineId;
 	}
 
-	private findUrlBySocket(ws: WebSocket): string | null {
-		for (const [socket, url] of this.pending_connections) {
-			if (socket === ws) return url;
-		}
-		return null;
-	}
-
 	private hasUsableSocketForUrl(url: string): boolean {
-		for (const [socket, socketUrl] of this.pending_connections) {
+		for (const [socket, socketUrl] of this.socket_urls) {
 			if (socketUrl !== url) continue;
 			if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
 				return true;
@@ -234,7 +209,7 @@ export class MachineManager {
 	}
 
 	private closeSocketsForUrl(url: string): void {
-		for (const [socket, socketUrl] of this.pending_connections) {
+		for (const [socket, socketUrl] of this.socket_urls) {
 			if (socketUrl !== url) continue;
 			if (socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED)
 				continue;
@@ -243,230 +218,134 @@ export class MachineManager {
 		}
 	}
 
-	private handleEvent(ws: WebSocket, event: SocketEvent): void {
-		if (isIdentityEvent(event)) {
-			this.handleIdentity(ws, event.data);
-		} else {
-			const machineId = this.findMachineIdBySocket(ws);
-			if (!machineId) {
-				console.warn('[MachineManager] Received event before identity', event);
-				return;
-			}
+	private machineFor(ws: WebSocket): Machine | null {
+		for (const machine of this.machines.values()) {
+			if (machine.connection === ws) return machine;
+		}
+		return null;
+	}
 
-			if (isKnownObjectEvent(event)) {
-				this.handleKnownObject(machineId, event.data);
-			} else if (isCameraHealthEvent(event)) {
-				this.handleCameraHealth(machineId, event.data);
-			} else if (isRuntimeStatsEvent(event)) {
-				this.handleRuntimeStats(machineId, event.data.payload as Record<string, unknown>);
-			} else if (isSystemStatusEvent(event)) {
-				this.handleSystemStatus(machineId, event.data);
-			} else if (isSorterStateEvent(event)) {
-				this.handleSorterState(machineId, event.data);
-			} else if (isCamerasConfigEvent(event)) {
-				this.handleCamerasConfig(machineId, event.data);
-			} else if (isSortingProfileStatusEvent(event)) {
-				this.handleSortingProfileStatus(machineId, event.data);
-			}
+	private handleEvent(ws: WebSocket, event: SocketEvent): void {
+		if (event.tag === 'identity') return this.handleIdentity(ws, event.data);
+		const machine = this.machineFor(ws);
+		if (!machine) {
+			console.warn('[MachineManager] Received event before identity', event);
+			return;
+		}
+		switch (event.tag) {
+			case 'known_object':
+				return this.handleKnownObject(machine, event.data);
+			case 'camera_health':
+				machine.cameraHealth = new Map(Object.entries(event.data.cameras));
+				return;
+			case 'runtime_stats':
+				machine.runtimeStats = event.data.payload as Record<string, unknown>;
+				return;
+			case 'system_status':
+				return this.handleSystemStatus(machine, event.data);
+			case 'sorter_state':
+				machine.sorterState = event.data;
+				return;
+			case 'cameras_config':
+				machine.camerasConfig = event.data;
+				return;
+			case 'sorting_profile_status':
+				machine.sortingProfileStatus = event.data;
 		}
 	}
 
-	private handleIdentity(ws: WebSocket, identity: MachineIdentity): void {
-		const url = this.pending_connections.get(ws);
-		this.pending_connections.delete(ws);
-
-		const existing = this.machines.get(identity.machine_id);
-		if (existing && existing.connection !== ws) {
-			existing.connection.close();
+	private handleIdentity(ws: WebSocket, identity: MachineIdentityData): void {
+		const url = this.socket_urls.get(ws) ?? null;
+		let machine = this.machines.get(identity.machine_id);
+		if (!machine) {
+			machine = new Machine(identity.machine_id, ws, url);
+			this.machines = new Map(this.machines).set(identity.machine_id, machine);
+		} else {
+			if (machine.connection !== ws) machine.connection.close();
+			// A reconnect keeps the camera feeds; only a new backend process
+			// (whose old streams are gone) reopens them.
+			if (machine.identity?.run_id !== identity.run_id) machine.cameraFeedEpoch += 1;
+			machine.connection = ws;
+			machine.url = url ?? machine.url;
+			machine.status = 'connected';
 		}
-		// A reconnect keeps the camera feeds; only a new backend process (whose
-		// old streams are gone) reopens them.
-		const backendRestarted = Boolean(existing && existing.identity?.run_id !== identity.run_id);
-
-		const updated = new Map(this.machines);
-		updated.set(identity.machine_id, {
-			identity,
-			connection: ws,
-			url: url ?? existing?.url ?? null,
-			status: 'connected',
-			cameraHealth: existing?.cameraHealth ?? new Map(),
-			cameraFeedEpoch: (existing?.cameraFeedEpoch ?? 0) + (backendRestarted ? 1 : 0),
-			recentObjects: existing?.recentObjects ?? [],
-			runtimeStats: existing?.runtimeStats ?? null,
-			systemStatus: existing?.systemStatus ?? null,
-			sorterState: existing?.sorterState ?? null,
-			camerasConfig: existing?.camerasConfig ?? null,
-			sortingProfileStatus: existing?.sortingProfileStatus ?? null
-		});
-		this.machines = updated;
-
-		if (url) {
-			this.pending_connections.set(ws, url);
-		}
-
-		if (!this.selectedMachineId) {
-			this.selectedMachineId = identity.machine_id;
-		}
-
+		machine.identity = identity;
+		if (!this.selectedMachineId) this.selectedMachineId = identity.machine_id;
 		console.log(`[MachineManager] Machine identified: ${identity.machine_id}`);
 	}
 
-	private handleKnownObject(machineId: string, obj: KnownObjectData): void {
-		const machine = this.machines.get(machineId);
-		if (!machine) return;
-
+	private handleKnownObject(machine: Machine, obj: KnownObjectData): void {
 		// Every known_object event reduces into the shared piece store — the
 		// records page and RecentObjects both view it. Runs before the ring's
 		// early returns so dead pieces still reach the store (they exist as
 		// durable records) even though the ring drops them.
-		pieceStore.upsertFromWs(machineId, obj);
+		pieceStore.upsertFromWs(machine.id, obj);
 
 		// Aborted (teardown) or dead (reaped by the backend after going silent
 		// too long without distributing): the piece will never progress. Drop it
 		// from the buffer immediately so it can't linger.
 		if (obj.aborted || obj.dead) {
-			this.clearRecentRemovalTimer(machineId, obj.uuid);
+			this.clearRemovalTimer(machine, obj.uuid);
 			if (machine.recentObjects.some((o) => o.uuid === obj.uuid)) {
-				const updated = new Map(this.machines);
-				updated.set(machineId, {
-					...machine,
-					recentObjects: machine.recentObjects.filter((o) => o.uuid !== obj.uuid)
-				});
-				this.machines = updated;
+				machine.recentObjects = machine.recentObjects.filter((o) => o.uuid !== obj.uuid);
 			}
 			return;
 		}
 
 		const existing_idx = machine.recentObjects.findIndex((o) => o.uuid === obj.uuid);
-		const existing_obj = existing_idx >= 0 ? machine.recentObjects[existing_idx] : undefined;
-		const merged_obj = mergeKnownObject(existing_obj, obj);
-		const keep = shouldKeepRecentObject(merged_obj);
-		let updated_objects: KnownObjectData[];
-
-		if (existing_idx >= 0) {
-			updated_objects = [...machine.recentObjects];
-			if (keep) {
-				this.clearRecentRemovalTimer(machineId, merged_obj.uuid);
-				updated_objects[existing_idx] = merged_obj;
-			} else {
-				this.scheduleRecentRemoval(machineId, merged_obj.uuid);
-				return;
-			}
-		} else if (keep) {
-			this.clearRecentRemovalTimer(machineId, merged_obj.uuid);
-			updated_objects = [merged_obj, ...machine.recentObjects].slice(0, RECENT_OBJECT_BUFFER_LIMIT);
-		} else {
+		const merged_obj = mergeKnownObject(machine.recentObjects[existing_idx], obj);
+		if (!shouldKeepRecentObject(merged_obj)) {
+			if (existing_idx >= 0) this.scheduleRemoval(machine, merged_obj.uuid);
 			return;
 		}
-
-		const updated = new Map(this.machines);
-		updated.set(machineId, { ...machine, recentObjects: updated_objects });
-		this.machines = updated;
-	}
-
-	private recentRemovalKey(machineId: string, uuid: string): string {
-		return `${machineId}:${uuid}`;
-	}
-
-	private clearRecentRemovalTimer(machineId: string, uuid: string): void {
-		const key = this.recentRemovalKey(machineId, uuid);
-		const timer = this.recent_removal_timers.get(key);
-		if (!timer) return;
-		clearTimeout(timer);
-		this.recent_removal_timers.delete(key);
-	}
-
-	private clearRecentRemovalTimersForMachine(machineId: string): void {
-		for (const [key, timer] of this.recent_removal_timers) {
-			if (!key.startsWith(`${machineId}:`)) continue;
-			clearTimeout(timer);
-			this.recent_removal_timers.delete(key);
+		this.clearRemovalTimer(machine, merged_obj.uuid);
+		if (existing_idx >= 0) {
+			const updated_objects = [...machine.recentObjects];
+			updated_objects[existing_idx] = merged_obj;
+			machine.recentObjects = updated_objects;
+		} else {
+			machine.recentObjects = [merged_obj, ...machine.recentObjects].slice(
+				0,
+				RECENT_OBJECT_BUFFER_LIMIT
+			);
 		}
 	}
 
-	private scheduleRecentRemoval(machineId: string, uuid: string): void {
-		const key = this.recentRemovalKey(machineId, uuid);
-		if (this.recent_removal_timers.has(key)) return;
+	private clearRemovalTimer(machine: Machine, uuid: string): void {
+		clearTimeout(machine.removalTimers.get(uuid));
+		machine.removalTimers.delete(uuid);
+	}
+
+	private clearRemovalTimers(machine: Machine): void {
+		for (const timer of machine.removalTimers.values()) clearTimeout(timer);
+		machine.removalTimers.clear();
+	}
+
+	private scheduleRemoval(machine: Machine, uuid: string): void {
+		if (machine.removalTimers.has(uuid)) return;
 		const timer = setTimeout(() => {
-			this.recent_removal_timers.delete(key);
-			const machine = this.machines.get(machineId);
-			if (!machine) return;
+			machine.removalTimers.delete(uuid);
 			const existing = machine.recentObjects.find((o) => o.uuid === uuid);
 			if (!existing || shouldKeepRecentObject(existing)) return;
-			const updated = new Map(this.machines);
-			updated.set(machineId, {
-				...machine,
-				recentObjects: machine.recentObjects.filter((o) => o.uuid !== uuid)
-			});
-			this.machines = updated;
+			machine.recentObjects = machine.recentObjects.filter((o) => o.uuid !== uuid);
 		}, RECENT_OBJECT_REMOVAL_GRACE_MS);
-		this.recent_removal_timers.set(key, timer);
+		machine.removalTimers.set(uuid, timer);
 	}
 
-	private handleCameraHealth(machineId: string, data: CameraHealthData): void {
-		const machine = this.machines.get(machineId);
-		if (!machine) return;
-		const healthMap = new Map(Object.entries(data.cameras));
-		const updated = new Map(this.machines);
-		updated.set(machineId, { ...machine, cameraHealth: healthMap });
-		this.machines = updated;
-	}
-
-	private handleRuntimeStats(machineId: string, payload: Record<string, unknown>): void {
-		const machine = this.machines.get(machineId);
-		if (!machine) return;
-		const updated = new Map(this.machines);
-		updated.set(machineId, { ...machine, runtimeStats: payload });
-		this.machines = updated;
-	}
-
-	private handleSystemStatus(machineId: string, data: SystemStatusData): void {
-		const machine = this.machines.get(machineId);
-		if (!machine) return;
+	private handleSystemStatus(machine: Machine, data: SystemStatusData): void {
 		const shouldClearRecentObjects =
 			data.hardware_state === 'homing' ||
 			(data.hardware_state === 'standby' && machine.systemStatus?.hardware_state !== 'standby');
 		if (shouldClearRecentObjects) {
-			this.clearRecentRemovalTimersForMachine(machineId);
-			pieceStore.clearWsEntries(machineId);
+			this.clearRemovalTimers(machine);
+			pieceStore.clearWsEntries(machine.id);
+			machine.recentObjects = [];
 		}
-		const updated = new Map(this.machines);
-		updated.set(machineId, {
-			...machine,
-			systemStatus: data,
-			recentObjects: shouldClearRecentObjects ? [] : machine.recentObjects
-		});
-		this.machines = updated;
-	}
-
-	private handleSorterState(machineId: string, data: SorterStateData): void {
-		const machine = this.machines.get(machineId);
-		if (!machine) return;
-		const updated = new Map(this.machines);
-		updated.set(machineId, { ...machine, sorterState: data });
-		this.machines = updated;
-	}
-
-	private handleCamerasConfig(machineId: string, data: CamerasConfigData): void {
-		const machine = this.machines.get(machineId);
-		if (!machine) return;
-		const updated = new Map(this.machines);
-		updated.set(machineId, { ...machine, camerasConfig: data });
-		this.machines = updated;
-	}
-
-	private handleSortingProfileStatus(machineId: string, data: SortingProfileStatusData): void {
-		const machine = this.machines.get(machineId);
-		if (!machine) return;
-		const updated = new Map(this.machines);
-		updated.set(machineId, { ...machine, sortingProfileStatus: data });
-		this.machines = updated;
+		machine.systemStatus = data;
 	}
 
 	applySystemStatusToSelected(data: SystemStatusData): void {
-		const machineId = this.selectedMachineId;
-		if (!machineId) return;
-		this.handleSystemStatus(machineId, data);
+		if (this.selectedMachine) this.handleSystemStatus(this.selectedMachine, data);
 	}
 
 	async refreshSelectedSystemStatus(baseUrl: string): Promise<boolean> {
@@ -484,14 +363,5 @@ export class MachineManager {
 		for (const delayMs of delaysMs) {
 			window.setTimeout(() => void this.refreshSelectedSystemStatus(baseUrl), delayMs);
 		}
-	}
-
-	private findMachineIdBySocket(ws: WebSocket): string | null {
-		for (const [id, machine] of this.machines) {
-			if (machine.connection === ws) {
-				return id;
-			}
-		}
-		return null;
 	}
 }
