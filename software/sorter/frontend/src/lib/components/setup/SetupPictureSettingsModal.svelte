@@ -22,14 +22,12 @@
 		role,
 		label,
 		source = null,
-		hasCamera = true,
-		backendBaseUrl
+		hasCamera = true
 	}: {
 		role: CameraRole;
 		label: string;
 		source?: number | string | null;
 		hasCamera?: boolean;
-		backendBaseUrl: string;
 	} = $props();
 
 	const dispatch = createEventDispatcher<{ saved: void }>();
@@ -195,7 +193,6 @@
 				{#if hasCamera}
 					<LiveImage
 						view={roleView(role, false, false)}
-						baseUrl={backendBaseUrl}
 						alt={label}
 						class="absolute inset-0 h-full w-full object-contain"
 						style={previewTransformStyle()}

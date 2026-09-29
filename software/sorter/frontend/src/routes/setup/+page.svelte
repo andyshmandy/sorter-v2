@@ -1092,7 +1092,6 @@
 					label={ROLE_LABELS[pictureSettingsRole] ?? pictureSettingsRole}
 					hasCamera={roleHasCamera(pictureSettingsRole)}
 					source={parseCameraSource(roleSelections[pictureSettingsRole] ?? '__none__')}
-					backendBaseUrl={currentBackendBaseUrl()}
 					on:saved={() => {
 						const role = pictureSettingsRole;
 						if (!role) return;
