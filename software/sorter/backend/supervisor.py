@@ -311,57 +311,33 @@ def _serve_ui(supervisor: BackendSupervisor, port: int) -> None:
     server.serve_forever()
 
 
-def _default_backend_command(script_dir: Path) -> list[str]:
-    return [sys.executable, str(script_dir / "main.py")]
-
-
 def _parse_args() -> argparse.Namespace:
-    script_dir = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description="Supervisor for the sorter backend.")
-    parser.add_argument(
-        "--ui-port",
-        type=int,
-        default=DEFAULT_UI_PORT,
-        help="Port to serve the UI's build on (all interfaces); 0 serves no UI.",
-    )
-    parser.add_argument(
-        "--restart-backoff",
-        type=float,
-        default=DEFAULT_RESTART_BACKOFF_S,
-    )
-    parser.add_argument(
-        "--stop-timeout",
-        type=float,
-        default=DEFAULT_STOP_TIMEOUT_S,
-    )
-    parser.add_argument(
-        "backend_command",
-        nargs=argparse.REMAINDER,
-        help="Optional backend command after '--'. Defaults to running main.py with the current Python.",
-    )
+    parser.add_argument("--ui-port", type=int, default=DEFAULT_UI_PORT,
+                        help="Port to serve the UI's build on (all interfaces); 0 serves no UI.")
+    parser.add_argument("--restart-backoff", type=float, default=DEFAULT_RESTART_BACKOFF_S)
+    parser.add_argument("--stop-timeout", type=float, default=DEFAULT_STOP_TIMEOUT_S)
+    parser.add_argument("backend_command", nargs=argparse.REMAINDER,
+                        help="Optional backend command after '--'. Defaults to running main.py with the current Python.")
     args = parser.parse_args()
-
-    default_command = _default_backend_command(script_dir)
-    command = list(args.backend_command)
-    if command and command[0] == "--":
-        command = command[1:]
-    args.backend_command = command or default_command
+    command = args.backend_command[1:] if args.backend_command[:1] == ["--"] else args.backend_command
+    args.backend_command = command or [sys.executable, str(Path(__file__).resolve().parent / "main.py")]
     return args
 
 
 def main() -> None:
     args = _parse_args()
-    script_dir = Path(__file__).resolve().parent
     environment = os.environ.copy()
     if args.ui_port:
-        # For the backend's heartbeat, which says where the UI is.
+        # Where the UI is, for the backend: its heartbeat reports it, and its
+        # origin check lets that page call the API.
         environment["SORTER_SUPERVISOR_UI_PORT"] = str(args.ui_port)
     supervisor = BackendSupervisor(
-        command=list(args.backend_command),
-        cwd=script_dir,
+        command=args.backend_command,
+        cwd=Path(__file__).resolve().parent,
         environment=environment,
-        restart_backoff_s=float(args.restart_backoff),
-        stop_timeout_s=float(args.stop_timeout),
+        restart_backoff_s=args.restart_backoff,
+        stop_timeout_s=args.stop_timeout,
     )
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
