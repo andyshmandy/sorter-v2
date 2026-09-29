@@ -1,8 +1,14 @@
+"""Runs the backend (main.py) and restarts it when it exits, and serves the
+UI's static build, so the page loads even while the backend restarts."""
+
 from __future__ import annotations
 
 import argparse
+import html
 import json
+import mimetypes
 import os
+import posixpath
 import shutil
 import signal
 import subprocess
@@ -12,23 +18,27 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from dotenv import load_dotenv
 
-from server.security import (
-    is_loopback_client_address,
-    is_ui_origin_allowed,
-    normalize_origin,
-)
-
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
-DEFAULT_CONTROL_HOST = os.getenv("BACKEND_SUPERVISOR_HOST", "127.0.0.1")
-DEFAULT_CONTROL_PORT = int(os.getenv("BACKEND_SUPERVISOR_PORT", "8001"))
+DEFAULT_UI_PORT = 80
 DEFAULT_RESTART_BACKOFF_S = float(os.getenv("BACKEND_SUPERVISOR_RESTART_BACKOFF_S", "0.2"))
 DEFAULT_STOP_TIMEOUT_S = float(os.getenv("BACKEND_SUPERVISOR_STOP_TIMEOUT_S", "5.0"))
 DEFAULT_FAST_CRASH_WINDOW_S = float(os.getenv("BACKEND_SUPERVISOR_FAST_CRASH_WINDOW_S", "30.0"))
 CACHE_CLEAR_CRASH_THRESHOLD = 3
+
+UI_BUILD_DIR = Path(__file__).resolve().parents[1] / "frontend" / "build"
+RESTART_PATH = "/api/supervisor/restart"
+# Built files under here have a content hash in their names: a new build
+# gets new names, so browsers may keep these for good.
+IMMUTABLE_PREFIX = "/_app/immutable/"
+PRECOMPRESSED = (("br", ".br"), ("gzip", ".gz"))
+# Python's own table, the same on every machine, whatever /etc/mime.types says.
+CONTENT_TYPES = mimetypes.MimeTypes()
+CONTENT_TYPES.add_type("font/woff2", ".woff2")
 
 
 class BackendSupervisor:
@@ -180,36 +190,119 @@ class BackendSupervisor:
                 pass
 
 
-def _handler_factory(supervisor: BackendSupervisor):
-    class SupervisorHandler(BaseHTTPRequestHandler):
+def _file_in(root: Path, url_path: str) -> Path | None:
+    """The file under root that url_path names; None for a directory, a
+    missing file, or anything outside root ('..' or a symlink out)."""
+    try:
+        file = (root / url_path.lstrip("/")).resolve()
+        return file if file.is_relative_to(root.resolve()) and file.is_file() else None
+    except (OSError, ValueError):
+        return None
+
+
+def _ui_handler(supervisor: BackendSupervisor, build_dir: Path) -> type[BaseHTTPRequestHandler]:
+    not_built = (
+        "<!doctype html><meta charset=utf-8><title>Sorter UI not built</title>"
+        "<p>The Sorter UI is not built on this machine yet. Build it, then reload this page:</p>"
+        f"<pre>cd {html.escape(str(build_dir.parent))} &amp;&amp; "
+        "pnpm install --frozen-lockfile &amp;&amp; pnpm build</pre>"
+    ).encode()
+
+    class UIHandler(BaseHTTPRequestHandler):
+        timeout = 60  # a connection that never sends its request is dropped
+
+        def do_GET(self) -> None:
+            self._serve(body=True)
+
+        def do_HEAD(self) -> None:
+            self._serve(body=False)
+
+        def _serve(self, body: bool) -> None:
+            shell = build_dir / "index.html"
+            if not shell.is_file():
+                self._send(503, not_built, {"Content-Type": "text/html; charset=utf-8"}, body)
+                return
+            path = posixpath.normpath(unquote(self.path.split("?", 1)[0].split("#", 1)[0]))
+            file = _file_in(build_dir, path)
+            if file is None and path.startswith("/_app/"):
+                # A missing script or stylesheet must fail, not become the page.
+                self._send(404, b"Not found\n", {"Content-Type": "text/plain"}, body)
+                return
+            # Any other path is a page of the app, which the shell renders.
+            file = file or shell
+            headers = {
+                "Content-Type": CONTENT_TYPES.guess_type(file.name)[0] or "application/octet-stream",
+                "Vary": "Accept-Encoding",
+            }
+            if path.startswith(IMMUTABLE_PREFIX):
+                headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            accepted = {part.split(";")[0].strip().lower() for part in self.headers.get("Accept-Encoding", "").split(",")}
+            for encoding, suffix in PRECOMPRESSED:
+                compressed = file.with_name(file.name + suffix)
+                if encoding in accepted and compressed.is_file():
+                    file, headers["Content-Encoding"] = compressed, encoding
+                    break
+            try:
+                content = file.read_bytes()
+            except OSError:  # a build replacing it right now
+                self._send(404, b"Not found\n", {"Content-Type": "text/plain"}, body)
+                return
+            self._send(200, content, headers, body)
+
         def do_POST(self) -> None:
-            if self.path != "/api/supervisor/restart":
+            if self.path != RESTART_PATH:
                 self._send_json(404, {"ok": False, "message": "Not found"})
                 return
-            client_host = self.client_address[0] if self.client_address else None
-            if not is_loopback_client_address(client_host):
-                self._send_json(403, {"ok": False, "message": "Supervisor control is restricted to loopback clients."})
+            # Another site's page can post here too, but its browser names that
+            # site in Origin: only the UI served from here may restart.
+            origin = urlsplit(self.headers.get("Origin") or "").netloc.lower()
+            if not origin or origin != (self.headers.get("Host") or "").lower():
+                self._send_json(403, {"ok": False, "message": "Origin must match Host."})
                 return
-            origin = normalize_origin(self.headers.get("Origin"))
-            if origin is None or not is_ui_origin_allowed(origin):
-                self._send_json(403, {"ok": False, "message": "Supervisor control requests must include an allowed Origin header."})
-                return
+            print(f"[supervisor] restart requested by {self.client_address[0]}", flush=True)
             accepted = supervisor.request_restart()
             self._send_json(202, {"ok": True, "accepted": accepted, "message": "Hard restart requested."})
 
-        def log_message(self, format: str, *args: Any) -> None:
-            message = format % args
-            print(f"[supervisor] {self.address_string()} {message}", flush=True)
+        def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
+            return  # not a journal line per file; errors are still logged
 
         def _send_json(self, status: int, payload: dict[str, Any]) -> None:
-            body = json.dumps(payload).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._send(status, json.dumps(payload).encode(), {"Content-Type": "application/json"})
 
-    return SupervisorHandler
+        def _send(self, status: int, content: bytes, headers: dict[str, str], body: bool = True) -> None:
+            # Everything but the hashed files is checked on every load, so a
+            # new build shows on the next one.
+            headers.setdefault("Cache-Control", "no-cache")
+            self.send_response(status)
+            for name, value in headers.items():
+                self.send_header(name, value)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            if body:
+                self.wfile.write(content)
+
+    return UIHandler
+
+
+def _bind_ui(port: int, handler: type[BaseHTTPRequestHandler]) -> ThreadingHTTPServer:
+    """The UI's server on every interface, once it has the port, however long
+    that takes: on SorterOS's first boot the progress page keeps port 80
+    until the backend answers, then lets it go."""
+    waiting = False
+    while True:
+        try:
+            return ThreadingHTTPServer(("0.0.0.0", port), handler)
+        except OSError as exc:
+            if not waiting:
+                print(f"[supervisor] cannot serve the UI on port {port} yet ({exc}); trying every second", flush=True)
+                waiting = True
+            time.sleep(1)
+
+
+def _serve_ui(supervisor: BackendSupervisor, port: int) -> None:
+    server = _bind_ui(port, _ui_handler(supervisor, UI_BUILD_DIR))
+    print(f"[supervisor] serving the UI from {UI_BUILD_DIR} on port {port}", flush=True)
+    server.serve_forever()
 
 
 def _default_backend_command(script_dir: Path) -> list[str]:
@@ -219,8 +312,12 @@ def _default_backend_command(script_dir: Path) -> list[str]:
 def _parse_args() -> argparse.Namespace:
     script_dir = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description="Supervisor for the sorter backend.")
-    parser.add_argument("--host", default=DEFAULT_CONTROL_HOST)
-    parser.add_argument("--control-port", type=int, default=DEFAULT_CONTROL_PORT)
+    parser.add_argument(
+        "--ui-port",
+        type=int,
+        default=DEFAULT_UI_PORT,
+        help="Port to serve the UI's build on (all interfaces); 0 serves no UI.",
+    )
     parser.add_argument(
         "--restart-backoff",
         type=float,
@@ -249,42 +346,28 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     script_dir = Path(__file__).resolve().parent
+    environment = os.environ.copy()
+    if args.ui_port:
+        # For the backend's heartbeat, which says where the UI is.
+        environment["SORTER_SUPERVISOR_UI_PORT"] = str(args.ui_port)
     supervisor = BackendSupervisor(
         command=list(args.backend_command),
         cwd=script_dir,
-        environment=os.environ.copy(),
+        environment=environment,
         restart_backoff_s=float(args.restart_backoff),
         stop_timeout_s=float(args.stop_timeout),
     )
+    stop = threading.Event()
+    signal.signal(signal.SIGINT, lambda *_: stop.set())
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+
+    print(f"[supervisor] command={' '.join(args.backend_command)}", flush=True)
     supervisor.start()
-
-    server = ThreadingHTTPServer((str(args.host), int(args.control_port)), _handler_factory(supervisor))
-
-    def _shutdown(*_args: Any) -> None:
-        # server.shutdown() waits for serve_forever() to return, and that runs
-        # on this thread, so called here it deadlocks until systemd's SIGKILL.
-        # Mark the supervisor stopping first so it doesn't restart the backend
-        # that systemd's SIGTERM just stopped.
-        def _stop() -> None:
-            supervisor.shutdown()
-            server.shutdown()
-
-        threading.Thread(target=_stop, daemon=True).start()
-
-    signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
-
-    print(
-        f"[supervisor] control=http://{args.host}:{args.control_port} "
-        f"command={' '.join(args.backend_command)}",
-        flush=True,
-    )
-
-    try:
-        server.serve_forever()
-    finally:
-        supervisor.shutdown()
-        server.server_close()
+    if args.ui_port:
+        threading.Thread(target=_serve_ui, args=(supervisor, args.ui_port), daemon=True).start()
+    stop.wait()
+    # Stop the backend before exiting, so it never outlives the supervisor.
+    supervisor.shutdown()
 
 
 if __name__ == "__main__":
