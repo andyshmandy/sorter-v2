@@ -476,7 +476,7 @@ def getSortingProfileSetView(category_id: str) -> SortingProfileSetViewResponse:
     total_needed = sum(int(part.get("quantity") or 0) for part in parts if isinstance(part, dict))
     pct = (total_found / total_needed * 100) if total_needed > 0 else 0.0
 
-    from local_state import get_checklist_state_for_set
+    from set_checklist import get_checklist_state_for_set
 
     resolved_set_num = str(inventory.get("set_num") or category_id)
     checklist_state = get_checklist_state_for_set(resolved_set_num)
@@ -540,7 +540,7 @@ def updateSortingProfileSetViewPartState(
 
     set_num = str(inventory.get("set_num") or category_id)
 
-    from local_state import set_checklist_part_state
+    from set_checklist import set_checklist_part_state
 
     try:
         result = set_checklist_part_state(

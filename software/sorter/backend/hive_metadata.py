@@ -13,7 +13,7 @@ from server.hive_models import HiveClient, HiveError
 
 # Single source of per-piece metadata + BrickLink pricing. Hive owns the parts
 # catalog; the machine fetches flattened metadata over the API and keeps a
-# write-through persistent cache (local_state.hive_part_metadata_cache) so prices
+# write-through persistent cache (hive_metadata_cache.py) so prices
 # keep working across restarts and Hive outages. Nothing here reads a local
 # parts.db — that dependency was removed.
 
@@ -110,7 +110,7 @@ def _fetchFromHive(
 def _storeResult(
     part_num: str, color_key: Optional[int], metadata: Optional[dict[str, Any]]
 ) -> None:
-    from local_state import put_cached_part_metadata
+    from hive_metadata_cache import put_cached_part_metadata
 
     with _cache_lock:
         _cache[(part_num, color_key)] = metadata
@@ -156,7 +156,7 @@ def getPieceMetadata(
             if key in _cache:
                 return _cache[key]
 
-        from local_state import get_cached_part_metadata
+        from hive_metadata_cache import get_cached_part_metadata
 
         payload, _moving_avg, cached_at = get_cached_part_metadata(part_num, color_key)
         if payload is not None and cached_at is not None:
@@ -202,7 +202,7 @@ def getBatchMovingAvgPrices(
     """Moving-average price for many (part_id, color_id) pairs. Serves from the
     persistent cache (any age — historical revaluation tolerates stale) and fills
     all misses with a single batch request to Hive. Missing/unreachable → None."""
-    from local_state import get_cached_part_prices, put_cached_part_prices
+    from hive_metadata_cache import get_cached_part_prices, put_cached_part_prices
 
     result: dict[tuple[Optional[str], Optional[Any]], Optional[float]] = {}
     lookup_pairs = [(p, c) for (p, c) in pairs if p]

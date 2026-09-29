@@ -114,9 +114,9 @@ def set_pulse_perception_autotune_background(body: dict[str, Any] | None = None)
 
 @router.get("/api/tuning/feeder-pulse-perception/autotune/dataset")
 def get_pulse_perception_autotune_dataset(limit: int = 5000) -> dict[str, Any]:
-    import local_state
+    import feeder_autotune_records
 
-    return {"trials": local_state.listFeederAutotuneDataset(limit=limit)}
+    return {"trials": feeder_autotune_records.listFeederAutotuneDataset(limit=limit)}
 
 
 @router.get("/api/tuning/classification-providers")

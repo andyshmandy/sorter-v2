@@ -180,25 +180,25 @@ def getAllServoPositions() -> dict[str, int]:
 
 
 def getBinCategories() -> list[list[list[list[str]]]] | None:
-    from local_state import get_bin_categories
+    from bin_layout_store import get_bin_categories
 
     return get_bin_categories()
 
 
 def setBinCategories(categories: list[list[list[list[str]]]]) -> None:
-    from local_state import set_bin_categories
+    from bin_layout_store import set_bin_categories
 
     set_bin_categories(categories)
 
 
 def getNotInInventoryBins() -> list[list[list[bool]]] | None:
-    from local_state import get_not_in_inventory_bins
+    from bin_layout_store import get_not_in_inventory_bins
 
     return get_not_in_inventory_bins()
 
 
 def setNotInInventoryBins(flags: list[list[list[bool]]]) -> None:
-    from local_state import set_not_in_inventory_bins
+    from bin_layout_store import set_not_in_inventory_bins
 
     set_not_in_inventory_bins(flags)
 

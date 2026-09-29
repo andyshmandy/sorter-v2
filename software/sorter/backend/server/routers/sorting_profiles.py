@@ -14,8 +14,8 @@ import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from bin_contents import start_new_sorting_session
 from blob_manager import getHiveConfig, getSortingProfileSyncState, setSortingProfileSyncState
-from local_state import start_new_sorting_session
 from server import shared_state
 from sorting_profile import profileSummary
 from server.routers.bins import (

@@ -16,6 +16,16 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 import machine_toml
+from bin_contents import (
+    clear_current_session_bins,
+    get_bin_snapshot,
+    get_bin_snapshot_pieces,
+    get_current_bin_contents_snapshot,
+    get_current_bin_contents_version,
+    get_current_bin_pieces,
+    get_distributed_part_keys_since,
+    list_bin_snapshots,
+)
 from blob_manager import (
     getBinCategories,
     setBinCategories,
@@ -36,16 +46,6 @@ from irl.bin_layout import (
     notInInventoryMatchesLayout,
 )
 from irl.parse_user_toml import DEFAULT_CHUTE_FIRST_BIN_CENTER, DEFAULT_CHUTE_PILLAR_WIDTH_DEG
-from local_state import (
-    clear_current_session_bins,
-    get_bin_snapshot,
-    get_bin_snapshot_pieces,
-    get_current_bin_contents_snapshot,
-    get_current_bin_contents_version,
-    get_current_bin_pieces,
-    get_distributed_part_keys_since,
-    list_bin_snapshots,
-)
 from server import shared_state
 from server.routers.chute import _chute_move, _chute_settings_from_config
 from server.routers.steppers import _ensure_not_homing

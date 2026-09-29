@@ -19,7 +19,7 @@ from irl.parse_user_toml import (
     DEFAULT_CHUTE_PILLAR_WIDTH_DEG,
     DEFAULT_CHUTE_SECTION_WIDTH_DEG,
 )
-from local_state import (
+from chute_calibrations import (
     activateChuteCalibrationInstance,
     deleteChuteCalibrationInstance,
     getChuteCalibrationInstance,

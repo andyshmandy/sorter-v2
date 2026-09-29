@@ -7,8 +7,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 import stepper_telemetry
-from local_state import listChuteStressRuns
 from server import shared_state
+from stress_test_runs import listChuteStressRuns
 from subsystems.distribution.chute_stress import (
     CHUTE_MAX_ANGLE_LIMIT_DEG,
     ChuteStressTestRunner,

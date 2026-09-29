@@ -21,7 +21,7 @@ class LayerConfig:
     # layer. None / wrong length is normalized to all-enabled in __post_init__.
     section_enabled: List[bool] | None = None
     # Which PWM servo channel drives this layer's door. The calibration angles
-    # live per-channel in local_state (servo_channel_calibration), NOT here, so
+    # live per-channel in bin_layout_store (servo_channel_calibration), NOT here, so
     # editing/switching layouts never touches calibration. None => fall back to
     # the layer index (the historical 1:1 mapping). servo_open_angle /
     # servo_closed_angle above are DEPRECATED (kept only for the one-time
@@ -281,7 +281,7 @@ def _loadFromToml() -> BinLayoutConfig | None:
 
 
 def getBinLayout() -> BinLayoutConfig:
-    from local_state import get_bin_layout
+    from bin_layout_store import get_bin_layout
 
     data = get_bin_layout()
     if isinstance(data, dict):
@@ -297,7 +297,7 @@ def getBinLayout() -> BinLayoutConfig:
 
 
 def saveBinLayout(config: BinLayoutConfig) -> None:
-    from local_state import set_bin_layout
+    from bin_layout_store import set_bin_layout
 
     data = {
         "layers": [
@@ -334,7 +334,7 @@ def calibratedAnglesForLayer(config: "BinLayoutConfig", layer_index: int, servo_
     """Resolve a layer's (open, closed) angles from the per-channel calibration
     store, falling back to the layer's legacy angles if the channel isn't
     calibrated yet (ultra-safe during the migration window)."""
-    from local_state import get_servo_channel_calibration
+    from bin_layout_store import get_servo_channel_calibration
 
     channel_id = channelIdForLayer(config, layer_index, servo_channel_config)
     cal = get_servo_channel_calibration().get(str(channel_id)) or {}
