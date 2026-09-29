@@ -42,7 +42,7 @@ Camera assignment happens in the UI: open the running frontend and use the Setti
 
 ```bash
 cd sorter/frontend
-npm install
+pnpm install --frozen-lockfile
 ```
 
 ---

@@ -100,7 +100,7 @@ These are for [SorterOS]({{ '/sorter/installation/sorter-os/' | relative_url }})
 
 **Fix:** Read the `[backend]` lines in `./dev.sh`. The last line before the silence tells you which import failed. Fix that and restart.
 
-**Verify:** `curl -fsS http://localhost:8000/api/health` returns JSON.
+**Verify:** `curl -fsS http://localhost:8000/health` returns JSON.
 
 ---
 
