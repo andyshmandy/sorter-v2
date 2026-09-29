@@ -93,15 +93,19 @@ function Resolve-DevCommand {
     # that resolves to a script shim through cmd.exe instead.
     param([string]$FilePath, [string[]]$ArgumentList)
     $cmd = Get-Command $FilePath -ErrorAction SilentlyContinue | Select-Object -First 1
-    $ext = if ($cmd) { [System.IO.Path]::GetExtension($cmd.Source) } else { "" }
+    if (-not $cmd) {
+        throw "Could not find '$FilePath' on PATH. Install it and/or open a new " +
+            "shell so PATH changes take effect, then confirm '$FilePath --version' " +
+            "works in this same window before re-running dev.ps1."
+    }
+    $ext = [System.IO.Path]::GetExtension($cmd.Source)
     if ($ext -in ".cmd", ".bat") {
         return @{ FilePath = "cmd.exe"; ArgumentList = @("/c", $cmd.Source) + $ArgumentList }
     }
     if ($ext -eq ".ps1") {
         return @{ FilePath = "powershell.exe"; ArgumentList = @("-NoProfile", "-File", $cmd.Source) + $ArgumentList }
     }
-    $resolved = if ($cmd) { $cmd.Source } else { $FilePath }
-    return @{ FilePath = $resolved; ArgumentList = $ArgumentList }
+    return @{ FilePath = $cmd.Source; ArgumentList = $ArgumentList }
 }
 
 function Invoke-DevWatched {
@@ -142,6 +146,32 @@ function Stop-AllChildren {
     }
 }
 
+function Install-Pnpm {
+    # Node ships Corepack (a pnpm/yarn version shim manager) since ~16.9, but
+    # it isn't activated by default, so a fresh Node install has "node"/"npm"
+    # on PATH but no "pnpm". Activate it, falling back to a plain global npm
+    # install if Corepack itself isn't there (older Node, or removed per
+    # https://github.com/nodejs/node/pull/53880 in newer ones).
+    if (Get-Command pnpm -ErrorAction SilentlyContinue) { return }
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+        throw "pnpm is required (for the frontend) and Node.js isn't on PATH " +
+            "to install it. Install Node.js (https://nodejs.org) then re-run dev.ps1."
+    }
+    Write-DevLog "pnpm not found; installing..." ([ConsoleColor]::Yellow)
+    if (Get-Command corepack -ErrorAction SilentlyContinue) {
+        corepack enable 2>&1 | Out-Null
+        corepack prepare pnpm@latest --activate 2>&1 | Out-Null
+    }
+    if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
+        npm install -g pnpm 2>&1 | Out-Null
+    }
+    if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
+        throw "Automatic pnpm install failed. Install it manually: " +
+            "'corepack enable; corepack prepare pnpm@latest --activate' or 'npm install -g pnpm'."
+    }
+    Write-DevLog "pnpm installed." ([ConsoleColor]::Green)
+}
+
 Import-DotEnv
 if ($FeederOnly) { $env:LEGOSORTER_FEEDER_ONLY = "1" }
 
@@ -174,6 +204,7 @@ try {
                 -FilePath "uv" -ArgumentList @("run", "uvicorn", "server.api:app", "--host", $apiHost, "--port", "8000")
         }
         "frontend" {
+            Install-Pnpm
             Stop-DevPort -Port 5173
             Invoke-DevWatched -Name "frontend" -Color ([ConsoleColor]::Blue) `
                 -WorkingDirectory (Join-Path $Root "sorter\frontend") `
