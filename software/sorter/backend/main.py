@@ -67,9 +67,13 @@ def _mkIRLInterfaceStandby(config, gc):
 
 
 FRAME_RECORD_INTERVAL_MS = 100
-RUNTIME_STATS_BROADCAST_INTERVAL_MS = 1000
 LIFETIME_FLUSH_INTERVAL_MS = 10000
 LOOP_STALL_WARN_MS = 250.0
+# The broadcaster thread builds both views of the runtime stats, never the
+# control loop: the full snapshot behind GET /runtime-stats and the perf
+# history, and the small live part pushed to the dashboard when it changes.
+RUNTIME_STATS_SNAPSHOT_INTERVAL_S = 1.0
+RUNTIME_STATS_LIVE_INTERVAL_S = 0.5
 
 SERVO_BUS_ALERT_PREFIX = "Servo bus offline"
 CAMERA_SHUTDOWN_SETTLE_S = float(os.getenv("SORTER_CAMERA_SHUTDOWN_SETTLE_S", "1.0"))
@@ -259,8 +263,11 @@ def runBroadcaster(gc: GlobalConfig) -> None:
     # second, mark any that have gone silent past the timeout as dead and
     # broadcast a final event so the UI (and the per-piece lookup) drop them.
     from defs.consts import STUCK_PIECE_TIMEOUT_S, STUCK_PIECE_REAP_INTERVAL_S
+    from server import perf_history
 
     last_reap_mono = 0.0
+    last_snapshot_mono = 0.0
+    last_live_mono = 0.0
 
     while True:
         latest_frame_commands = {}
@@ -306,6 +313,23 @@ def runBroadcaster(gc: GlobalConfig) -> None:
                 del ko_last_broadcast[uuid]
 
         pending_commands.extend(latest_frame_commands.values())
+
+        try:
+            if now_mono - last_snapshot_mono >= RUNTIME_STATS_SNAPSHOT_INTERVAL_S:
+                last_snapshot_mono = now_mono
+                snapshot = gc.runtime_stats.snapshot()
+                shared_state.runtime_stats_snapshot = snapshot
+                perf_history.record(snapshot, time.time())
+            if now_mono - last_live_mono >= RUNTIME_STATS_LIVE_INTERVAL_S:
+                last_live_mono = now_mono
+                live = gc.runtime_stats.snapshot(live=True)
+                if live != shared_state.runtime_stats_live:
+                    shared_state.runtime_stats_live = live
+                    pending_commands.append(
+                        RuntimeStatsEvent(tag="runtime_stats", data=RuntimeStatsData(payload=live))
+                    )
+        except Exception as exc:
+            gc.logger.warning(f"runtime stats snapshot failed: {exc}")
 
         if pending_commands:
             gc.runtime_stats.observePerfMs("socket.queue_depth", float(queue_depth))
@@ -849,7 +873,6 @@ def main() -> None:
 
     last_heartbeat = time.time()
     last_frame_record = time.time()
-    last_runtime_stats_broadcast = time.time()
     last_lifetime_flush = time.time()
     last_main_loop_started = time.perf_counter()
     db.watch_realtime_thread()
@@ -900,18 +923,6 @@ def main() -> None:
                     vision.recordFrames()
                 last_frame_record = current_time
             marks.append(("frames", time.perf_counter()))
-
-            if (
-                current_time - last_runtime_stats_broadcast
-                >= RUNTIME_STATS_BROADCAST_INTERVAL_MS / 1000.0
-            ):
-                runtime_stats = RuntimeStatsEvent(
-                    tag="runtime_stats",
-                    data=RuntimeStatsData(payload=gc.runtime_stats.snapshot()),
-                )
-                main_to_server_queue.put(runtime_stats)
-                last_runtime_stats_broadcast = current_time
-            marks.append(("stats", time.perf_counter()))
 
             # Lifetime powered/sorted time: handed to the database writer every
             # 10 s, so a crash loses at most that much.

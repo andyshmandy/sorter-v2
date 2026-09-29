@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import asyncio
+import json
 import os
 import time
 from pathlib import Path
@@ -745,11 +746,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     await websocket.send_json(identity_event.model_dump())
     # No known_object replay on connect — clients hydrate recent pieces via
     # GET /api/pieces instead of a sqlite-backed ring of past events.
-    if shared_state.runtime_stats_snapshot is not None:
+    if shared_state.runtime_stats_live is not None:
         await websocket.send_json(
             {
                 "tag": "runtime_stats",
-                "data": {"payload": shared_state.runtime_stats_snapshot},
+                "data": {"payload": shared_state.runtime_stats_live},
             }
         )
 
@@ -847,10 +848,14 @@ class RuntimeStatsRecordsResponse(BaseModel):
 
 
 @app.get("/runtime-stats", response_model=RuntimeStatsResponse)
-def getRuntimeStats() -> RuntimeStatsResponse:
-    if shared_state.runtime_stats_snapshot is None:
-        return RuntimeStatsResponse(payload={})
-    return RuntimeStatsResponse(payload=shared_state.runtime_stats_snapshot)
+def getRuntimeStats() -> Response:
+    """The full snapshot, at most a second old. It is up to several hundred KB,
+    so it is encoded here in the worker thread, not on the event loop."""
+    return _jsonResponse({"payload": shared_state.runtime_stats_snapshot or {}})
+
+
+def _jsonResponse(content: Any) -> Response:
+    return Response(json.dumps(content, separators=(",", ":")), media_type="application/json")
 
 
 class PerfHistoryResponse(BaseModel):
@@ -861,18 +866,14 @@ class PerfHistoryResponse(BaseModel):
 
 
 @app.get("/runtime-stats/perf-history", response_model=PerfHistoryResponse)
-def getPerfHistory(window_s: float = 300.0) -> PerfHistoryResponse:
-    import time as _time
+def getPerfHistory(window_s: float = 300.0) -> Response:
     from server import perf_history
 
-    now = _time.time()
+    now = time.time()
     window_s = max(1.0, min(float(window_s), 3900.0))
     rows = perf_history.window(window_s, now)
-    return PerfHistoryResponse(
-        window_s=window_s,
-        now=now,
-        rows=rows,
-        rates=perf_history.computeRates(rows),
+    return _jsonResponse(
+        {"window_s": window_s, "now": now, "rows": rows, "rates": perf_history.computeRates(rows)}
     )
 
 

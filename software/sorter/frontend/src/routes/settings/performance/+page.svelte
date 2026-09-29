@@ -105,8 +105,9 @@
 		};
 	}
 
-	// Live snapshot from the websocket (updates every ~1s).
-	const liveProfile = $derived(deriveProfile(ctx.machine?.runtimeStats as Snapshot));
+	// The full snapshot is not pushed; loadHistory fetches it with the history.
+	let liveSnapshot = $state<Snapshot | null>(null);
+	const liveProfile = $derived(deriveProfile(liveSnapshot));
 	const machineName = $derived(
 		ctx.machine?.identity?.nickname || ctx.machine?.identity?.machine_id || 'this machine'
 	);
@@ -128,8 +129,12 @@
 
 	async function loadHistory() {
 		try {
-			const res = await fetch(`${backendBase()}/runtime-stats/perf-history?window_s=${windowS}`);
+			const [res, live] = await Promise.all([
+				fetch(`${backendBase()}/runtime-stats/perf-history?window_s=${windowS}`),
+				fetch(`${backendBase()}/runtime-stats`)
+			]);
 			if (!res.ok) throw new Error(await res.text());
+			if (live.ok) liveSnapshot = (await live.json()).payload ?? null;
 			const body = await res.json();
 			rows = Array.isArray(body.rows) ? body.rows : [];
 			windowRates = body.rates ?? { hz: {}, cameras_hz: {}, current: {} };

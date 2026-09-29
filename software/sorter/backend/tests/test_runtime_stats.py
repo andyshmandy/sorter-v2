@@ -179,6 +179,21 @@ class RuntimeStatsCollectorBinClearTests(unittest.TestCase):
 
         self.assertIsNone(collector.snapshot()["active_incident"])
 
+    def test_live_snapshot_is_only_what_the_dashboard_shows(self) -> None:
+        collector = RuntimeStatsCollector()
+        collector.setLifecycleState("running", now_wall=1.0, now_monotonic=1.0)
+        collector.observeStateTransition("feeder", None, "idle", now_wall=2.0, now_monotonic=2.0)
+        collector.observePerfMs("main.loop.interval_ms", 10.0)
+
+        live = collector.snapshot(live=True)
+
+        self.assertEqual(
+            {"counts", "throughput", "channel_throughput", "state_machines", "bus_recent", "active_incident"},
+            set(live),
+        )
+        self.assertEqual({"current_state": "idle", "entered_at": 2.0}, live["state_machines"]["feeder"])
+        self.assertEqual(collector.snapshot()["counts"], live["counts"])
+
 
 class RuntimeStatsRecognizerCountersTests(unittest.TestCase):
     def test_snapshot_exposes_recognizer_counters_under_counts(self) -> None:

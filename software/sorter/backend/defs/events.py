@@ -263,6 +263,8 @@ class SortingProfileStatusEvent(BaseModel):
     data: SortingProfileStatusData
 
 
+# The live part of the runtime stats (RuntimeStatsCollector.snapshot(live=True)),
+# pushed when it changes. The full snapshot is GET /runtime-stats.
 class RuntimeStatsData(BaseModel):
     payload: dict
 

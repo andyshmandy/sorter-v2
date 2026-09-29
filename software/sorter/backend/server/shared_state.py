@@ -16,7 +16,6 @@ from fastapi import WebSocket
 
 from global_config import GlobalConfig
 from runtime_variables import RuntimeVariables
-import server.perf_history as perf_history
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -49,7 +48,10 @@ distribution_no_bin_passthrough_lock = threading.RLock()
 camera_device_preview_overrides: Dict[str, Dict[str, int | float | bool]] = {}
 camera_calibration_tasks: Dict[str, Dict[str, Any]] = {}
 camera_calibration_tasks_lock = threading.Lock()
+# Both set by the broadcaster thread (main.py): the full snapshot behind
+# GET /runtime-stats, and the live part last pushed to the dashboard.
 runtime_stats_snapshot: Optional[dict[str, Any]] = None
+runtime_stats_live: Optional[dict[str, Any]] = None
 system_status_snapshot: Optional[dict[str, Any]] = None
 sorter_state_snapshot: Optional[dict[str, Any]] = None
 cameras_config_snapshot: Optional[dict[str, Any]] = None
@@ -169,19 +171,14 @@ def consumeDistributionNoBinPassthrough(piece_uuid: str | None) -> bool:
 
 
 async def broadcastEvent(event: dict) -> None:
-    global runtime_stats_snapshot, system_status_snapshot, sorter_state_snapshot, cameras_config_snapshot, sorting_profile_status_snapshot
+    global system_status_snapshot, sorter_state_snapshot, cameras_config_snapshot, sorting_profile_status_snapshot
     global last_broadcast_ok_ts
     # Stamped before the no-clients early-return so heartbeats keep it fresh even
     # with zero connections; the watchdog only warns when clients are attached.
     last_broadcast_ok_ts = time.time()
     tag = event.get("tag")
     data = event.get("data") if isinstance(event.get("data"), dict) else None
-    if tag == "runtime_stats" and data is not None:
-        payload = data.get("payload")
-        if isinstance(payload, dict):
-            runtime_stats_snapshot = payload
-            perf_history.record(payload, time.time())
-    elif tag == "system_status" and data is not None:
+    if tag == "system_status" and data is not None:
         system_status_snapshot = dict(data)
     elif tag == "sorter_state" and data is not None:
         sorter_state_snapshot = dict(data)
@@ -224,7 +221,7 @@ async def broadcastEvent(event: dict) -> None:
 
 def _update_snapshot(event: dict) -> None:
     """Update in-memory snapshot globals so WS-connect replay is accurate."""
-    global runtime_stats_snapshot, system_status_snapshot, sorter_state_snapshot, cameras_config_snapshot, sorting_profile_status_snapshot
+    global system_status_snapshot, sorter_state_snapshot, cameras_config_snapshot, sorting_profile_status_snapshot
     tag = event.get("tag")
     data = event.get("data") if isinstance(event.get("data"), dict) else None
     if tag == "system_status" and data is not None:
@@ -235,11 +232,6 @@ def _update_snapshot(event: dict) -> None:
         cameras_config_snapshot = dict(data)
     elif tag == "sorting_profile_status" and data is not None:
         sorting_profile_status_snapshot = dict(data)
-    elif tag == "runtime_stats" and data is not None:
-        payload = data.get("payload")
-        if isinstance(payload, dict):
-            runtime_stats_snapshot = payload
-            perf_history.record(payload, time.time())
 
 
 def broadcast_from_thread(event: dict) -> None:
