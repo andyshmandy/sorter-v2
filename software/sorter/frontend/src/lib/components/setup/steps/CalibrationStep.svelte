@@ -18,6 +18,8 @@
 		home_pin_channel: number | null;
 	};
 
+	let { onInitialize }: { onInitialize: () => void } = $props();
+
 	const manager = getMachinesContext();
 
 	const SKR_PICO_WIRING_DIAGRAM_URL = '/setup/skr-pico-v1.0-headers.png';
@@ -244,6 +246,16 @@
 					ready.
 				</span>
 			</div>
+		</div>
+	{:else if systemState === 'standby'}
+		<div class="setup-panel flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
+			<span class="text-text-muted">The steppers are off.</span>
+			<button
+				onclick={onInitialize}
+				class="setup-button-secondary inline-flex items-center gap-2 px-3 py-1.5 text-sm text-text transition-colors"
+			>
+				Power on steppers
+			</button>
 		</div>
 	{:else if systemState === 'error'}
 		<div

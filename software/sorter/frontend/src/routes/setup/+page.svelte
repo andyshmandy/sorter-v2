@@ -897,14 +897,6 @@
 	});
 
 	$effect(() => {
-		if (activeStepId !== 'motion' && activeStepId !== 'calibration') return;
-		if (homingSystem || !wizard?.readiness.boards_detected) return;
-		if (hardwareState === 'standby') {
-			void initializeSteppers();
-		}
-	});
-
-	$effect(() => {
 		if (activeStepId !== 'hive') return;
 		untrack(() => {
 			void loadSorthiveConfig();
@@ -1038,7 +1030,7 @@
 							onRecordObservedDirection={recordObservedDirection}
 						/>
 					{:else if activeStepId === 'calibration'}
-						<CalibrationStep bind:this={calibrationStepRef} />
+						<CalibrationStep bind:this={calibrationStepRef} onInitialize={initializeSteppers} />
 					{:else if activeStepId === 'servos'}
 						<SetupServoOnboardingSection
 							servoSource={effectiveServoSource}
